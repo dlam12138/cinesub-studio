@@ -1,5 +1,6 @@
 ﻿.venv/
 .cache/
+.tmp/
 .claude/
 .agents/
 prompt.md
@@ -12,6 +13,8 @@ input/
 archive/
 failed/
 logs/
+reports/
+tests/e2e_samples/samples.local.json
 config/providers.local.json
 config/language_profiles.local.json
 __pycache__/

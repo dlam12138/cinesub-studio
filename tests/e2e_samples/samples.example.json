@@ -1,0 +1,28 @@
+{
+  "samples": [
+    {
+      "id": "fr_short",
+      "file": "tests/e2e_samples/fr_short/sample.mp4",
+      "language_profile": "fr-film",
+      "provider": "deepseek-main",
+      "expected_language": "fr",
+      "manual_notes": ""
+    },
+    {
+      "id": "auto_unknown_short",
+      "file": "tests/e2e_samples/auto_unknown_short/sample.mp4",
+      "language_profile": "auto-detect",
+      "provider": "deepseek-main",
+      "expected_language": null,
+      "manual_notes": ""
+    },
+    {
+      "id": "european_short",
+      "file": "tests/e2e_samples/european_short/sample.mp4",
+      "language_profile": "generic-european-film",
+      "provider": "deepseek-main",
+      "expected_language": null,
+      "manual_notes": ""
+    }
+  ]
+}

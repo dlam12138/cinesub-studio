@@ -323,6 +323,54 @@ python quality_checker.py --self-test
 python -B -c "import transcribe, web_server, download_model_file, subtitle_translate, quality_checker, batch_worker; print('imports ok')"
 ```
 
+## 真实短片验收
+
+用于验证 1-3 分钟真实短片的端到端效果，不提交视频、不提交 API Key。
+
+1. 把样本放入对应目录：
+
+```text
+tests/e2e_samples/fr_short/sample.mp4
+tests/e2e_samples/auto_unknown_short/sample.mp4
+tests/e2e_samples/european_short/sample.mp4
+```
+
+2. 按需复制并修改样本配置：
+
+```powershell
+Copy-Item tests/e2e_samples/samples.example.json tests/e2e_samples/samples.local.json
+```
+
+`samples.local.json` 已忽略，不会提交。每个样本只记录 `file`、`language_profile`、`provider`、`expected_language` 和人工备注。
+
+3. 运行验收：
+
+```powershell
+python -B e2e_runner.py --config tests/e2e_samples/samples.local.json
+```
+
+没有真实视频时也可以直接跑示例配置，脚本会把缺失样本标记为 `missing_sample`，不会崩溃：
+
+```powershell
+python -B e2e_runner.py --config tests/e2e_samples/samples.example.json
+```
+
+4. 查看报告：
+
+```text
+reports/e2e_sample_report.json
+reports/e2e_sample_report.md
+```
+
+报告会汇总 `detected_language`、`language_probability`、`forced_language`、source/zh/bilingual 字幕条数、质检 error/warning 数量、`review_needed.srt` 条数和人工观感。报告只写 Provider ID，不读取或输出 API Key。
+
+判断问题归属：
+
+- 识别语言错误、置信度低、source 字幕不可读：优先看 ASR / Language Profile。
+- zh 字幕生硬、漏译、误译：优先看翻译模型、提示词和 batch 大小。
+- bilingual 条数不一致或时间轴异常：优先看翻译输出格式和质检报告。
+- `review_needed_count` 过多但问题不严重：优先调整 Language Profile 质检阈值。
+
 ## 注意事项
 
 - 不要提交 API keys
