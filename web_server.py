@@ -142,6 +142,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"active": get_active_language_profile()})
             return
 
+        # ── Provider Templates ──
+        if parsed.path == "/api/provider-templates":
+            from provider_store import get_provider_templates
+            self.send_json({"ok": True, "templates": get_provider_templates()})
+            return
+
         self.send_error_json(404, "Not found")
 
     def do_PUT(self) -> None:

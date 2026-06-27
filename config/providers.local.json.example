@@ -1,19 +1,17 @@
 {
-  "version": 1,
-  "active": "",
+  "version": 2,
+  "active": "deepseek-main",
   "providers": [
     {
-      "id": "my-provider",
-      "name": "我的接口",
+      "id": "deepseek-main",
+      "name": "DeepSeek",
+      "template_id": "deepseek",
       "protocol": "openai-compatible",
-      "api_base": "https://api.openai.com/v1",
-      "api_key": "sk-your-key-here",
-      "chat_model": "gpt-4o",
-      "translation_model": "gpt-4o",
-      "whisper_model": "large-v3",
-      "whisper_device": "cpu",
+      "api_base": "https://api.deepseek.com",
+      "api_key": "sk-your-deepseek-key-here",
+      "translation_model": "deepseek-v4-flash",
       "enabled": true,
-      "notes": "在此描述此接口的用途"
+      "notes": ""
     }
   ]
 }

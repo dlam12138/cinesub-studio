@@ -811,18 +811,16 @@ def main() -> int:
     effective_api_key = _first(args.api_key, provider_config.get("api_key"), "")
     effective_llm_model = _first(args.llm_model, provider_config.get("llm_model"), "")
 
-    # ASR 配置：CLI > Language Profile > Provider > 默认值
+    # ASR 配置：CLI > Language Profile > 默认值（Provider 不再包含 ASR 字段）
     lp_asr = lang_profile_config.get("asr", {})
     effective_model = _first(
         args.model if args.model != "large-v3" else None,
         lp_asr.get("whisper_model"),
-        provider_config.get("whisper_model"),
         "large-v3"
     )
     effective_device = _first(
         args.device if args.device != "cpu" else None,
         lp_asr.get("whisper_device"),
-        provider_config.get("whisper_device"),
         "cpu"
     )
     effective_compute_type = _first(args.compute_type, lp_asr.get("compute_type"))

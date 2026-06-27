@@ -810,44 +810,61 @@
     </div>
   </div>
 
-  <!-- Provider Edit Modal -->
+  <!-- Provider Edit Modal (template-driven, simplified default) -->
   <div class="modal-overlay" id="providerModal">
     <div class="modal">
       <h3 id="providerModalTitle">新增接口</h3>
       <input type="hidden" id="provEditId">
-      <label>Provider ID <span style="color:var(--muted);font-weight:400">(唯一标识，如 openai-main)</span></label>
-      <input id="provEditIdField" type="text" placeholder="openai-main">
-      <label>名称</label>
-      <input id="provEditName" type="text" placeholder="OpenAI 主接口">
-      <div class="row">
-        <div><label>协议</label>
-          <select id="provEditProtocol"><option value="openai-compatible">OpenAI-Compatible</option><option value="anthropic">Anthropic Claude</option></select>
-        </div>
-        <div><label>API Base URL</label>
-          <input id="provEditBase" type="text" placeholder="https://api.openai.com/v1">
-        </div>
+
+      <!-- Template Selector -->
+      <div id="provTemplateSection">
+        <label>服务商</label>
+        <select id="provTemplateSelect" onchange="onTemplateChange()">
+          <option value="">加载中...</option>
+        </select>
       </div>
-      <label>API Key <span style="color:var(--muted);font-weight:400">(编辑时留空则保留原 key)</span></label>
-      <input id="provEditKey" type="password" placeholder="sk-...">
-      <div class="row">
-        <div><label>翻译模型</label><input id="provEditTransModel" type="text" placeholder="gpt-4o"></div>
-        <div><label>聊天模型</label><input id="provEditChatModel" type="text" placeholder="gpt-4o"></div>
+
+      <!-- Model Selector (DeepSeek) or Text Input (custom) -->
+      <div id="provModelSection">
+        <label>模型</label>
+        <select id="provModelSelect" onchange="onModelChange()" style="display:none">
+          <option value="">选择模型</option>
+        </select>
+        <input id="provModelInput" type="text" placeholder="模型名称" style="display:none">
       </div>
-      <div class="row">
-        <div><label>Whisper 模型</label>
-          <select id="provEditWhisperModel">
-            <option value="large-v3">large-v3</option><option value="medium">medium</option><option value="small">small</option><option value="tiny">tiny</option>
-          </select>
-        </div>
-        <div><label>Whisper 设备</label>
-          <select id="provEditWhisperDevice">
-            <option value="cpu">CPU</option><option value="cuda">CUDA</option><option value="auto">自动</option>
-          </select>
-        </div>
+      <div id="provDeprecWarn" style="display:none;color:var(--warn);font-size:12px;margin:4px 0"></div>
+
+      <!-- Name (optional for templates) -->
+      <div id="provSimpleFields">
+        <label>名称 <span style="color:var(--muted);font-weight:400">(可选，默认与服务商相同)</span></label>
+        <input id="provEditName" type="text" placeholder="DeepSeek">
+        <label>API Key <span style="color:var(--muted);font-weight:400">(编辑时留空则保留原 key)</span></label>
+        <input id="provEditKey" type="password" placeholder="sk-...">
       </div>
-      <label>备注</label>
-      <input id="provEditNotes" type="text" placeholder="可选">
-      <label class="check"><input id="provEditEnabled" type="checkbox" checked> 启用</label>
+
+      <!-- Advanced Settings Toggle -->
+      <div style="margin:12px 0">
+        <a href="#" onclick="toggleAdvanced();return false" style="font-size:13px;color:var(--primary)">▶ 高级设置</a>
+      </div>
+
+      <div id="provAdvancedFields" style="display:none">
+        <label>Provider ID <span style="color:var(--muted);font-weight:400">(自动生成)</span></label>
+        <input id="provEditIdField" type="text" placeholder="自动生成">
+        <div class="row">
+          <div><label>协议</label>
+            <select id="provEditProtocol"><option value="openai-compatible">OpenAI-Compatible</option></select>
+          </div>
+          <div><label>API Base URL</label>
+            <input id="provEditBase" type="text" placeholder="https://api.deepseek.com">
+          </div>
+        </div>
+        <label>自定义模型名</label>
+        <input id="provEditTransModel" type="text" placeholder="手动输入模型名">
+        <label>备注</label>
+        <input id="provEditNotes" type="text" placeholder="可选">
+        <label class="check"><input id="provEditEnabled" type="checkbox" checked> 启用</label>
+      </div>
+
       <div class="btn-row">
         <button class="btn-cancel" onclick="closeProviderModal()">取消</button>
         <button class="btn-save" onclick="saveProvider()">保存</button>
@@ -1611,6 +1628,14 @@ loadPipelineSelects();
 loadLangProfileSelect();
 
 var providerCache = [];
+var providerTemplates = [];
+var advancedOpen = false;
+
+async function loadTemplates() {
+    try { var r = await fetch('/api/provider-templates'); var d = await r.json(); providerTemplates = d.templates || []; }
+    catch(e) { providerTemplates = []; }
+}
+function findTemplate(id) { for (var i=0;i<providerTemplates.length;i++) { if(providerTemplates[i].id===id) return providerTemplates[i]; } return null; }
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(function(b) {
@@ -1626,6 +1651,7 @@ function switchTab(name) {
 }
 
 async function loadProviders() {
+  await loadTemplates();
   try {
     var resp = await fetch('/api/providers');
     var data = await resp.json();
@@ -1639,38 +1665,37 @@ async function loadProviders() {
 
 function renderActiveBar() {
   var el = document.getElementById('activeProviderName');
-  var active = null;
-  for (var i = 0; i < providerCache.length; i++) {
-    if (providerCache[i].id === (providerCache[i]._active || '')) active = providerCache[i];
-  }
-  if (!active) {
-    // Try to get from API
-    fetch('/api/providers/active').then(function(r) { return r.json(); }).then(function(d) {
-      if (d.active) {
-        el.textContent = d.active.name + ' | ' + d.active.protocol + ' | ' + (d.active.translation_model || d.active.chat_model || '?');
-      } else {
-        el.textContent = '(未设置)';
-      }
-    }).catch(function() { el.textContent = '(未设置)'; });
-  }
+  fetch('/api/providers/active').then(function(r) { return r.json(); }).then(function(d) {
+    if (d.active) el.textContent = d.active.name + ' | ' + (d.active.translation_model || '?');
+    else el.textContent = '(未设置)';
+  }).catch(function() { el.textContent = '(未设置)'; });
 }
 
 function renderProviderList() {
   var el = document.getElementById('providerList');
   if (providerCache.length === 0) {
-    el.innerHTML = '<div class="placeholder">暂无接口配置。点击"+ 新增接口"添加。</div>';
+    el.innerHTML = '<div class="placeholder">暂无接口配置。点击"+ 新增接口"添加 DeepSeek。</div>';
     return;
   }
-  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>协议</th><th>API Base</th><th>模型</th><th>Key</th><th>启用</th><th class="col-act">操作</th></tr></thead><tbody>';
+  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>协议</th><th>模型</th><th>Key</th><th>启用</th><th class="col-act">操作</th></tr></thead><tbody>';
   for (var i = 0; i < providerCache.length; i++) {
     var p = providerCache[i];
-    var keyStatus = p.api_key_masked || (p.api_key ? '已设置' : '<span style="color:var(--danger)">未设置</span>');
+    var keyStatus = p.api_key_masked || '<span style="color:var(--danger)">未设置</span>';
     var enabledBadge = p.enabled !== false ? '<span class="badge badge-ok">是</span>' : '<span class="badge badge-err">否</span>';
+    var modelWarn = '';
+    var tpl = findTemplate(p.template_id || '');
+    if (tpl && tpl.deprecated_models) {
+      for (var j = 0; j < tpl.deprecated_models.length; j++) {
+        if (tpl.deprecated_models[j].id === p.translation_model) {
+          modelWarn = ' <span style="color:var(--warn);font-size:11px" title="建议切换至 ' + tpl.deprecated_models[j].replacement + '">⚠弃用</span>';
+          break;
+        }
+      }
+    }
     html += '<tr>';
     html += '<td><strong>' + escapeHtml(p.name) + '</strong></td>';
     html += '<td>' + escapeHtml(p.protocol) + '</td>';
-    html += '<td style="font-size:12px">' + escapeHtml(p.api_base || '') + '</td>';
-    html += '<td>' + escapeHtml(p.translation_model || p.chat_model || '-') + '</td>';
+    html += '<td>' + escapeHtml(p.translation_model || '-') + modelWarn + '</td>';
     html += '<td>' + keyStatus + '</td>';
     html += '<td>' + enabledBadge + '</td>';
     html += '<td class="col-act">';
@@ -1684,243 +1709,207 @@ function renderProviderList() {
   el.innerHTML = html;
 }
 
-// ── Modal ──
+// ── Modal (template-driven) ──
 
-function showProviderModal(editId) {
-  var modal = document.getElementById('providerModal');
-  var title = document.getElementById('providerModalTitle');
-  document.getElementById('provEditId').value = '';
-  document.getElementById('provEditIdField').value = '';
-  document.getElementById('provEditName').value = '';
-  document.getElementById('provEditProtocol').value = 'openai-compatible';
-  document.getElementById('provEditBase').value = '';
-  document.getElementById('provEditKey').value = '';
-  document.getElementById('provEditTransModel').value = '';
-  document.getElementById('provEditChatModel').value = '';
-  document.getElementById('provEditWhisperModel').value = 'large-v3';
-  document.getElementById('provEditWhisperDevice').value = 'cpu';
-  document.getElementById('provEditNotes').value = '';
-  document.getElementById('provEditEnabled').checked = true;
-
-  if (editId) {
-    // Edit mode: find provider
-    var p = null;
-    for (var i = 0; i < providerCache.length; i++) {
-      if (providerCache[i].id === editId) { p = providerCache[i]; break; }
-    }
-    if (p) {
-      title.textContent = '编辑接口: ' + p.name;
-      document.getElementById('provEditId').value = p.id;
-      document.getElementById('provEditIdField').value = p.id;
-      document.getElementById('provEditIdField').disabled = true;
-      document.getElementById('provEditName').value = p.name || '';
-      document.getElementById('provEditProtocol').value = p.protocol || 'openai-compatible';
-      document.getElementById('provEditBase').value = p.api_base || '';
-      // Don't show api_key for edit - leave blank to keep old
-      document.getElementById('provEditTransModel').value = p.translation_model || '';
-      document.getElementById('provEditChatModel').value = p.chat_model || '';
-      document.getElementById('provEditWhisperModel').value = p.whisper_model || 'large-v3';
-      document.getElementById('provEditWhisperDevice').value = p.whisper_device || 'cpu';
-      document.getElementById('provEditNotes').value = p.notes || '';
-      document.getElementById('provEditEnabled').checked = p.enabled !== false;
-    }
-  } else {
-    title.textContent = '新增接口';
-    document.getElementById('provEditIdField').disabled = false;
-  }
-  modal.classList.add('active');
+function toggleAdvanced() {
+  advancedOpen = !advancedOpen;
+  var el = document.getElementById('provAdvancedFields');
+  el.style.display = advancedOpen ? 'block' : 'none';
+  var links = el.previousElementSibling ? el.previousElementSibling.querySelectorAll('a') : [];
+  if (links.length) links[0].textContent = advancedOpen ? '▼ 高级设置' : '▶ 高级设置';
 }
 
-function closeProviderModal() {
-  document.getElementById('providerModal').classList.remove('active');
+function showProviderModal(editId) {
+  loadTemplates().then(function() {
+    var modal = document.getElementById('providerModal');
+    var title = document.getElementById('providerModalTitle');
+    advancedOpen = false;
+    document.getElementById('provAdvancedFields').style.display = 'none';
+    document.getElementById('provEditId').value = '';
+    document.getElementById('provEditName').value = '';
+    document.getElementById('provEditKey').value = '';
+    document.getElementById('provEditIdField').value = '';
+    document.getElementById('provEditProtocol').value = 'openai-compatible';
+    document.getElementById('provEditBase').value = 'https://api.deepseek.com';
+    document.getElementById('provEditTransModel').value = '';
+    document.getElementById('provEditNotes').value = '';
+    document.getElementById('provEditEnabled').checked = true;
+    document.getElementById('provDeprecWarn').style.display = 'none';
+
+    var tsel = document.getElementById('provTemplateSelect');
+    tsel.innerHTML = '';
+    for (var i = 0; i < providerTemplates.length; i++) {
+      tsel.innerHTML += '<option value="' + providerTemplates[i].id + '">' + escapeHtml(providerTemplates[i].name) + '</option>';
+    }
+    tsel.value = 'deepseek';
+
+    if (editId) {
+      var p = null;
+      for (var i = 0; i < providerCache.length; i++) {
+        if (providerCache[i].id === editId) { p = providerCache[i]; break; }
+      }
+      if (p) {
+        title.textContent = '编辑接口: ' + p.name;
+        document.getElementById('provEditId').value = p.id;
+        document.getElementById('provEditName').value = p.name || '';
+        document.getElementById('provEditIdField').value = p.id;
+        document.getElementById('provEditProtocol').value = p.protocol || 'openai-compatible';
+        document.getElementById('provEditBase').value = p.api_base || '';
+        document.getElementById('provEditTransModel').value = p.translation_model || '';
+        document.getElementById('provEditNotes').value = p.notes || '';
+        document.getElementById('provEditEnabled').checked = p.enabled !== false;
+        if (p.template_id && findTemplate(p.template_id)) { tsel.value = p.template_id; }
+        else { tsel.value = 'custom-openai-compatible'; }
+        document.getElementById('provModelInput').value = p.translation_model || '';
+      }
+    } else { title.textContent = '新增接口'; }
+    onTemplateChange();
+    modal.classList.add('active');
+  });
+}
+
+function closeProviderModal() { document.getElementById('providerModal').classList.remove('active'); }
+
+function onTemplateChange() {
+  var tid = document.getElementById('provTemplateSelect').value;
+  var tpl = findTemplate(tid);
+  var ms = document.getElementById('provModelSelect');
+  var mi = document.getElementById('provModelInput');
+  var bf = document.getElementById('provEditBase');
+  var nf = document.getElementById('provEditName');
+  document.getElementById('provDeprecWarn').style.display = 'none';
+  if (tpl && tpl.models && tpl.models.length > 0) {
+    ms.style.display = 'block'; mi.style.display = 'none';
+    ms.innerHTML = '';
+    for (var i = 0; i < tpl.models.length; i++) {
+      ms.innerHTML += '<option value="' + tpl.models[i].id + '"' + (tpl.models[i].default ? ' selected' : '') + '>' + escapeHtml(tpl.models[i].name) + '</option>';
+    }
+    if (tpl.api_base) bf.value = tpl.api_base;
+    if (!nf.value && tpl.name) nf.placeholder = tpl.name;
+  } else {
+    ms.style.display = 'none'; mi.style.display = 'block';
+    mi.placeholder = '输入模型名';
+  }
+}
+
+function onModelChange() {
+  var tid = document.getElementById('provTemplateSelect').value;
+  var tpl = findTemplate(tid);
+  var mv = document.getElementById('provModelSelect').value;
+  var we = document.getElementById('provDeprecWarn');
+  we.style.display = 'none';
+  if (tpl && tpl.deprecated_models) {
+    for (var i = 0; i < tpl.deprecated_models.length; i++) {
+      if (tpl.deprecated_models[i].id === mv) {
+        we.textContent = '⚠ 此模型即将弃用，建议切换为 ' + tpl.deprecated_models[i].replacement;
+        we.style.display = 'block'; break;
+      }
+    }
+  }
 }
 
 function editProvider(id) { showProviderModal(id); }
 
-// ── CRUD ──
-
 async function saveProvider() {
   var editId = document.getElementById('provEditId').value;
   var isEdit = !!editId;
-  var idField = document.getElementById('provEditIdField');
-  var nameField = document.getElementById('provEditName');
-
-  var providerId = idField.value.trim();
-  if (!providerId) { alert('Provider ID 不能为空'); return; }
-  if (!nameField.value.trim()) { alert('名称不能为空'); return; }
+  var tid = document.getElementById('provTemplateSelect').value;
+  var tpl = findTemplate(tid);
+  var ms = document.getElementById('provModelSelect');
+  var mi = document.getElementById('provModelInput');
+  var model = (ms.style.display !== 'none') ? ms.value : mi.value.trim();
+  var name = document.getElementById('provEditName').value.trim() || (tpl ? tpl.name : '');
+  if (!name) { alert('名称不能为空'); return; }
+  if (!model) { alert('模型不能为空'); return; }
 
   var data = {
-    id: providerId,
-    name: nameField.value.trim(),
+    id: document.getElementById('provEditIdField').value.trim(),
+    name: name, template_id: tid,
     protocol: document.getElementById('provEditProtocol').value,
     api_base: document.getElementById('provEditBase').value.trim(),
     api_key: document.getElementById('provEditKey').value.trim(),
-    translation_model: document.getElementById('provEditTransModel').value.trim(),
-    chat_model: document.getElementById('provEditChatModel').value.trim(),
-    whisper_model: document.getElementById('provEditWhisperModel').value,
-    whisper_device: document.getElementById('provEditWhisperDevice').value,
+    model: model,
     notes: document.getElementById('provEditNotes').value.trim(),
     enabled: document.getElementById('provEditEnabled').checked,
   };
+  if (!data.api_base) { alert('API Base 不能为空'); return; }
 
   try {
     var method = isEdit ? 'PUT' : 'POST';
-    var url = isEdit ? '/api/providers/' + encodeURIComponent(providerId) : '/api/providers';
-    var resp = await fetch(url, {
-      method: method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
+    var url = isEdit ? '/api/providers/' + encodeURIComponent(data.id || editId) : '/api/providers';
+    var resp = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     var result = await resp.json();
-    if (resp.ok) {
-      closeProviderModal();
-      loadProviders();
-    } else {
-      alert('保存失败: ' + (result.error || '未知错误'));
-    }
-  } catch (err) {
-    alert('请求失败: ' + err.message);
-  }
+    if (resp.ok) { closeProviderModal(); loadProviders(); }
+    else { alert('保存失败: ' + (result.error || '未知错误')); }
+  } catch (err) { alert('请求失败: ' + err.message); }
 }
 
 async function deleteProvider(id) {
-  if (!confirm('确定删除接口 "' + id + '"？此操作不可撤销。')) return;
+  if (!confirm('确定删除接口 "' + id + '"？')) return;
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
-    if (resp.ok) {
-      loadProviders();
-    } else {
-      alert('删除失败: ' + (result.error || '未知错误'));
-    }
-  } catch (err) {
-    alert('请求失败: ' + err.message);
-  }
+    if (resp.ok) { loadProviders(); } else { alert('删除失败: ' + (result.error || '未知错误')); }
+  } catch (err) { alert('请求失败: ' + err.message); }
 }
 
 async function setActiveProvider(id) {
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
     var result = await resp.json();
-    if (resp.ok) {
-      loadProviders();
-      loadProviderSelect();
-    } else {
-      alert('设置失败: ' + (result.error || '未知错误'));
-    }
-  } catch (err) {
-    alert('请求失败: ' + err.message);
-  }
+    if (resp.ok) { loadProviders(); loadProviderSelect(); }
+    else { alert('设置失败: ' + (result.error || '未知错误')); }
+  } catch (err) { alert('请求失败: ' + err.message); }
 }
 
 async function testProvider(id) {
-  var btn = event.target;
-  var origText = btn.textContent;
-  btn.textContent = '...';
-  btn.disabled = true;
+  var btn = event.target; var origText = btn.textContent; btn.textContent = '...'; btn.disabled = true;
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/test', { method: 'POST' });
     var result = await resp.json();
-    if (result.ok) {
-      alert('连接成功！\n延迟: ' + result.latency_ms + 'ms\n模型: ' + result.model);
-    } else {
-      alert('连接失败: ' + (result.error || '未知错误'));
-    }
-  } catch (err) {
-    alert('测试请求失败: ' + err.message);
-  } finally {
-    btn.textContent = origText;
-    btn.disabled = false;
-  }
+    if (result.ok) { alert('连接成功!\n延迟: ' + result.latency_ms + 'ms\n模型: ' + result.model); }
+    else { alert('连接失败: ' + (result.error || '未知错误')); }
+  } catch (err) { alert('测试失败: ' + err.message); }
+  finally { btn.textContent = origText; btn.disabled = false; }
 }
 
 async function testActiveProvider() {
   try {
-    var resp = await fetch('/api/providers/active');
-    var data = await resp.json();
-    if (data.active && data.active.id) {
-      testProvider(data.active.id);
-    } else {
-      alert('未设置默认接口。请先添加并设为默认。');
-    }
-  } catch (err) {
-    alert('获取默认接口失败: ' + err.message);
-  }
+    var resp = await fetch('/api/providers/active'); var data = await resp.json();
+    if (data.active && data.active.id) { testProvider(data.active.id); }
+    else { alert('未设置默认接口。'); }
+  } catch (err) { alert('获取默认接口失败: ' + err.message); }
 }
 
-// ── Provider Selector for Transcribe Tab ──
-
 async function loadProviderSelect() {
-  var sel = document.getElementById('provider_select');
-  if (!sel) return;
+  var sel = document.getElementById('provider_select'); if (!sel) return;
   var currentVal = sel.value;
-
   try {
-    var resp = await fetch('/api/providers');
-    var data = await resp.json();
-    var providers = data.providers || [];
-
-    // Rebuild options
+    var resp = await fetch('/api/providers'); var data = await resp.json();
     sel.innerHTML = '<option value="">-- 手动输入 --</option>';
     var activeId = '';
-    for (var i = 0; i < providers.length; i++) {
-      var p = providers[i];
-      var label = p.name + ' (' + (p.translation_model || p.chat_model || '?') + ')';
-      sel.innerHTML += '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(label) + '</option>';
+    for (var i = 0; i < data.providers.length; i++) {
+      var p = data.providers[i];
+      sel.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + ' (' + (p.translation_model || '?') + ')</option>';
     }
-
-    // Get active provider
-    try {
-      var ar = await fetch('/api/providers/active');
-      var ad = await ar.json();
-      if (ad.active) activeId = ad.active.id;
-    } catch (e) {}
-
-    // Restore previous selection or default to active
-    if (currentVal && sel.querySelector('option[value="' + currentVal + '"]')) {
-      sel.value = currentVal;
-    } else if (activeId) {
-      sel.value = activeId;
-      onProviderSelect(); // Auto-fill if default selected
-    }
-  } catch (err) {
-    // Silently fail - user can still use manual input
-  }
+    try { var ar = await fetch('/api/providers/active'); var ad = await ar.json(); if (ad.active) activeId = ad.active.id; } catch(e) {}
+    if (currentVal && sel.querySelector('option[value="' + currentVal + '"]')) { sel.value = currentVal; }
+    else if (activeId) { sel.value = activeId; onProviderSelect(); }
+  } catch(e) {}
 }
 
 function onProviderSelect() {
-  var sel = document.getElementById('provider_select');
-  var id = sel.value;
-  if (!id) return; // Manual mode
-
-  // Find in cache
+  var id = document.getElementById('provider_select').value; if (!id) return;
   var p = null;
-  for (var i = 0; i < providerCache.length; i++) {
-    if (providerCache[i].id === id) { p = providerCache[i]; break; }
-  }
-  if (!p) {
-    // Try to reload
-    loadProviderSelect();
-    return;
-  }
-
-  // Auto-fill fields
+  for (var i = 0; i < providerCache.length; i++) { if (providerCache[i].id === id) { p = providerCache[i]; break; } }
+  if (!p) { loadProviderSelect(); return; }
   if (p.protocol) document.getElementById('api_provider').value = p.protocol;
   if (p.api_base) document.getElementById('api_base').value = p.api_base;
   if (p.api_key_masked) document.getElementById('api_key').placeholder = '已保存: ' + p.api_key_masked;
-  if (p.translation_model || p.chat_model) document.getElementById('llm_model').value = p.translation_model || p.chat_model || '';
+  if (p.translation_model) document.getElementById('llm_model').value = p.translation_model;
 }
 
-// Set up key event to prevent provider autofill from being treated as manual override
-document.getElementById('api_key').addEventListener('focus', function() {
-  // When user manually focuses the key field, switch provider selector to manual
-  var sel = document.getElementById('provider_select');
-  if (sel && sel.value) {
-    // Don't reset - just let user type. The manual value takes priority.
-  }
-});
-
-// Load on page init
+document.getElementById('api_key').addEventListener('focus', function() { /* manual override */ });
 loadProviderSelect();
 </script>
 </body>
