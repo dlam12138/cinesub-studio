@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "active": "auto-detect",
+  "profiles": [
+    {
+      "id": "my-french-film",
+      "name": "我的法语电影配置",
+      "description": "自定义法语电影配置，覆盖内置 fr-film",
+      "source_language": "fr",
+      "target_language": "zh-CN",
+      "asr": {
+        "whisper_model": "large-v3",
+        "whisper_device": "cuda",
+        "compute_type": "float16",
+        "language": "fr",
+        "task": "transcribe",
+        "vad_filter": true,
+        "beam_size": 5,
+        "condition_on_previous_text": true
+      },
+      "quality": {
+        "language_probability_warning": 0.90,
+        "language_probability_error": 0.70,
+        "max_cps_zh": 8,
+        "max_chars_per_line_zh": 18,
+        "max_chars_per_subtitle_zh": 36
+      },
+      "llm_stages": {
+        "proofread_source": false,
+        "polish_translation": false
+      },
+      "translation_style": "法语电影中文字幕风格。翻译自然、简洁、适合观影。"
+    }
+  ]
+}

@@ -131,13 +131,47 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"active": provider})
             return
 
+        # ── Language Profile API ──
+        if parsed.path == "/api/language-profiles":
+            from language_profile_store import list_language_profiles
+            self.send_json({"profiles": list_language_profiles()})
+            return
+
+        if parsed.path == "/api/language-profiles/active":
+            from language_profile_store import get_active_language_profile
+            self.send_json({"active": get_active_language_profile()})
+            return
+
         self.send_error_json(404, "Not found")
 
     def do_PUT(self) -> None:
-        """Handle PUT requests — delegate Provider updates to do_POST logic."""
+        """Handle PUT requests — Provider and Language Profile updates."""
         parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/providers/") and len(parsed.path.split("/")) == 4:
-            provider_id = parsed.path.split("/")[3]
+        path_parts = parsed.path.split("/")
+
+        # Language Profile update
+        if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
+            lpid = path_parts[3]
+            body = self._read_json_body()
+            if not body:
+                self.send_error_json(400, "请求体为空")
+                return
+            body["id"] = lpid
+            from language_profile_store import upsert_language_profile, validate_language_profile
+            errors = validate_language_profile(body)
+            if errors:
+                self.send_error_json(400, "; ".join(errors))
+                return
+            try:
+                result = upsert_language_profile(body)
+                self.send_json({"ok": True, "profile": result})
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+            return
+
+        # Provider update
+        if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
+            provider_id = path_parts[3]
             body = self._read_json_body()
             if not body:
                 self.send_error_json(400, "请求体为空")
@@ -150,22 +184,38 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "provider": result})
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
-        else:
-            self.send_error_json(404, "Not found")
+            return
+
+        self.send_error_json(404, "Not found")
 
     def do_DELETE(self) -> None:
-        """Handle DELETE requests — delete a provider."""
+        """Handle DELETE requests — Provider and Language Profile deletions."""
         parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/providers/") and len(parsed.path.split("/")) == 4:
-            provider_id = parsed.path.split("/")[3]
+        path_parts = parsed.path.split("/")
+
+        # Language Profile delete
+        if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
+            lpid = path_parts[3]
+            from language_profile_store import delete_language_profile
+            try:
+                delete_language_profile(lpid)
+                self.send_json({"ok": True})
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+            return
+
+        # Provider delete
+        if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
+            provider_id = path_parts[3]
             from provider_store import delete_provider
             try:
                 delete_provider(provider_id)
                 self.send_json({"ok": True})
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
-        else:
-            self.send_error_json(404, "Not found")
+            return
+
+        self.send_error_json(404, "Not found")
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -173,7 +223,8 @@ class Handler(BaseHTTPRequestHandler):
         # ── Pipeline: run (background) — 完整处理 input 目录 ──
         if parsed.path == "/api/pipeline/run":
             body = self._read_json_body() or {}
-            provider_id = body.get("provider", "")
+            provider_id = body.get("provider") or body.get("provider_id", "")
+            language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
             with PIPELINE_TASK_LOCK:
                 if PIPELINE_TASK["running"]:
                     self.send_json(
@@ -185,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
                 PIPELINE_TASK["action"] = "run"
                 PIPELINE_TASK["started_at"] = time.time()
 
-            thread = threading.Thread(target=_run_pipeline_background, args=("run", provider_id), daemon=True)
+            thread = threading.Thread(target=_run_pipeline_background, args=("run", provider_id, language_profile_id), daemon=True)
             thread.start()
             self.send_json({"ok": True, "message": "流水线已启动，正在处理 input 目录"}, status=202)
             return
@@ -193,7 +244,8 @@ class Handler(BaseHTTPRequestHandler):
         # ── Pipeline: retry-failed (background) — 仅重试失败任务 ──
         if parsed.path == "/api/pipeline/retry-failed":
             body = self._read_json_body() or {}
-            provider_id = body.get("provider", "")
+            provider_id = body.get("provider") or body.get("provider_id", "")
+            language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
             with PIPELINE_TASK_LOCK:
                 if PIPELINE_TASK["running"]:
                     self.send_json(
@@ -205,9 +257,38 @@ class Handler(BaseHTTPRequestHandler):
                 PIPELINE_TASK["action"] = "retry-failed"
                 PIPELINE_TASK["started_at"] = time.time()
 
-            thread = threading.Thread(target=_run_pipeline_background, args=("retry-failed", provider_id), daemon=True)
+            thread = threading.Thread(target=_run_pipeline_background, args=("retry-failed", provider_id, language_profile_id), daemon=True)
             thread.start()
             self.send_json({"ok": True, "message": "retry-failed 已启动，仅重试之前失败的任务"}, status=202)
+            return
+
+        # ── Language Profile API (POST) ──
+        if parsed.path == "/api/language-profiles":
+            body = self._read_json_body()
+            if not body:
+                self.send_error_json(400, "请求体为空")
+                return
+            from language_profile_store import upsert_language_profile, validate_language_profile
+            errors = validate_language_profile(body)
+            if errors:
+                self.send_error_json(400, "; ".join(errors))
+                return
+            try:
+                result = upsert_language_profile(body)
+                self.send_json({"ok": True, "profile": result}, status=201)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+            return
+
+        # Language Profile activate
+        if parsed.path.startswith("/api/language-profiles/") and parsed.path.endswith("/activate"):
+            lpid = parsed.path.split("/")[3]
+            from language_profile_store import set_active_language_profile
+            try:
+                set_active_language_profile(lpid)
+                self.send_json({"ok": True, "active": lpid})
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
             return
 
         # ── Provider API (POST) ──
@@ -373,12 +454,13 @@ def _run_pipeline_command(action: str, timeout: int = 30) -> dict:
         return {"ok": False, "command": action, "error": str(exc)}
 
 
-def _run_pipeline_background(action: str, provider_id: str = "") -> None:
+def _run_pipeline_background(action: str, provider_id: str = "", language_profile_id: str = "") -> None:
     """Run batch_worker.py with --<action> in background, writing output to pipeline log.
 
     Args:
         action: "run" (full pipeline) or "retry-failed" (retry only)
-        provider_id: optional provider ID to use for translation config
+        provider_id: optional provider ID for LLM API config
+        language_profile_id: optional language profile ID for ASR/translation/quality config
     """
     PIPELINE_LOG.parent.mkdir(parents=True, exist_ok=True)
 
@@ -395,7 +477,7 @@ def _run_pipeline_background(action: str, provider_id: str = "") -> None:
             f"--{action}",
         ]
 
-    # 如果未指定 provider_id，使用 active provider
+    # Auto-detect active provider if not specified
     if not provider_id:
         try:
             from provider_store import get_active_provider
@@ -405,8 +487,20 @@ def _run_pipeline_background(action: str, provider_id: str = "") -> None:
         except Exception:
             pass
 
+    # Auto-detect active language profile if not specified
+    if not language_profile_id:
+        try:
+            from language_profile_store import get_active_language_profile
+            active_lp = get_active_language_profile()
+            if active_lp:
+                language_profile_id = active_lp.get("id", "")
+        except Exception:
+            pass
+
     if provider_id:
         command += ["--provider", provider_id]
+    if language_profile_id:
+        command += ["--language-profile", language_profile_id]
 
     env = os.environ.copy()
     env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
@@ -421,6 +515,8 @@ def _run_pipeline_background(action: str, provider_id: str = "") -> None:
         log.write(f"  命令: {' '.join(command)}\n")
         if provider_id:
             log.write(f"  Provider: {provider_id}\n")
+        if language_profile_id:
+            log.write(f"  Language Profile: {language_profile_id}\n")
         log.write(f"{'='*60}\n")
 
     try:

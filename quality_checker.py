@@ -154,8 +154,20 @@ def _parse_timestamp(time_line: str) -> tuple[float, float]:
 
 # ── 质检核心函数 ─────────────────────────────────────────────────────────
 
-def check_source_srt(srt_path: Path) -> QualityReport:
-    """对原始语言 SRT 进行格式检查。"""
+def check_source_srt(
+    srt_path: Path,
+    quality_thresholds: dict | None = None,
+    lang_json: dict | None = None,
+) -> QualityReport:
+    """对原始语言 SRT 进行格式检查。
+
+    Args:
+        srt_path: SRT 文件路径
+        quality_thresholds: 来自 Language Profile 的质检阈值
+        lang_json: .lang.json 中的语言检测结果
+    """
+    if quality_thresholds is None:
+        quality_thresholds = {}
     raw_text = srt_path.read_text(encoding="utf-8")
     entries = parse_srt(srt_path)
     report = QualityReport(
@@ -196,6 +208,41 @@ def check_source_srt(srt_path: Path) -> QualityReport:
     # 7. 时间码格式检查
     _check_timestamp_format(entries, report)
 
+    # 8. 语言置信度检查（来自 Language Profile）
+    if lang_json:
+        prob = lang_json.get("language_probability")
+        forced = lang_json.get("forced_language")
+        if prob is not None:
+            warn_threshold = quality_thresholds.get("language_probability_warning", 0.85)
+            err_threshold = quality_thresholds.get("language_probability_error", 0.60)
+            if prob < err_threshold:
+                report.issues.append(QualityIssue(
+                    index=0, type="language_uncertain_error", severity="error",
+                    text=f"语言识别置信度极低: {prob:.2f} (阈值: {err_threshold})",
+                    suggestion="建议人工确认源语言，或切换正确的 Language Profile",
+                ))
+            elif prob < warn_threshold:
+                report.issues.append(QualityIssue(
+                    index=0, type="language_uncertain_warning", severity="warning",
+                    text=f"语言识别置信度偏低: {prob:.2f} (阈值: {warn_threshold})",
+                    suggestion="建议人工抽查确认语言正确性",
+                ))
+        # 源语言不匹配检查
+        if forced and detected:
+            detected_lang = lang_json.get("source_language", "")
+            if detected_lang and detected_lang != forced:
+                report.issues.append(QualityIssue(
+                    index=0, type="source_language_mismatch", severity="warning",
+                    text=f"检测到语言 '{detected_lang}' 与强制语言 '{forced}' 不一致",
+                    suggestion="请确认源语言是否正确，或切换为 auto-detect",
+                ))
+
+    # 9. 中文 CPS 和字数检查（使用 profile 阈值）
+    profile_max_cps = quality_thresholds.get("max_cps_zh", 8)
+    profile_max_line = quality_thresholds.get("max_chars_per_line_zh", 18)
+    profile_max_sub = quality_thresholds.get("max_chars_per_subtitle_zh", 36)
+    _check_cps_and_length(entries, report, profile_max_cps, profile_max_line, profile_max_sub)
+
     _finalize_report(report)
     return report
 
@@ -204,8 +251,11 @@ def check_translation_quality(
     source_srt: Path,
     translated_srt: Path,
     target_language: str = "zh-CN",
+    quality_thresholds: dict | None = None,
 ) -> QualityReport:
     """对翻译后字幕进行质量检查。"""
+    if quality_thresholds is None:
+        quality_thresholds = {}
     source_entries = parse_srt(source_srt)
     translated_entries = parse_srt(translated_srt)
     report = QualityReport(
@@ -461,6 +511,59 @@ def _check_untranslated(
                     break
 
 
+def _check_cps_and_length(
+    entries: list[SrtEntry],
+    report: QualityReport,
+    max_cps: int,
+    max_line: int,
+    max_sub: int,
+) -> None:
+    """使用 Language Profile 阈值检查 CPS 和字幕长度。"""
+    for entry in entries:
+        text = entry.text
+        # 只检查包含中文的字幕
+        cn_chars = len(re.findall(r"[一-鿿]", text))
+        if cn_chars == 0:
+            continue
+        duration = entry.end_time - entry.start_time
+        # CPS 检查
+        if duration > 0:
+            cps = cn_chars / duration
+            if cps > max_cps:
+                report.issues.append(QualityIssue(
+                    index=entry.index,
+                    type="zh_cps_too_high",
+                    severity="warning",
+                    text=f"中文字幕阅读速度过高: {cps:.1f} 字/秒 (阈值: {max_cps})",
+                    snippet=text[:80],
+                    suggestion="考虑拆分或精简字幕内容",
+                ))
+        # 单行长度
+        lines = text.split("\n")
+        for line in lines:
+            line_cn = len(re.findall(r"[一-鿿]", line))
+            if line_cn > max_line:
+                report.issues.append(QualityIssue(
+                    index=entry.index,
+                    type="zh_line_too_long",
+                    severity="warning",
+                    text=f"中文单行过长: {line_cn} 字 (阈值: {max_line})",
+                    snippet=line[:80],
+                    suggestion="考虑将长行拆分为两行",
+                ))
+                break
+        # 单条总字数
+        if cn_chars > max_sub:
+            report.issues.append(QualityIssue(
+                index=entry.index,
+                type="zh_subtitle_too_long",
+                severity="warning",
+                text=f"单条中文字幕总字数过多: {cn_chars} 字 (阈值: {max_sub})",
+                snippet=text[:80],
+                suggestion="考虑拆分此字幕为多条",
+            ))
+
+
 def _check_mixed_language(entries: list[SrtEntry], report: QualityReport) -> None:
     """检查中英文是否混乱（大量英文字母出现在中文翻译中）。
 
@@ -598,6 +701,7 @@ def run_quality_check(
     translated_srt: Path | None = None,
     target_language: str = "zh-CN",
     output_dir: Path | None = None,
+    quality_thresholds: dict | None = None,
 ) -> QualityReport:
     """运行完整的质量检查流程。
 
@@ -606,21 +710,33 @@ def run_quality_check(
         translated_srt: 翻译后 SRT 文件路径（可选）
         target_language: 翻译目标语言
         output_dir: 报告输出目录（默认与 source_srt 同目录）
+        quality_thresholds: Language Profile 中的质检阈值
 
     Returns:
         QualityReport 对象
     """
     if output_dir is None:
         output_dir = source_srt.parent
+    if quality_thresholds is None:
+        quality_thresholds = {}
+
+    # 尝试读取 .lang.json 获取语言检测信息
+    lang_json: dict | None = None
+    lang_json_path = source_srt.with_suffix(".lang.json")
+    if lang_json_path.exists():
+        try:
+            lang_json = json.loads(lang_json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
 
     # 原文格式检查
     print(f"检查原文 SRT: {source_srt}")
-    report = check_source_srt(source_srt)
+    report = check_source_srt(source_srt, quality_thresholds, lang_json)
 
     # 译文质量检查
     if translated_srt and translated_srt.exists():
         print(f"检查译文 SRT: {translated_srt}")
-        report = check_translation_quality(source_srt, translated_srt, target_language)
+        report = check_translation_quality(source_srt, translated_srt, target_language, quality_thresholds)
 
     # 保存报告
     stem = source_srt.stem

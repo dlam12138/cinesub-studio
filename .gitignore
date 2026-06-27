@@ -13,6 +13,7 @@ archive/
 failed/
 logs/
 config/providers.local.json
+config/language_profiles.local.json
 __pycache__/
 *.pyc
 *.pyo

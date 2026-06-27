@@ -485,6 +485,7 @@
     <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">⚙ 流水线控制台</button>
     <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">📝 单文件处理</button>
     <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">🔑 模型接口</button>
+    <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')">🌐 语言配置</button>
   </nav>
 </header>
 
@@ -497,6 +498,10 @@
       <button onclick="pipelineAction('status')" id="btn-status">📊 查看状态</button>
       <button onclick="pipelineAction('review')" id="btn-review">⚠️ 异常复核</button>
       <button onclick="pipelineAction('run')" id="btn-run" class="primary">▶ 开始处理 input</button>
+      <span style="font-size:13px;align-self:center;color:var(--muted);margin:0 4px">Provider:</span>
+      <select id="pipelineProviderSelect" style="width:auto;min-width:120px" onchange="updatePipelineProvider()"></select>
+      <span style="font-size:13px;align-self:center;color:var(--muted);margin:0 4px">语言:</span>
+      <select id="pipelineLangProfileSelect" style="width:auto;min-width:120px" onchange="updatePipelineLangProfile()"></select>
       <span class="spacer"></span>
       <button onclick="pipelineAction('retry')" id="btn-retry" class="danger">🔄 重试失败</button>
       <button onclick="refreshAll()" id="btn-refresh">↻ 刷新全部</button>
@@ -606,7 +611,12 @@
 
           <hr style="border:0; border-top:1px solid var(--line); margin: 18px 0 12px;">
 
-          <h2>翻译设置</h2>
+          <h2>语言与翻译设置</h2>
+
+          <label for="lang_profile_select">语言配置档案</label>
+          <select id="lang_profile_select" onchange="onLangProfileSelect()">
+            <option value="">-- 手动设置 --</option>
+          </select>
 
           <label for="provider_select">模型接口配置</label>
           <select id="provider_select" name="provider_select" onchange="onProviderSelect()">
@@ -722,6 +732,84 @@
     </div>
   </div>
 
+  <!-- ═══════════════ Language Profile Tab ═══════════════ -->
+  <div id="tab-langprofiles" class="tab-content">
+    <div class="provider-active-bar" id="lpActiveBar">
+      <span>当前默认：</span>
+      <strong id="activeLPName">auto-detect</strong>
+    </div>
+
+    <div class="actions">
+      <button onclick="showLPModal()" class="primary">+ 新增配置</button>
+      <button onclick="loadLangProfiles()">↻ 刷新</button>
+      <span class="spacer"></span>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>语言配置列表</h2>
+      <div id="lpList" class="placeholder">加载中...</div>
+    </div>
+  </div>
+
+  <!-- Language Profile Edit Modal -->
+  <div class="modal-overlay" id="lpModal">
+    <div class="modal">
+      <h3 id="lpModalTitle">新增语言配置</h3>
+      <input type="hidden" id="lpEditId">
+      <div class="row">
+        <div><label>Profile ID</label><input id="lpEditIdField" type="text" placeholder="my-french"></div>
+        <div><label>名称</label><input id="lpEditName" type="text" placeholder="我的法语配置"></div>
+      </div>
+      <label>描述</label><input id="lpEditDesc" type="text" placeholder="可选">
+      <div class="row">
+        <div><label>源语言</label><select id="lpEditSrcLang">
+          <option value="auto">自动检测 (auto)</option><option value="fr">法语 (fr)</option><option value="es">西班牙语 (es)</option><option value="de">德语 (de)</option><option value="it">意大利语 (it)</option><option value="pt">葡萄牙语 (pt)</option><option value="ru">俄语 (ru)</option><option value="ja">日语 (ja)</option><option value="ko">韩语 (ko)</option><option value="en">英语 (en)</option><option value="zh">中文 (zh)</option>
+        </select></div>
+        <div><label>目标语言</label><select id="lpEditTgtLang">
+          <option value="zh-CN">中文 zh-CN</option><option value="zh-TW">繁体中文 zh-TW</option><option value="en">英文 en</option>
+        </select></div>
+      </div>
+      <div class="row">
+        <div><label>Whisper 模型</label><select id="lpEditWhisperModel">
+          <option value="large-v3">large-v3</option><option value="medium">medium</option><option value="small">small</option><option value="tiny">tiny</option>
+        </select></div>
+        <div><label>Whisper 设备</label><select id="lpEditWhisperDevice">
+          <option value="auto">自动</option><option value="cuda">CUDA</option><option value="cpu">CPU</option>
+        </select></div>
+      </div>
+      <div class="row">
+        <div><label>compute_type</label><select id="lpEditComputeType">
+          <option value="float16">float16 (GPU)</option><option value="int8">int8 (CPU)</option><option value="auto">自动</option>
+        </select></div>
+        <div><label>beam_size</label><input id="lpEditBeamSize" type="number" min="1" max="10" value="5"></div>
+      </div>
+      <label class="check"><input id="lpEditVAD" type="checkbox" checked> 启用 VAD 静音过滤</label>
+      <label class="check"><input id="lpEditCondPrev" type="checkbox" checked> condition_on_previous_text</label>
+
+      <h3 style="margin:14px 0 8px;font-size:14px">质检阈值</h3>
+      <div class="row">
+        <div><label>语言置信度 warning</label><input id="lpEditProbWarn" type="number" step="0.05" min="0" max="1" value="0.85"></div>
+        <div><label>语言置信度 error</label><input id="lpEditProbErr" type="number" step="0.05" min="0" max="1" value="0.60"></div>
+      </div>
+      <div class="row">
+        <div><label>中文每秒最大字 (CPS)</label><input id="lpEditCPS" type="number" value="8"></div>
+        <div><label>单行最大字数</label><input id="lpEditLineChars" type="number" value="18"></div>
+      </div>
+      <label>单条最大字数</label><input id="lpEditSubChars" type="number" value="36">
+
+      <h3 style="margin:14px 0 8px;font-size:14px">LLM 阶段与翻译风格</h3>
+      <label class="check"><input id="lpEditProofread" type="checkbox"> 启用原文校对 (proofread_source)</label>
+      <label class="check"><input id="lpEditPolish" type="checkbox"> 启用译文润色 (polish_translation)</label>
+      <label>翻译风格提示词</label>
+      <textarea id="lpEditStyle" rows="4" placeholder="将原文字幕翻译为自然、简洁、适合观影的简体中文字幕..."></textarea>
+
+      <div class="btn-row">
+        <button class="btn-cancel" onclick="closeLPModal()">取消</button>
+        <button class="btn-save" onclick="saveLP()">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Provider Edit Modal -->
   <div class="modal-overlay" id="providerModal">
     <div class="modal">
@@ -799,10 +887,22 @@ async function pipelineAction(action) {
   var url = '/api/pipeline/' + urlPath;
 
   var labelMap = {scan:'扫描 input', status:'查看状态', review:'异常复核', retry:'重试失败', run:'开始处理 input'};
+
+  // Include provider & language profile selections in POST body
+  var fetchOpts = { method: method };
+  if (isPost) {
+    var provSel = document.getElementById('pipelineProviderSelect');
+    var lpSel = document.getElementById('pipelineLangProfileSelect');
+    var body = {};
+    if (provSel && provSel.value) body.provider_id = provSel.value;
+    if (lpSel && lpSel.value) body.language_profile_id = lpSel.value;
+    fetchOpts.headers = { 'Content-Type': 'application/json' };
+    fetchOpts.body = JSON.stringify(body);
+  }
   appendLog('执行: ' + (labelMap[action] || action) + ' ...');
 
   try {
-    var resp = await fetch(url, { method: method });
+    var resp = await fetch(url, fetchOpts);
     var data = await resp.json();
 
     // Handle 409 Conflict (task already running)
@@ -1228,7 +1328,287 @@ function escapeHtml(text) {
   });
 })();
 
-// ═══════════════════ Provider Management ═══════════════════
+// ═══════════════════ Pipeline Selects ═══════════════════
+
+async function loadPipelineSelects() {
+  // Load provider select
+  var ps = document.getElementById('pipelineProviderSelect');
+  if (ps) {
+    ps.innerHTML = '<option value="">(active provider)</option>';
+    try {
+      var r = await fetch('/api/providers');
+      var d = await r.json();
+      (d.providers || []).forEach(function(p) {
+        if (p.enabled !== false) ps.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>';
+      });
+    } catch(e) {}
+  }
+  // Load language profile select
+  var ls = document.getElementById('pipelineLangProfileSelect');
+  if (ls) {
+    ls.innerHTML = '<option value="">(active profile)</option>';
+    try {
+      var r2 = await fetch('/api/language-profiles');
+      var d2 = await r2.json();
+      (d2.profiles || []).forEach(function(p) {
+        ls.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>';
+      });
+    } catch(e) {}
+  }
+}
+
+function updatePipelineProvider() {}  // No-op, value used at submit time
+function updatePipelineLangProfile() {}  // No-op, value used at submit time
+
+// ═══════════════════ Language Profiles ═══════════════════
+
+var langProfileCache = [];
+
+async function loadLangProfiles() {
+  try {
+    var resp = await fetch('/api/language-profiles');
+    var data = await resp.json();
+    langProfileCache = data.profiles || [];
+    renderLPList();
+    renderLPActive();
+  } catch (err) {
+    document.getElementById('lpList').innerHTML = '<div class="placeholder">加载失败: ' + escapeHtml(String(err)) + '</div>';
+  }
+}
+
+function renderLPActive() {
+  var el = document.getElementById('activeLPName');
+  fetch('/api/language-profiles/active').then(function(r) { return r.json(); }).then(function(d) {
+    if (d.active) el.textContent = d.active.name + ' (' + d.active.id + ')';
+    else el.textContent = 'auto-detect';
+  }).catch(function() { el.textContent = 'auto-detect'; });
+}
+
+function renderLPList() {
+  var el = document.getElementById('lpList');
+  if (langProfileCache.length === 0) {
+    el.innerHTML = '<div class="placeholder">暂无自定义配置。内置 auto-detect / fr-film / generic-european-film 始终可用。</div>';
+    return;
+  }
+  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>ID</th><th>源语言</th><th>目标</th><th>ASR</th><th>设备</th><th>类型</th><th class="col-act">操作</th></tr></thead><tbody>';
+  for (var i = 0; i < langProfileCache.length; i++) {
+    var p = langProfileCache[i];
+    var badge = p.builtin ? '<span class="badge badge-pending">内置</span>' : '<span class="badge badge-ok">自定义</span>';
+    var asr = (p.asr || {});
+    html += '<tr>';
+    html += '<td><strong>' + escapeHtml(p.name) + '</strong></td>';
+    html += '<td>' + escapeHtml(p.id) + '</td>';
+    html += '<td>' + escapeHtml(p.source_language || 'auto') + '</td>';
+    html += '<td>' + escapeHtml(p.target_language || 'zh-CN') + '</td>';
+    html += '<td>' + escapeHtml(asr.whisper_model || '?') + '</td>';
+    html += '<td>' + escapeHtml(asr.whisper_device || 'cpu') + '</td>';
+    html += '<td>' + badge + '</td>';
+    html += '<td class="col-act">';
+    html += '<button class="btn-primary" onclick="setActiveLP(\'' + p.id + '\')">默认</button>';
+    if (!p.builtin) {
+      html += '<button onclick="editLP(\'' + p.id + '\')">编辑</button>';
+      html += '<button class="btn-danger" onclick="deleteLP(\'' + p.id + '\')">删除</button>';
+    }
+    html += '</td></tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+// ── Modal ──
+
+function showLPModal(editId) {
+  var modal = document.getElementById('lpModal');
+  var title = document.getElementById('lpModalTitle');
+  ['lpEditId','lpEditIdField','lpEditName','lpEditDesc'].forEach(function(id) { document.getElementById(id).value = ''; });
+  document.getElementById('lpEditSrcLang').value = 'auto';
+  document.getElementById('lpEditTgtLang').value = 'zh-CN';
+  document.getElementById('lpEditWhisperModel').value = 'large-v3';
+  document.getElementById('lpEditWhisperDevice').value = 'cuda';
+  document.getElementById('lpEditComputeType').value = 'float16';
+  document.getElementById('lpEditBeamSize').value = '5';
+  document.getElementById('lpEditVAD').checked = true;
+  document.getElementById('lpEditCondPrev').checked = true;
+  document.getElementById('lpEditProbWarn').value = '0.85';
+  document.getElementById('lpEditProbErr').value = '0.60';
+  document.getElementById('lpEditCPS').value = '8';
+  document.getElementById('lpEditLineChars').value = '18';
+  document.getElementById('lpEditSubChars').value = '36';
+  document.getElementById('lpEditProofread').checked = false;
+  document.getElementById('lpEditPolish').checked = false;
+  document.getElementById('lpEditStyle').value = '';
+
+  if (editId) {
+    var p = null;
+    for (var i = 0; i < langProfileCache.length; i++) {
+      if (langProfileCache[i].id === editId) { p = langProfileCache[i]; break; }
+    }
+    if (p) {
+      title.textContent = '编辑语言配置: ' + p.name;
+      document.getElementById('lpEditId').value = p.id;
+      document.getElementById('lpEditIdField').value = p.id;
+      document.getElementById('lpEditIdField').disabled = true;
+      document.getElementById('lpEditName').value = p.name || '';
+      document.getElementById('lpEditDesc').value = p.description || '';
+      document.getElementById('lpEditSrcLang').value = p.source_language || 'auto';
+      document.getElementById('lpEditTgtLang').value = p.target_language || 'zh-CN';
+      var a = p.asr || {};
+      document.getElementById('lpEditWhisperModel').value = a.whisper_model || 'large-v3';
+      document.getElementById('lpEditWhisperDevice').value = a.whisper_device || 'cuda';
+      document.getElementById('lpEditComputeType').value = a.compute_type || 'float16';
+      document.getElementById('lpEditBeamSize').value = a.beam_size || 5;
+      document.getElementById('lpEditVAD').checked = a.vad_filter !== false;
+      document.getElementById('lpEditCondPrev').checked = a.condition_on_previous_text !== false;
+      var q = p.quality || {};
+      document.getElementById('lpEditProbWarn').value = q.language_probability_warning || 0.85;
+      document.getElementById('lpEditProbErr').value = q.language_probability_error || 0.60;
+      document.getElementById('lpEditCPS').value = q.max_cps_zh || 8;
+      document.getElementById('lpEditLineChars').value = q.max_chars_per_line_zh || 18;
+      document.getElementById('lpEditSubChars').value = q.max_chars_per_subtitle_zh || 36;
+      var s = p.llm_stages || {};
+      document.getElementById('lpEditProofread').checked = s.proofread_source === true;
+      document.getElementById('lpEditPolish').checked = s.polish_translation === true;
+      document.getElementById('lpEditStyle').value = p.translation_style || '';
+    }
+  } else {
+    title.textContent = '新增语言配置';
+    document.getElementById('lpEditIdField').disabled = false;
+  }
+  modal.classList.add('active');
+}
+
+function closeLPModal() { document.getElementById('lpModal').classList.remove('active'); }
+function editLP(id) { showLPModal(id); }
+
+async function saveLP() {
+  var editId = document.getElementById('lpEditId').value;
+  var isEdit = !!editId;
+  var pid = document.getElementById('lpEditIdField').value.trim();
+  if (!pid) { alert('Profile ID 不能为空'); return; }
+  if (!document.getElementById('lpEditName').value.trim()) { alert('名称不能为空'); return; }
+
+  var data = {
+    id: pid,
+    name: document.getElementById('lpEditName').value.trim(),
+    description: document.getElementById('lpEditDesc').value.trim(),
+    source_language: document.getElementById('lpEditSrcLang').value,
+    target_language: document.getElementById('lpEditTgtLang').value,
+    asr: {
+      whisper_model: document.getElementById('lpEditWhisperModel').value,
+      whisper_device: document.getElementById('lpEditWhisperDevice').value,
+      compute_type: document.getElementById('lpEditComputeType').value,
+      beam_size: parseInt(document.getElementById('lpEditBeamSize').value) || 5,
+      vad_filter: document.getElementById('lpEditVAD').checked,
+      condition_on_previous_text: document.getElementById('lpEditCondPrev').checked,
+    },
+    quality: {
+      language_probability_warning: parseFloat(document.getElementById('lpEditProbWarn').value) || 0.85,
+      language_probability_error: parseFloat(document.getElementById('lpEditProbErr').value) || 0.60,
+      max_cps_zh: parseInt(document.getElementById('lpEditCPS').value) || 8,
+      max_chars_per_line_zh: parseInt(document.getElementById('lpEditLineChars').value) || 18,
+      max_chars_per_subtitle_zh: parseInt(document.getElementById('lpEditSubChars').value) || 36,
+    },
+    llm_stages: {
+      proofread_source: document.getElementById('lpEditProofread').checked,
+      polish_translation: document.getElementById('lpEditPolish').checked,
+    },
+    translation_style: document.getElementById('lpEditStyle').value.trim(),
+  };
+
+  try {
+    var method = isEdit ? 'PUT' : 'POST';
+    var url = isEdit ? '/api/language-profiles/' + encodeURIComponent(pid) : '/api/language-profiles';
+    var resp = await fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    var result = await resp.json();
+    if (resp.ok) {
+      closeLPModal();
+      loadLangProfiles();
+      loadPipelineSelects();
+      loadLangProfileSelect();
+    } else {
+      alert('保存失败: ' + (result.error || '未知错误'));
+    }
+  } catch (err) {
+    alert('请求失败: ' + err.message);
+  }
+}
+
+async function deleteLP(id) {
+  if (!confirm('确定删除语言配置 "' + id + '"？')) return;
+  try {
+    var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id), { method: 'DELETE' });
+    var result = await resp.json();
+    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); }
+    else { alert('删除失败: ' + (result.error || '未知错误')); }
+  } catch (err) { alert('请求失败: ' + err.message); }
+}
+
+async function setActiveLP(id) {
+  try {
+    var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
+    var result = await resp.json();
+    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); }
+    else { alert('设置失败: ' + (result.error || '未知错误')); }
+  } catch (err) { alert('请求失败: ' + err.message); }
+}
+
+// ── Transcribe Tab Language Profile Select ──
+
+async function loadLangProfileSelect() {
+  var sel = document.getElementById('lang_profile_select');
+  if (!sel) return;
+  var currentVal = sel.value;
+  sel.innerHTML = '<option value="">-- 手动设置 --</option>';
+  try {
+    var resp = await fetch('/api/language-profiles');
+    var data = await resp.json();
+    (data.profiles || []).forEach(function(p) {
+      sel.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + ' (' + (p.source_language || 'auto') + ' → ' + (p.target_language || 'zh-CN') + ')</option>';
+    });
+    // Default to active
+    if (!currentVal) {
+      try {
+        var ar = await fetch('/api/language-profiles/active');
+        var ad = await ar.json();
+        if (ad.active && ad.active.id) { sel.value = ad.active.id; onLangProfileSelect(); }
+      } catch(e) {}
+    } else if (sel.querySelector('option[value="' + currentVal + '"]')) {
+      sel.value = currentVal;
+    }
+  } catch(e) {}
+}
+
+function onLangProfileSelect() {
+  var id = document.getElementById('lang_profile_select').value;
+  if (!id) return;
+  var p = null;
+  for (var i = 0; i < langProfileCache.length; i++) {
+    if (langProfileCache[i].id === id) { p = langProfileCache[i]; break; }
+  }
+  if (!p) { loadLangProfileSelect(); return; }
+  // Auto-fill fields
+  var a = p.asr || {};
+  if (p.source_language && p.source_language !== 'auto') {
+    document.getElementById('language').value = p.source_language;
+  } else {
+    document.getElementById('language').value = '';
+  }
+  if (a.whisper_model) document.getElementById('model').value = a.whisper_model;
+  if (a.whisper_device) document.getElementById('device').value = a.whisper_device;
+  if (a.compute_type) document.getElementById('compute_type').value = a.compute_type;
+  if (a.beam_size) document.getElementById('beam_size').value = a.beam_size;
+  document.getElementById('vad').checked = a.vad_filter !== false;
+  if (p.translation_style) document.getElementById('translation_prompt').value = p.translation_style;
+  if (p.target_language) document.getElementById('target_language').value = p.target_language;
+}
+
+// Load pipeline selects on page load
+loadPipelineSelects();
+loadLangProfileSelect();
 
 var providerCache = [];
 
@@ -1240,7 +1620,9 @@ function switchTab(name) {
     c.classList.toggle('active', c.id === 'tab-' + name);
   });
   if (name === 'providers') loadProviders();
-  if (name === 'transcribe') loadProviderSelect();
+  if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); }
+  if (name === 'langprofiles') loadLangProfiles();
+  if (name === 'pipeline') loadPipelineSelects();
 }
 
 async function loadProviders() {

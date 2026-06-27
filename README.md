@@ -169,6 +169,61 @@ POST   /api/providers/<id>/activate   设为默认
 POST   /api/providers/<id>/test       测试连接
 ```
 
+## 语言配置 Language Profile
+
+Web 控制台的第四个标签页"🌐 语言配置"用于管理不同语言/影片类型的转写、翻译、质检策略。
+
+### Language Profile vs Provider
+
+| 职责 | Provider | Language Profile |
+|------|----------|-----------------|
+| API Key / API Base / LLM 模型 | ✅ | ❌ 不包含 |
+| 源语言 / 目标语言 | ❌ | ✅ |
+| Whisper 模型 / 设备 / VAD | ✅ 可设 | ✅ 优先 |
+| 质检阈值 | ❌ | ✅ |
+| 翻译风格 prompt | ❌ | ✅ |
+| 原文校对 / 译文润色开关 | ❌ | ✅ |
+
+### 默认内置 Profile
+
+| ID | 名称 | 用途 |
+|----|------|------|
+| `auto-detect` | 自动识别语言 | 未知语言影片默认模式，Whisper 自动检测 |
+| `fr-film` | 法语电影 | 强制法语识别，启用校对和润色 |
+| `generic-european-film` | 欧洲语种通用 | 西/意/德/葡/荷/瑞/波/捷等欧洲语种 |
+
+内置 profile 在配置文件缺失时始终可用。本地配置可覆盖或新增。
+
+### 配置文件
+
+保存在 `config/language_profiles.local.json`（已 gitignore），结构参见 `config/language_profiles.local.json.example`。
+
+### 优先级
+
+```
+CLI 显式参数 > Language Profile > Provider > 默认值
+```
+
+API Key / LLM 模型：Provider 优先。
+语言 / ASR / VAD / 质检阈值 / prompt：Language Profile 优先。
+
+### CLI 使用
+
+```powershell
+python batch_worker.py --input input --provider openai-main --language-profile fr-film
+```
+
+### Language Profile API
+
+```text
+GET    /api/language-profiles                 列表
+GET    /api/language-profiles/active          当前默认
+POST   /api/language-profiles                 新增
+PUT    /api/language-profiles/<id>            更新
+DELETE /api/language-profiles/<id>            删除
+POST   /api/language-profiles/<id>/activate   设为默认
+```
+
 ### 方式三：CLI 单文件处理
 
 ```powershell

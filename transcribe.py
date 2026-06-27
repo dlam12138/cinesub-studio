@@ -208,6 +208,9 @@ def transcribe_to_srt(
     beam_size: int,
     vad_filter: bool,
     local_files_only: bool,
+    language_profile_id: str = "",
+    language_profile_name: str = "",
+    condition_on_previous_text: bool = True,
 ) -> dict | None:
     """Run Whisper transcription and write SRT.
 
@@ -248,6 +251,7 @@ def transcribe_to_srt(
         language=language,
         beam_size=beam_size,
         vad_filter=vad_filter,
+        condition_on_previous_text=condition_on_previous_text,
     )
 
     detected = getattr(info, "language", None)
@@ -261,6 +265,13 @@ def transcribe_to_srt(
             "source_language": detected,
             "language_probability": round(probability, 4) if probability is not None else None,
             "model": model_name,
+            "device": device,
+            "compute_type": compute_type,
+            "language_profile": language_profile_id,
+            "language_profile_name": language_profile_name,
+            "forced_language": language,
+            "vad_filter": vad_filter,
+            "beam_size": beam_size,
         }
         lang_json_path = srt_path.with_suffix(".lang.json")
         import json as _json

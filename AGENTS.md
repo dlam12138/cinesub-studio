@@ -9,6 +9,7 @@
 - `web_server.py`: 本地 Web 后台。负责上传、本机路径任务、任务状态、日志、下载 SRT、Provider 管理 API。
 - `web/index.html`: 本地前端页面。三个标签页：流水线控制台、单文件处理、模型接口。不要引入构建工具，保持单文件静态页面。
 - `provider_store.py`: Provider 配置管理模块。负责 config/providers.local.json 的读写、脱敏、原子写入。
+- `language_profile_store.py`: Language Profile 配置管理模块。负责 config/language_profiles.local.json 的读写、内置 3 个默认 profile。
 - `run_transcribe.ps1`: 命令行识别入口。
 - `start_web.ps1`: Web 控制台入口，默认服务地址 `http://127.0.0.1:7860`。
 - `install.ps1`: 安装和重建 `.venv`，pip 缓存固定到 `.cache\pip`。
@@ -159,6 +160,36 @@ Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/jobs | Select-
 - 仅支持 OpenAI-compatible（POST {base}/chat/completions）
 - 发送极短消息，max_tokens=5，15s 超时
 - 错误消息中不包含 API Key
+
+### Language Profile 约束
+
+**职责边界：**
+- Provider 管 API Key / API Base / LLM 模型
+- Language Profile 管语言 / ASR 参数 / 质检阈值 / 翻译风格
+- **绝对不要把 API Key 写进 Language Profile**
+
+**内置默认：**
+- 内置 3 个 profile: auto-detect / fr-film / generic-european-film
+- 配置文件缺失时必须返回这 3 个默认值，不能报错
+- 本地配置可覆盖内置 profile（相同 id）
+- 禁止硬删除内置 profile，只能删除本地覆盖版本
+
+**优先级：**
+1. CLI 显式参数 > Language Profile > Provider > 默认值
+
+**集成要求：**
+- POST /api/pipeline/run 和 retry-failed 必须传递 language_profile_id
+- batch_worker.py --language-profile <id> 必须可用
+- transcribe.py 读取 profile ASR 参数，.lang.json 包含 language_profile 字段
+- quality_checker.py 读取 profile 质检阈值
+- 翻译阶段读取 profile translation_style 附加到 prompt
+
+**Web UI：**
+- 第 4 个标签页管理 profiles，Pipeline/单文件处理均有下拉框
+- 不得破坏原有 3 个标签页
+
+**配置安全：**
+- config/language_profiles.local.json 已 gitignore，原子写入
 
 ## 代码风格
 

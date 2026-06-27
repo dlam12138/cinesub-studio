@@ -697,6 +697,8 @@ def main() -> int:
                         help="禁用翻译（仅转写）")
     parser.add_argument("--provider", default=None,
                         help="Provider ID，从 config/providers.local.json 读取配置")
+    parser.add_argument("--language-profile", default=None,
+                        help="Language Profile ID，从 config/language_profiles.local.json 读取配置")
     parser.add_argument("--api-provider", default=None,
                         choices=["openai-compatible", "anthropic"],
                         help="LLM API 类型（显式传入时覆盖 Provider 配置）")
@@ -759,7 +761,18 @@ def main() -> int:
         except Exception as exc:
             print(f"  [Provider] 加载失败: {exc}")
 
-    # 合并 Provider 配置到 CLI 参数（CLI 显式传入的优先）
+    # ── Language Profile 配置加载 ──
+    lang_profile_config: dict = {}
+    profile_id = args.language_profile or None
+    try:
+        from language_profile_store import resolve_language_profile_config
+        lang_profile_config = resolve_language_profile_config(profile_id)
+        if lang_profile_config:
+            print(f"  [LangProfile] 使用配置: {lang_profile_config.get('profile_id', '?')} ({lang_profile_config.get('profile_name', '?')})")
+    except Exception as exc:
+        print(f"  [LangProfile] 加载失败: {exc}")
+
+    # 合并 Provider 和 Language Profile 配置到 CLI 参数
     def _first(*values):
         """返回第一个非 None 非空字符串的值。"""
         for v in values:
@@ -767,20 +780,48 @@ def main() -> int:
                 return v
         return ""
 
+    # API 配置：CLI > Provider > 默认值
     effective_api_provider = _first(args.api_provider, provider_config.get("api_provider"), "openai-compatible")
     effective_api_base = _first(args.api_base, provider_config.get("api_base"), "")
     effective_api_key = _first(args.api_key, provider_config.get("api_key"), "")
     effective_llm_model = _first(args.llm_model, provider_config.get("llm_model"), "")
+
+    # ASR 配置：CLI > Language Profile > Provider > 默认值
+    lp_asr = lang_profile_config.get("asr", {})
     effective_model = _first(
         args.model if args.model != "large-v3" else None,
+        lp_asr.get("whisper_model"),
         provider_config.get("whisper_model"),
         "large-v3"
     )
     effective_device = _first(
         args.device if args.device != "cpu" else None,
+        lp_asr.get("whisper_device"),
         provider_config.get("whisper_device"),
         "cpu"
     )
+    effective_compute_type = _first(args.compute_type, lp_asr.get("compute_type"))
+    effective_language = _first(args.language, lp_asr.get("language"))
+    effective_vad = not args.no_vad if args.no_vad else lp_asr.get("vad_filter", True)
+    effective_beam_size = args.beam_size if args.beam_size != 5 else lp_asr.get("beam_size", 5)
+
+    # 翻译配置：Language Profile 提供 translation_style 和 target_language
+    effective_target_lang = _first(
+        args.target_language if args.target_language != "zh-CN" else None,
+        lang_profile_config.get("target_language"),
+        "zh-CN"
+    )
+    effective_translation_prompt = args.translation_prompt or lang_profile_config.get("translation_style", "")
+
+    # 存储 language profile 信息供后续使用
+    lang_profile_info = {
+        "profile_id": lang_profile_config.get("profile_id", ""),
+        "profile_name": lang_profile_config.get("profile_name", ""),
+        "source_language": lang_profile_config.get("source_language", "auto"),
+        "quality_thresholds": lang_profile_config.get("quality", {}),
+        "translation_style": lang_profile_config.get("translation_style", ""),
+        "llm_stages": lang_profile_config.get("llm_stages", {}),
+    }
 
     if args.api_key:
         os.environ["SUBTITLE_LLM_API_KEY"] = args.api_key
@@ -794,22 +835,22 @@ def main() -> int:
         work_dir=Path(args.work_dir).resolve(),
         model=effective_model,
         device=effective_device,
-        compute_type=args.compute_type,
-        language=args.language,
-        beam_size=args.beam_size,
-        vad_filter=not args.no_vad,
+        compute_type=effective_compute_type,
+        language=effective_language,
+        beam_size=effective_beam_size,
+        vad_filter=effective_vad,
         local_files_only=args.local_files_only,
         translate=not args.no_translate,
         api_provider=effective_api_provider,
         api_base=effective_api_base,
         api_key=effective_api_key,
         llm_model=effective_llm_model,
-        target_language=args.target_language,
+        target_language=effective_target_lang,
+        translation_prompt=effective_translation_prompt,
         translation_batch_size=args.translation_batch_size,
         translation_temperature=args.translation_temperature,
         translation_mode=args.translation_mode,
         context_window=args.context_window,
-        translation_prompt=args.translation_prompt,
         max_retries=args.max_retries,
         skip_completed=not args.no_skip_completed,
         move_completed=not args.no_move_completed,
