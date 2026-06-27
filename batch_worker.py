@@ -256,6 +256,11 @@ class BatchConfig:
     context_window: int = 3
     translation_prompt: str = ""
 
+    # Language Profile 配置
+    language_profile_id: str = ""
+    language_profile_name: str = ""
+    lang_profile_config: dict | None = None
+
     # 批处理配置
     max_retries: int = 3
     skip_completed: bool = True    # 跳过已完成的视频
@@ -555,6 +560,15 @@ class BatchPipeline:
         """运行 Whisper 转写，返回语言检测信息。"""
         from transcribe import transcribe_to_srt
 
+        # 获取当前 language profile 信息
+        lp_id = self.config.language_profile_id if hasattr(self.config, 'language_profile_id') else ""
+        lp_name = self.config.language_profile_name if hasattr(self.config, 'language_profile_name') else ""
+        lp_cond = True
+        if hasattr(self.config, 'lang_profile_config') and self.config.lang_profile_config:
+            lp_cfg = self.config.lang_profile_config
+            lp_id = lp_cfg.get('profile_id', lp_id)
+            lp_name = lp_cfg.get('profile_name', lp_name)
+
         lang_info = transcribe_to_srt(
             audio_path=audio_path,
             srt_path=srt_path,
@@ -566,6 +580,9 @@ class BatchPipeline:
             beam_size=self.config.beam_size,
             vad_filter=self.config.vad_filter,
             local_files_only=self.config.local_files_only,
+            language_profile_id=lp_id,
+            language_profile_name=lp_name,
+            condition_on_previous_text=lp_cond,
         )
         return lang_info
 
@@ -599,14 +616,22 @@ class BatchPipeline:
         translated_srt: Path,
         report_path: Path,
     ) -> None:
-        """运行质量检查。"""
+        """运行质量检查（使用 Language Profile 阈值）。"""
         from quality_checker import run_quality_check
+
+        # 获取 quality thresholds
+        thresholds = {}
+        if self.config.lang_profile_config:
+            thresholds = self.config.lang_profile_config.get("quality_thresholds", {})
+            if not thresholds:
+                thresholds = {}
 
         run_quality_check(
             source_srt=source_srt,
             translated_srt=translated_srt,
             target_language=self.config.target_language,
             output_dir=DIR_OUTPUT_REPORTS,
+            quality_thresholds=thresholds,
         )
 
     def _build_language_strategy(self, lang_detection: dict | None) -> str:
@@ -851,6 +876,9 @@ def main() -> int:
         translation_temperature=args.translation_temperature,
         translation_mode=args.translation_mode,
         context_window=args.context_window,
+        language_profile_id=lang_profile_info.get("profile_id", ""),
+        language_profile_name=lang_profile_info.get("profile_name", ""),
+        lang_profile_config=lang_profile_info,
         max_retries=args.max_retries,
         skip_completed=not args.no_skip_completed,
         move_completed=not args.no_move_completed,

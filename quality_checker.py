@@ -291,6 +291,45 @@ def check_translation_quality(
     if target_language in ("zh-CN", "zh-TW"):
         _check_mixed_language(translated_entries, report)
 
+    # 语言置信度检查（也应用于译文）
+    if quality_thresholds:
+        warn_threshold = quality_thresholds.get("language_probability_warning", 0.85)
+        err_threshold = quality_thresholds.get("language_probability_error", 0.60)
+        # 尝试读取 .lang.json
+        lang_json_path = source_srt.with_suffix(".lang.json")
+        if lang_json_path.exists():
+            try:
+                import json as _json2
+                lang_data = _json2.loads(lang_json_path.read_text(encoding="utf-8"))
+                prob = lang_data.get("language_probability")
+                forced = lang_data.get("forced_language")
+                if prob is not None:
+                    if prob < err_threshold:
+                        report.issues.append(QualityIssue(
+                            index=0, type="language_uncertain_error", severity="error",
+                            text=f"语言识别置信度极低: {prob:.2f} (阈值: {err_threshold})",
+                            suggestion="建议人工确认源语言",
+                        ))
+                    elif prob < warn_threshold:
+                        report.issues.append(QualityIssue(
+                            index=0, type="language_uncertain_warning", severity="warning",
+                            text=f"语言识别置信度偏低: {prob:.2f} (阈值: {warn_threshold})",
+                            suggestion="建议人工抽查确认",
+                        ))
+                if forced and lang_data.get("source_language") and lang_data["source_language"] != forced:
+                    report.issues.append(QualityIssue(
+                        index=0, type="source_language_mismatch", severity="warning",
+                        text=f"检测到语言 '{lang_data['source_language']}' 与强制语言 '{forced}' 不一致",
+                    ))
+            except (OSError, json.JSONDecodeError):
+                pass
+
+    # CPS 和字数检查（译文字幕）
+    profile_max_cps = quality_thresholds.get("max_cps_zh", 8)
+    profile_max_line = quality_thresholds.get("max_chars_per_line_zh", 18)
+    profile_max_sub = quality_thresholds.get("max_chars_per_subtitle_zh", 36)
+    _check_cps_and_length(translated_entries, report, profile_max_cps, profile_max_line, profile_max_sub)
+
     _finalize_report(report)
     return report
 
@@ -534,7 +573,7 @@ def _check_cps_and_length(
                     index=entry.index,
                     type="zh_cps_too_high",
                     severity="warning",
-                    text=f"中文字幕阅读速度过高: {cps:.1f} 字/秒 (阈值: {max_cps})",
+                    text=f"中文信息密度过高: {cps:.1f} 字/秒, 超过上限 {max_cps} 字/秒",
                     snippet=text[:80],
                     suggestion="考虑拆分或精简字幕内容",
                 ))
