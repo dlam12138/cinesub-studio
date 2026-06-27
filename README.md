@@ -349,6 +349,10 @@ Copy-Item tests/e2e_samples/samples.example.json tests/e2e_samples/samples.local
 python -B e2e_runner.py --config tests/e2e_samples/samples.local.json
 ```
 
+运行时脚本会把样本映射到 `work/e2e_samples/<sample_id>/<sample_id>.<ext>` 后再调用流水线，优先使用硬链接，失败时才复制。这样即使多个目录里都叫 `sample.mp4`，输出的 SRT 和报告也会按样本 ID 区分，不会互相覆盖；原始样本不会被移动。
+
+脚本运行前会做 preflight 检查：样本文件是否存在、Language Profile 是否存在、Provider 是否存在且启用、Provider 是否配置了 API Base / 翻译模型 / API Key。检查结果会写入报告；如果真实样本存在但配置有 error，脚本不会启动流水线，避免白跑。
+
 没有真实视频时也可以直接跑示例配置，脚本会把缺失样本标记为 `missing_sample`，不会崩溃：
 
 ```powershell
@@ -363,6 +367,8 @@ reports/e2e_sample_report.md
 ```
 
 报告会汇总 `detected_language`、`language_probability`、`forced_language`、source/zh/bilingual 字幕条数、质检 error/warning 数量、`review_needed.srt` 条数和人工观感。报告只写 Provider ID，不读取或输出 API Key。
+
+跑完真实样本后，可以复制 `tests/e2e_samples/manual_review.template.md` 记录人工观感。重点不是长篇校对，而是判断问题归属：ASR、翻译、质检阈值，还是配置错误。
 
 判断问题归属：
 

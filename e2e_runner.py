@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG = PROJECT_ROOT / "tests" / "e2e_samples" / "samples.example.json"
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports"
+DEFAULT_STAGING_DIR = PROJECT_ROOT / "work" / "e2e_samples"
 
 
 def main() -> int:
@@ -72,7 +74,12 @@ def main() -> int:
 
     for raw_sample in samples:
         sample = _normalize_sample(raw_sample)
+        sample["preflight"] = _preflight_sample(sample)
         print(f"\n[{sample['id']}] {sample['file']}")
+        for message in sample["preflight"]["warnings"]:
+            print(f"  Preflight warning: {message}")
+        for message in sample["preflight"]["errors"]:
+            print(f"  Preflight error: {message}")
 
         if not sample["source_file"].exists():
             print(f"  Missing sample file, skipped: {sample['source_file']}")
@@ -80,11 +87,19 @@ def main() -> int:
             results.append(result)
             continue
 
+        if sample["preflight"]["errors"] and not dry_run:
+            print("  Preflight failed; pipeline was not started.")
+            result = _collect_sample_result(sample, "preflight_failed", None)
+            results.append(result)
+            had_pipeline_failure = True
+            continue
+
         returncode: int | None = None
         if dry_run:
             print("  Dry run, collecting existing artifacts only.")
             status = "dry_run"
         else:
+            sample["processing_file"] = _prepare_processing_file(sample)
             returncode = _run_batch_worker(sample)
             status = "completed" if returncode == 0 else "pipeline_failed"
             if returncode != 0:
@@ -135,23 +150,119 @@ def _normalize_sample(raw: Any) -> dict[str, Any]:
 
     return {
         "id": sample_id,
+        "artifact_stem": _safe_stem(sample_id),
         "file": file_value,
         "source_file": _resolve_path(file_value),
+        "processing_file": None,
         "language_profile": str(raw.get("language_profile") or "auto-detect"),
         "provider": str(raw.get("provider") or ""),
         "expected_language": raw.get("expected_language"),
         "manual_notes": str(raw.get("manual_notes") or ""),
         "extra_args": raw.get("extra_args") if isinstance(raw.get("extra_args"), list) else [],
+        "preflight": {"errors": [], "warnings": []},
     }
 
 
+def _preflight_sample(sample: dict[str, Any]) -> dict[str, list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    source = sample["source_file"]
+    if not source.exists():
+        warnings.append("source file does not exist; sample will be skipped")
+    elif source.suffix.lower() not in {
+        ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v",
+        ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
+    }:
+        warnings.append(f"unusual media extension: {source.suffix or '(none)'}")
+
+    _check_language_profile(sample, errors)
+    if not _translation_disabled(sample):
+        _check_provider(sample, errors, warnings)
+
+    return {"errors": errors, "warnings": warnings}
+
+
+def _check_language_profile(sample: dict[str, Any], errors: list[str]) -> None:
+    try:
+        from language_profile_store import get_language_profile
+    except Exception as exc:
+        errors.append(f"cannot load Language Profile store: {exc}")
+        return
+
+    profile = get_language_profile(sample["language_profile"])
+    if not profile:
+        errors.append(f"Language Profile not found: {sample['language_profile']}")
+
+
+def _check_provider(sample: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
+    try:
+        from provider_store import get_active_provider, get_provider
+    except Exception as exc:
+        errors.append(f"cannot load Provider store: {exc}")
+        return
+
+    if sample["provider"]:
+        provider = get_provider(sample["provider"])
+        provider_label = sample["provider"]
+    else:
+        provider = get_active_provider()
+        provider_label = "(active)"
+
+    if not provider:
+        errors.append(
+            f"Provider not found: {provider_label}; configure one or add --no-translate in extra_args"
+        )
+        return
+    if provider.get("enabled") is False:
+        errors.append(f"Provider disabled: {provider.get('id', provider_label)}")
+    if not provider.get("api_base"):
+        errors.append(f"Provider missing api_base: {provider.get('id', provider_label)}")
+    if not provider.get("translation_model"):
+        errors.append(f"Provider missing translation_model: {provider.get('id', provider_label)}")
+    if not provider.get("api_key"):
+        warnings.append(
+            f"Provider has no saved API key: {provider.get('id', provider_label)}; "
+            "SUBTITLE_LLM_API_KEY may still be used"
+        )
+
+
+def _translation_disabled(sample: dict[str, Any]) -> bool:
+    return "--no-translate" in {str(arg) for arg in sample["extra_args"]}
+
+
+def _prepare_processing_file(sample: dict[str, Any]) -> Path:
+    """Stage each sample under a unique file stem to avoid output collisions."""
+    source = sample["source_file"]
+    staged_dir = DEFAULT_STAGING_DIR / sample["artifact_stem"]
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    staged_path = staged_dir / f"{sample['artifact_stem']}{source.suffix.lower()}"
+
+    if staged_path.exists():
+        try:
+            if staged_path.stat().st_size == source.stat().st_size:
+                return staged_path
+            staged_path.unlink()
+        except OSError:
+            staged_path.unlink(missing_ok=True)
+
+    try:
+        staged_path.hardlink_to(source)
+        print(f"  Staged sample as hardlink: {_display_path(staged_path)}")
+    except OSError:
+        shutil.copy2(source, staged_path)
+        print(f"  Staged sample as copy: {_display_path(staged_path)}")
+    return staged_path
+
+
 def _run_batch_worker(sample: dict[str, Any]) -> int:
+    processing_file = sample.get("processing_file") or sample["source_file"]
     command = [
         sys.executable,
         "-B",
         str(PROJECT_ROOT / "batch_worker.py"),
         "--input",
-        str(sample["source_file"].parent),
+        str(processing_file.parent),
         "--language-profile",
         sample["language_profile"],
         "--no-move-completed",
@@ -171,7 +282,7 @@ def _collect_sample_result(
     status: str,
     returncode: int | None,
 ) -> dict[str, Any]:
-    stem = sample["source_file"].stem
+    stem = sample["artifact_stem"]
     source_srt = _find_newest(PROJECT_ROOT / "output" / "source", [f"{stem}.*.srt"])
     zh_srt = _find_newest(PROJECT_ROOT / "output" / "zh", [f"{stem}.*.translated.*.srt"])
     bilingual_srt = _find_newest(PROJECT_ROOT / "output" / "bilingual", [f"{stem}.*.bilingual.*.srt"])
@@ -191,11 +302,14 @@ def _collect_sample_result(
     result = {
         "sample_name": sample["id"],
         "source_file": _display_path(sample["source_file"]),
+        "processing_file": _display_path(sample["processing_file"]) if sample.get("processing_file") else "",
         "source_exists": sample["source_file"].exists(),
         "status": status,
         "pipeline_returncode": returncode,
         "language_profile": sample["language_profile"],
         "provider": sample["provider"],
+        "preflight_errors": sample["preflight"]["errors"],
+        "preflight_warnings": sample["preflight"]["warnings"],
         "expected_language": sample["expected_language"],
         "detected_language": lang_data.get("source_language"),
         "language_probability": lang_data.get("language_probability"),
@@ -232,6 +346,8 @@ def _summary_count(summary: Any, issues: Any, key: str, severity: str) -> int:
 def _conclusion(result: dict[str, Any]) -> str:
     if result["status"] == "missing_sample":
         return "missing source video"
+    if result["status"] == "preflight_failed":
+        return "fix sample config"
     if result["status"] == "pipeline_failed":
         return "pipeline failed"
 
@@ -291,8 +407,8 @@ def _render_markdown(report: dict[str, Any]) -> str:
         f"- Config: `{report['config']}`",
         f"- Dry run: `{report['dry_run']}`",
         "",
-        "| Sample | Profile | Detected | Probability | Counts | Errors | Warnings | Review Needed | Manual Notes | Conclusion |",
-        "|---|---|---|---:|---|---:|---:|---:|---|---|",
+        "| Sample | Status | Profile | Detected | Probability | Counts | Quality Errors | Quality Warnings | Review Needed | Preflight | Conclusion |",
+        "|---|---|---|---|---:|---|---:|---:|---:|---|---|",
     ]
     for sample in report["samples"]:
         probability = sample.get("language_probability")
@@ -307,6 +423,7 @@ def _render_markdown(report: dict[str, Any]) -> str:
             + " | ".join(
                 [
                     _md_cell(sample.get("sample_name", "")),
+                    _md_cell(sample.get("status", "")),
                     _md_cell(sample.get("language_profile", "")),
                     _md_cell(sample.get("detected_language") or ""),
                     _md_cell(probability_text),
@@ -314,7 +431,7 @@ def _render_markdown(report: dict[str, Any]) -> str:
                     _md_cell(str(sample.get("quality_errors", 0))),
                     _md_cell(str(sample.get("quality_warnings", 0))),
                     _md_cell(str(sample.get("review_needed_count", 0))),
-                    _md_cell(sample.get("manual_notes", "")),
+                    _md_cell(_preflight_summary(sample)),
                     _md_cell(sample.get("conclusion", "")),
                 ]
             )
@@ -327,6 +444,16 @@ def _render_markdown(report: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"- Status: `{sample.get('status')}`")
         lines.append(f"- Source file: `{sample.get('source_file', '')}`")
+        if sample.get("manual_notes"):
+            lines.append(f"- Manual notes: {sample.get('manual_notes')}")
+        if sample.get("preflight_errors"):
+            lines.append("- Preflight errors:")
+            for item in sample["preflight_errors"]:
+                lines.append(f"  - {item}")
+        if sample.get("preflight_warnings"):
+            lines.append("- Preflight warnings:")
+            for item in sample["preflight_warnings"]:
+                lines.append(f"  - {item}")
         for name, path in sample.get("artifacts", {}).items():
             if path:
                 lines.append(f"- {name}: `{path}`")
@@ -339,11 +466,29 @@ def _md_cell(value: Any) -> str:
     return text.replace("|", "\\|")
 
 
+def _preflight_summary(sample: dict[str, Any]) -> str:
+    errors = len(sample.get("preflight_errors") or [])
+    warnings = len(sample.get("preflight_warnings") or [])
+    if errors or warnings:
+        return f"{errors} error / {warnings} warning"
+    return "ok"
+
+
 def _resolve_path(value: str | Path) -> Path:
     path = Path(value)
     if path.is_absolute():
         return path
     return (PROJECT_ROOT / path).resolve()
+
+
+def _safe_stem(value: str) -> str:
+    cleaned = []
+    for char in value.strip():
+        if char.isalnum() or char in {"-", "_"}:
+            cleaned.append(char)
+        else:
+            cleaned.append("_")
+    return "".join(cleaned).strip("_") or "sample"
 
 
 def _display_path(path: Path) -> str:

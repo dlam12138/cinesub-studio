@@ -634,6 +634,11 @@
             <option value="anthropic">Anthropic Claude</option>
           </select>
 
+          <label for="api_template">API 服务商</label>
+          <select id="api_template" name="api_template" disabled onchange="onSingleApiTemplateChange()">
+            <option value="">自定义</option>
+          </select>
+
           <label for="api_base">API Base URL</label>
           <input id="api_base" name="api_base" type="text" disabled
                  placeholder="https://api.openai.com/v1">
@@ -642,8 +647,12 @@
           <input id="api_key" name="api_key" type="password" disabled placeholder="sk-...">
 
           <label for="llm_model">大模型名称</label>
-          <input id="llm_model" name="llm_model" type="text" disabled
-                 placeholder="gpt-4o / deepseek-chat / claude-3-5-sonnet-latest">
+          <input id="llm_model" name="llm_model" type="hidden">
+          <select id="llm_model_select" disabled onchange="onSingleModelSelectChange()">
+            <option value="">选择模型</option>
+          </select>
+          <input id="llm_model_custom" type="text" disabled
+                 placeholder="自定义模型名" style="display:none">
 
           <div class="row">
             <div>
@@ -903,7 +912,11 @@ async function pipelineAction(action) {
   var urlPath = (action === 'retry') ? 'retry-failed' : action;
   var url = '/api/pipeline/' + urlPath;
 
+  /*
   var labelMap = {scan:'扫描 input', status:'查看状态', review:'异常复核', retry:'重试失败', run:'开始处理 input'};
+
+  */
+  var labelMap = {scan:'scan input', status:'status', review:'review', retry:'retry failed', run:'run input'};
 
   // Include provider & language profile selections in POST body
   var fetchOpts = { method: method };
@@ -924,16 +937,26 @@ async function pipelineAction(action) {
 
     // Handle 409 Conflict (task already running)
     if (resp.status === 409) {
+      /*
       appendLog('[409] ' + (data.error || '已有流水线任务正在运行，请等待完成'));
       appendLog('  提示: 可通过"查看状态"或"操作日志"了解当前进度');
+      setLoading(action, false);
+      */
+      appendLog('[409] ' + (data.error || 'pipeline task is already running'));
+      appendLog('  Tip: check status or logs for progress');
       setLoading(action, false);
       return;
     }
 
     // Handle 202 Accepted (background task started)
     if (resp.status === 202) {
+      /*
       appendLog('[202] ' + (data.message || '后台任务已启动'));
       appendLog('  提示: 任务在后台运行，可稍后点击"查看状态"检查进度');
+      // Refresh status after a moment
+      */
+      appendLog('[202] ' + (data.message || 'background task started'));
+      appendLog('  Tip: check status again later');
       // Refresh status after a moment
       setTimeout(function() { pipelineAction('status'); }, 2000);
       setLoading(action, false);
@@ -967,7 +990,13 @@ async function pipelineAction(action) {
       case 'retry':
         // POST actions: show message, refresh status after delay
         if (data.ok) {
+          /*
           appendLog(data.message || '操作已启动');
+        }
+        */
+        }
+        if (data.ok) {
+          appendLog(data.message || 'operation started');
         }
         break;
     }
@@ -980,6 +1009,7 @@ async function pipelineAction(action) {
 
 // ═══════════════════ Render Functions ═══════════════════
 
+/*
 function parseScanOutput(output) {
   // Parse batch_worker.py --scan output lines like:
   //   [✓] movie.mp4 — completed
@@ -991,9 +1021,12 @@ function parseScanOutput(output) {
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i].trim();
     if (!line) continue;
+    /*
     if (line.indexOf('待处理文件') >= 0 || line.indexOf('Found') >= 0) { inList = true; continue; }
 
     var m = line.match(/^\[(.)\]\s+(.+?)\s+[—\-]\s+(.+)$/);
+    if (line.indexOf('Found') >= 0 || line.indexOf('input') >= 0) { inList = true; continue; }
+    var m = line.match(/^\[(.)\]\s+(.+?)\s+[-\u2013\u2014\u2192]+\s+(.+)$/);
     if (m) {
       files.push({mark: m[1], name: m[2].trim(), stage: m[3].trim()});
       continue;
@@ -1197,6 +1230,34 @@ function renderReview(data) {
 
 // ═══════════════════ Refresh All (read-only, no side effects) ═══════════════════
 
+*/
+
+function renderTextResult(targetId, data, emptyText) {
+  var el = document.getElementById(targetId);
+  var output = (data && data.output) ? String(data.output).trim() : '';
+  var error = (data && data.error) ? String(data.error).trim() : '';
+  if (!output && !error) {
+    el.innerHTML = '<div class="placeholder">' + escapeHtml(emptyText) + '</div>';
+    return;
+  }
+  var html = '';
+  if (error) html += '<pre class="mini-log" style="max-height:140px">[stderr]\n' + escapeHtml(error) + '</pre>';
+  if (output) html += '<pre class="mini-log" style="max-height:260px">' + escapeHtml(output) + '</pre>';
+  el.innerHTML = html;
+}
+
+function renderScan(data) {
+  renderTextResult('scan-result', data, 'No input files found. Put videos in input/ and scan again.');
+}
+
+function renderStatus(data) {
+  renderTextResult('status-result', data, 'No task state yet.');
+}
+
+function renderReview(data) {
+  renderTextResult('review-result', data, 'No quality report yet.');
+}
+
 function refreshAll() {
   appendLog('刷新全部（只读操作）...');
   pipelineAction('scan');
@@ -1229,7 +1290,8 @@ function escapeHtml(text) {
   var timer = null;
 
   var translateFields = [
-    "api_provider", "api_base", "api_key", "llm_model",
+    "api_provider", "api_template", "api_base", "api_key", "llm_model",
+    "llm_model_select", "llm_model_custom",
     "target_language", "translation_mode", "translation_batch_size",
     "translation_temperature", "context_enabled", "context_window",
     "translation_prompt",
@@ -1248,6 +1310,11 @@ function escapeHtml(text) {
   translateCheck.addEventListener("change", function() {
     setTranslateFieldsDisabled(!this.checked);
     if (this.checked) {
+      fillSingleApiTemplates();
+      if (!document.getElementById("api_template").value) {
+        document.getElementById("api_template").value = "deepseek";
+        onSingleApiTemplateChange();
+      }
       contextCheck.checked = true;
       contextWindow.value = "3";
       contextWindow.disabled = false;
@@ -1273,7 +1340,13 @@ function escapeHtml(text) {
     var response = await fetch("/api/jobs/" + activeJob);
     var job = await response.json();
     if (!response.ok) {
+      /*
       logBox.textContent += (job.error || "状态读取失败") + "\n";
+      return;
+    }
+
+      */
+      logBox.textContent += (job.error || "Failed to read job status.") + "\n";
       return;
     }
 
@@ -1303,6 +1376,7 @@ function escapeHtml(text) {
     }
   }
 
+  /*
   form.addEventListener("submit", async function(event) {
     event.preventDefault();
     var file = document.getElementById("file").files[0];
@@ -1316,8 +1390,9 @@ function escapeHtml(text) {
       var apiBase = document.getElementById("api_base").value.trim();
       var apiKey = document.getElementById("api_key").value.trim();
       var llmModel = document.getElementById("llm_model").value.trim();
+      var savedProvider = document.getElementById("provider_select").value.trim();
       if (!apiBase) { alert("翻译已启用，请填写 API Base URL。"); return; }
-      if (!apiKey) { alert("翻译已启用，请填写 API Key。"); return; }
+      if (!apiKey && !savedProvider) { alert("翻译已启用，请填写 API Key，或选择已保存的模型接口配置。"); return; }
       if (!llmModel) { alert("翻译已启用，请填写大模型名称。"); return; }
     }
 
@@ -1334,6 +1409,49 @@ function escapeHtml(text) {
       });
       var payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "创建任务失败");
+      activeJob = payload.id;
+      pollJob();
+      timer = setInterval(pollJob, 1200);
+    } catch (err) {
+      setStatus("failed");
+      logBox.textContent += String(err.message || err) + "\n";
+      startBtn.disabled = false;
+    }
+  });
+  */
+
+  form.addEventListener("submit", async function(event) {
+    event.preventDefault();
+    var file = document.getElementById("file").files[0];
+    var path = document.getElementById("path").value.trim();
+    if (!file && !path) {
+      alert("Choose a file or enter a local file path.");
+      return;
+    }
+
+    if (translateCheck.checked) {
+      var apiBase = document.getElementById("api_base").value.trim();
+      var apiKey = document.getElementById("api_key").value.trim();
+      var llmModel = document.getElementById("llm_model").value.trim();
+      var savedProvider = document.getElementById("provider_select").value.trim();
+      if (!apiBase) { alert("Translation is enabled. API Base URL is required."); return; }
+      if (!apiKey && !savedProvider) { alert("Translation is enabled. Enter an API Key or choose a saved Provider."); return; }
+      if (!llmModel) { alert("Translation is enabled. Choose or enter a model name."); return; }
+    }
+
+    startBtn.disabled = true;
+    setStatus("queued");
+    logBox.textContent = "Uploading / creating job...\n";
+    downloadSource.hidden = true;
+    downloadTranslated.hidden = true;
+
+    try {
+      var response = await fetch("/api/jobs", {
+        method: "POST",
+        body: new FormData(form),
+      });
+      var payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Failed to create job.");
       activeJob = payload.id;
       pollJob();
       timer = setInterval(pollJob, 1200);
@@ -1555,7 +1673,7 @@ async function saveLP() {
 }
 
 async function deleteLP(id) {
-  if (!confirm('确定删除语言配置 "' + id + '"？')) return;
+  if (!confirm('Delete language profile "' + id + '"?')) return;
   try {
     var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
@@ -1631,11 +1749,99 @@ var providerCache = [];
 var providerTemplates = [];
 var advancedOpen = false;
 
+function fallbackProviderTemplates() {
+  return [
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      protocol: 'openai-compatible',
+      api_base: 'https://api.deepseek.com',
+      models: [
+        {id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', default: true},
+        {id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', default: false}
+      ],
+      deprecated_models: [
+        {id: 'deepseek-chat', replacement: 'deepseek-v4-flash'},
+        {id: 'deepseek-reasoner', replacement: 'deepseek-v4-pro'}
+      ]
+    },
+    {
+      id: 'custom-openai-compatible',
+      name: '自定义 OpenAI-compatible',
+      protocol: 'openai-compatible',
+      api_base: '',
+      models: []
+    }
+  ];
+}
+
 async function loadTemplates() {
-    try { var r = await fetch('/api/provider-templates'); var d = await r.json(); providerTemplates = d.templates || []; }
+    try {
+      var r = await fetch('/api/provider-templates');
+      var d = await r.json();
+      providerTemplates = d.templates || [];
+    }
     catch(e) { providerTemplates = []; }
+    if (!providerTemplates.length) providerTemplates = fallbackProviderTemplates();
+    return providerTemplates;
 }
 function findTemplate(id) { for (var i=0;i<providerTemplates.length;i++) { if(providerTemplates[i].id===id) return providerTemplates[i]; } return null; }
+
+async function fillSingleApiTemplates() {
+  await loadTemplates();
+  var sel = document.getElementById('api_template');
+  if (!sel) return;
+  var current = sel.value || 'deepseek';
+  sel.innerHTML = '<option value="">自定义</option>';
+  for (var i = 0; i < providerTemplates.length; i++) {
+    sel.innerHTML += '<option value="' + providerTemplates[i].id + '">' + escapeHtml(providerTemplates[i].name) + '</option>';
+  }
+  if (sel.querySelector('option[value="' + current + '"]')) sel.value = current;
+  else sel.value = '';
+  onSingleApiTemplateChange();
+}
+
+function onSingleApiTemplateChange() {
+  var tid = document.getElementById('api_template').value;
+  var tpl = findTemplate(tid);
+  var protocol = document.getElementById('api_provider');
+  var base = document.getElementById('api_base');
+  var modelSelect = document.getElementById('llm_model_select');
+  var modelCustom = document.getElementById('llm_model_custom');
+  var hiddenModel = document.getElementById('llm_model');
+
+  if (tpl) {
+    protocol.value = tpl.protocol || 'openai-compatible';
+    if (tpl.api_base) base.value = tpl.api_base;
+  }
+
+  if (tpl && tpl.models && tpl.models.length) {
+    modelSelect.style.display = 'block';
+    modelCustom.style.display = 'none';
+    modelCustom.value = '';
+    modelSelect.innerHTML = '';
+    for (var i = 0; i < tpl.models.length; i++) {
+      var m = tpl.models[i];
+      modelSelect.innerHTML += '<option value="' + m.id + '"' + (m.default ? ' selected' : '') + '>' + escapeHtml(m.name || m.id) + '</option>';
+    }
+    hiddenModel.value = modelSelect.value;
+  } else {
+    modelSelect.style.display = 'none';
+    modelCustom.style.display = 'block';
+    modelCustom.placeholder = '例如 gpt-4o / your-model-name';
+    hiddenModel.value = modelCustom.value.trim();
+  }
+}
+
+function onSingleModelSelectChange() {
+  document.getElementById('llm_model').value = document.getElementById('llm_model_select').value;
+}
+
+document.addEventListener('input', function(event) {
+  if (event.target && event.target.id === 'llm_model_custom') {
+    document.getElementById('llm_model').value = event.target.value.trim();
+  }
+});
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(function(b) {
@@ -1764,6 +1970,18 @@ function showProviderModal(editId) {
       }
     } else { title.textContent = '新增接口'; }
     onTemplateChange();
+    if (editId && p && p.translation_model) {
+      var editModelSelect = document.getElementById('provModelSelect');
+      var editModelInput = document.getElementById('provModelInput');
+      if (editModelSelect.style.display !== 'none' && editModelSelect.querySelector('option[value="' + p.translation_model + '"]')) {
+        editModelSelect.value = p.translation_model;
+      } else {
+        editModelSelect.style.display = 'none';
+        editModelInput.style.display = 'block';
+        editModelInput.value = p.translation_model;
+      }
+      onModelChange();
+    }
     modal.classList.add('active');
   });
 }
@@ -1788,7 +2006,13 @@ function onTemplateChange() {
     if (!nf.value && tpl.name) nf.placeholder = tpl.name;
   } else {
     ms.style.display = 'none'; mi.style.display = 'block';
+    /*
     mi.placeholder = '输入模型名';
+  }
+}
+
+    */
+    mi.placeholder = 'Enter model name';
   }
 }
 
@@ -1845,7 +2069,7 @@ async function saveProvider() {
 }
 
 async function deleteProvider(id) {
-  if (!confirm('确定删除接口 "' + id + '"？')) return;
+  if (!confirm('Delete provider "' + id + '"?')) return;
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
@@ -1862,6 +2086,7 @@ async function setActiveProvider(id) {
   } catch (err) { alert('请求失败: ' + err.message); }
 }
 
+/*
 async function testProvider(id) {
   var btn = event.target; var origText = btn.textContent; btn.textContent = '...'; btn.disabled = true;
   try {
@@ -1881,11 +2106,43 @@ async function testActiveProvider() {
   } catch (err) { alert('获取默认接口失败: ' + err.message); }
 }
 
+*/
+
+async function testProvider(id) {
+  var btn = event && event.target ? event.target : null;
+  var origText = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+  try {
+    var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/test', { method: 'POST' });
+    var result = await resp.json();
+    if (result.ok) alert('Connection OK\nLatency: ' + result.latency_ms + 'ms\nModel: ' + result.model);
+    else alert('Connection failed: ' + (result.error || 'unknown error'));
+  } catch (err) {
+    alert('Test failed: ' + err.message);
+  } finally {
+    if (btn) { btn.textContent = origText; btn.disabled = false; }
+  }
+}
+
+async function testActiveProvider() {
+  try {
+    var resp = await fetch('/api/providers/active');
+    var data = await resp.json();
+    if (data.active && data.active.id) testProvider(data.active.id);
+    else alert('No active provider is configured.');
+  } catch (err) {
+    alert('Failed to get active provider: ' + err.message);
+  }
+}
+
 async function loadProviderSelect() {
   var sel = document.getElementById('provider_select'); if (!sel) return;
   var currentVal = sel.value;
   try {
+    await loadTemplates();
+    fillSingleApiTemplates();
     var resp = await fetch('/api/providers'); var data = await resp.json();
+    providerCache = data.providers || [];
     sel.innerHTML = '<option value="">-- 手动输入 --</option>';
     var activeId = '';
     for (var i = 0; i < data.providers.length; i++) {
@@ -1906,7 +2163,23 @@ function onProviderSelect() {
   if (p.protocol) document.getElementById('api_provider').value = p.protocol;
   if (p.api_base) document.getElementById('api_base').value = p.api_base;
   if (p.api_key_masked) document.getElementById('api_key').placeholder = '已保存: ' + p.api_key_masked;
-  if (p.translation_model) document.getElementById('llm_model').value = p.translation_model;
+  if (p.template_id && document.getElementById('api_template').querySelector('option[value="' + p.template_id + '"]')) {
+    document.getElementById('api_template').value = p.template_id;
+    onSingleApiTemplateChange();
+  }
+  if (p.translation_model) {
+    var ms = document.getElementById('llm_model_select');
+    var mc = document.getElementById('llm_model_custom');
+    if (ms.style.display !== 'none' && ms.querySelector('option[value="' + p.translation_model + '"]')) {
+      ms.value = p.translation_model;
+      onSingleModelSelectChange();
+    } else {
+      ms.style.display = 'none';
+      mc.style.display = 'block';
+      mc.value = p.translation_model;
+      document.getElementById('llm_model').value = p.translation_model;
+    }
+  }
 }
 
 document.getElementById('api_key').addEventListener('focus', function() { /* manual override */ });

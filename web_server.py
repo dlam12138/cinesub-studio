@@ -599,6 +599,7 @@ def create_job(form: dict) -> dict:
 
     # Translation options
     translate_enabled = get_text(form, "translate_enabled", "") == "on"
+    provider_select = get_text(form, "provider_select", "").strip()
     api_provider = get_text(form, "api_provider", "openai-compatible")
     api_base = get_text(form, "api_base", "").strip()
     api_key = get_text(form, "api_key", "").strip()
@@ -611,6 +612,16 @@ def create_job(form: dict) -> dict:
     translation_prompt = get_text(form, "translation_prompt", "")
 
     if translate_enabled:
+        if provider_select:
+            try:
+                from provider_store import resolve_provider_config
+                provider_config = resolve_provider_config(provider_select)
+            except Exception as exc:
+                raise ValueError(f"Provider config error: {exc}") from exc
+            api_provider = api_provider or provider_config.get("api_provider", "openai-compatible")
+            api_base = api_base or provider_config.get("api_base", "")
+            api_key = api_key or provider_config.get("api_key", "")
+            llm_model = llm_model or provider_config.get("llm_model", "")
         if not api_base:
             raise ValueError("Translation enabled but API Base is empty.")
         if not api_key:
@@ -659,6 +670,7 @@ def create_job(form: dict) -> dict:
             "beam_size": beam_size_int,
             "vad": vad,
             "translate_enabled": translate_enabled,
+            "provider_id": provider_select,
             "api_provider": api_provider,
             "api_base": api_base,
             "api_key_masked": mask_secret(api_key) if api_key else "",
