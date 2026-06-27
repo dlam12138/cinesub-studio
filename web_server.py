@@ -20,9 +20,14 @@ UPLOAD_DIR = PROJECT_ROOT / "uploads"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 MODEL_DIR = PROJECT_ROOT / "models"
 WORK_DIR = PROJECT_ROOT / "work"
+PIPELINE_LOG = PROJECT_ROOT / "logs" / "pipeline.log"
 
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
+
+# Pipeline background task tracking
+PIPELINE_TASK: dict = {"running": False, "pid": None, "action": "", "started_at": 0}
+PIPELINE_TASK_LOCK = threading.Lock()
 
 
 def main() -> int:
@@ -90,10 +95,155 @@ class Handler(BaseHTTPRequestHandler):
             self.send_file(output_path, "application/x-subrip", download_name=output_path.name)
             return
 
+        # ── Pipeline API ──
+        if parsed.path == "/api/pipeline/scan":
+            self.send_json(_run_pipeline_command("scan"))
+            return
+
+        if parsed.path == "/api/pipeline/status":
+            self.send_json(_run_pipeline_command("status"))
+            return
+
+        if parsed.path == "/api/pipeline/review":
+            self.send_json(_run_pipeline_command("review"))
+            return
+
+        if parsed.path == "/api/pipeline/logs":
+            self.send_json(_read_pipeline_log())
+            return
+
+        if parsed.path == "/api/pipeline/task":
+            with PIPELINE_TASK_LOCK:
+                self.send_json(dict(PIPELINE_TASK))
+            return
+
+        # ── Provider API ──
+        if parsed.path == "/api/providers":
+            from provider_store import list_providers
+            self.send_json({"providers": list_providers(mask_secret=True)})
+            return
+
+        if parsed.path == "/api/providers/active":
+            from provider_store import get_active_provider, mask_api_key
+            provider = get_active_provider()
+            if provider:
+                provider["api_key_masked"] = mask_api_key(provider.pop("api_key", ""))
+            self.send_json({"active": provider})
+            return
+
         self.send_error_json(404, "Not found")
+
+    def do_PUT(self) -> None:
+        """Handle PUT requests — delegate Provider updates to do_POST logic."""
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/providers/") and len(parsed.path.split("/")) == 4:
+            provider_id = parsed.path.split("/")[3]
+            body = self._read_json_body()
+            if not body:
+                self.send_error_json(400, "请求体为空")
+                return
+            body["id"] = provider_id
+            from provider_store import upsert_provider, mask_api_key
+            try:
+                result = upsert_provider(body)
+                result["api_key_masked"] = mask_api_key(result.pop("api_key", ""))
+                self.send_json({"ok": True, "provider": result})
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+        else:
+            self.send_error_json(404, "Not found")
+
+    def do_DELETE(self) -> None:
+        """Handle DELETE requests — delete a provider."""
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/providers/") and len(parsed.path.split("/")) == 4:
+            provider_id = parsed.path.split("/")[3]
+            from provider_store import delete_provider
+            try:
+                delete_provider(provider_id)
+                self.send_json({"ok": True})
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+        else:
+            self.send_error_json(404, "Not found")
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+
+        # ── Pipeline: run (background) — 完整处理 input 目录 ──
+        if parsed.path == "/api/pipeline/run":
+            body = self._read_json_body() or {}
+            provider_id = body.get("provider", "")
+            with PIPELINE_TASK_LOCK:
+                if PIPELINE_TASK["running"]:
+                    self.send_json(
+                        {"ok": False, "error": "已有流水线任务正在运行，请等待完成"},
+                        status=409,
+                    )
+                    return
+                PIPELINE_TASK["running"] = True
+                PIPELINE_TASK["action"] = "run"
+                PIPELINE_TASK["started_at"] = time.time()
+
+            thread = threading.Thread(target=_run_pipeline_background, args=("run", provider_id), daemon=True)
+            thread.start()
+            self.send_json({"ok": True, "message": "流水线已启动，正在处理 input 目录"}, status=202)
+            return
+
+        # ── Pipeline: retry-failed (background) — 仅重试失败任务 ──
+        if parsed.path == "/api/pipeline/retry-failed":
+            body = self._read_json_body() or {}
+            provider_id = body.get("provider", "")
+            with PIPELINE_TASK_LOCK:
+                if PIPELINE_TASK["running"]:
+                    self.send_json(
+                        {"ok": False, "error": "已有流水线任务正在运行，请等待完成"},
+                        status=409,
+                    )
+                    return
+                PIPELINE_TASK["running"] = True
+                PIPELINE_TASK["action"] = "retry-failed"
+                PIPELINE_TASK["started_at"] = time.time()
+
+            thread = threading.Thread(target=_run_pipeline_background, args=("retry-failed", provider_id), daemon=True)
+            thread.start()
+            self.send_json({"ok": True, "message": "retry-failed 已启动，仅重试之前失败的任务"}, status=202)
+            return
+
+        # ── Provider API (POST) ──
+        if parsed.path == "/api/providers":
+            body = self._read_json_body()
+            if not body:
+                self.send_error_json(400, "请求体为空")
+                return
+            from provider_store import upsert_provider, mask_api_key
+            try:
+                result = upsert_provider(body)
+                result["api_key_masked"] = mask_api_key(result.pop("api_key", ""))
+                self.send_json({"ok": True, "provider": result}, status=201)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+            return
+
+        # Provider activate
+        if parsed.path.startswith("/api/providers/") and parsed.path.endswith("/activate"):
+            provider_id = parsed.path.split("/")[3]
+            from provider_store import set_active_provider
+            try:
+                set_active_provider(provider_id)
+                self.send_json({"ok": True, "active": provider_id})
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+            return
+
+        # Provider test
+        if parsed.path.startswith("/api/providers/") and parsed.path.endswith("/test"):
+            provider_id = parsed.path.split("/")[3]
+            from provider_store import test_provider_connection
+            result = test_provider_connection(provider_id)
+            self.send_json(result)
+            return
+
         if parsed.path != "/api/jobs":
             self.send_error_json(404, "Not found")
             return
@@ -112,6 +262,17 @@ class Handler(BaseHTTPRequestHandler):
         thread.start()
         # Use get_job() for response to strip _api_key
         self.send_json(get_job(job["id"]), status=201)
+
+    def _read_json_body(self) -> dict | None:
+        """读取 JSON 请求体。Content-Type 检查宽松。"""
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return None
+        try:
+            raw = self.rfile.read(length)
+            return json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
 
     def read_multipart_form(self) -> dict:
         content_type = self.headers.get("Content-Type", "")
@@ -169,6 +330,147 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args) -> None:
         return
+
+
+# ── Pipeline API helpers ──────────────────────────────────────────────────
+
+
+def _run_pipeline_command(action: str, timeout: int = 30) -> dict:
+    """Run batch_worker.py --<action> and return structured result."""
+    command = [
+        sys.executable, "-B",
+        str(PROJECT_ROOT / "batch_worker.py"),
+        f"--{action}",
+    ]
+    env = os.environ.copy()
+    env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
+    env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
+    clear_proxy_env(env)
+
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        return {
+            "ok": result.returncode == 0,
+            "command": action,
+            "output": result.stdout,
+            "error": result.stderr,
+            "returncode": result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "command": action, "error": f"命令超时（{timeout}s）"}
+    except FileNotFoundError:
+        return {"ok": False, "command": action, "error": f"Python 解释器未找到: {sys.executable}"}
+    except Exception as exc:
+        return {"ok": False, "command": action, "error": str(exc)}
+
+
+def _run_pipeline_background(action: str, provider_id: str = "") -> None:
+    """Run batch_worker.py with --<action> in background, writing output to pipeline log.
+
+    Args:
+        action: "run" (full pipeline) or "retry-failed" (retry only)
+        provider_id: optional provider ID to use for translation config
+    """
+    PIPELINE_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+    if action == "run":
+        command = [
+            sys.executable, "-B",
+            str(PROJECT_ROOT / "batch_worker.py"),
+            "--input", str(PROJECT_ROOT / "input"),
+        ]
+    else:
+        command = [
+            sys.executable, "-B",
+            str(PROJECT_ROOT / "batch_worker.py"),
+            f"--{action}",
+        ]
+
+    # 如果未指定 provider_id，使用 active provider
+    if not provider_id:
+        try:
+            from provider_store import get_active_provider
+            active = get_active_provider()
+            if active:
+                provider_id = active.get("id", "")
+        except Exception:
+            pass
+
+    if provider_id:
+        command += ["--provider", provider_id]
+
+    env = os.environ.copy()
+    env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
+    env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
+    clear_proxy_env(env)
+
+    action_label = {"run": "完整流水线", "retry-failed": "重试失败任务"}.get(action, action)
+    started_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    with PIPELINE_LOG.open("a", encoding="utf-8") as log:
+        log.write(f"\n{'='*60}\n")
+        log.write(f"  [{action_label}] 开始于 {started_at}\n")
+        log.write(f"  命令: {' '.join(command)}\n")
+        if provider_id:
+            log.write(f"  Provider: {provider_id}\n")
+        log.write(f"{'='*60}\n")
+
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        with PIPELINE_TASK_LOCK:
+            PIPELINE_TASK["pid"] = process.pid
+
+        assert process.stdout is not None
+        with PIPELINE_LOG.open("a", encoding="utf-8") as log:
+            for line in process.stdout:
+                log.write(line)
+                log.flush()
+
+        returncode = process.wait()
+        finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        with PIPELINE_LOG.open("a", encoding="utf-8") as log:
+            log.write(f"\n[{action_label}] 完成于 {finished_at}, returncode={returncode}\n")
+    except Exception as exc:
+        with PIPELINE_LOG.open("a", encoding="utf-8") as log:
+            log.write(f"\n[{action_label}] 异常: {exc}\n")
+    finally:
+        with PIPELINE_TASK_LOCK:
+            PIPELINE_TASK["running"] = False
+            PIPELINE_TASK["pid"] = None
+
+
+def _read_pipeline_log() -> dict:
+    """Read pipeline log file and return its contents."""
+    if not PIPELINE_LOG.exists():
+        return {"ok": True, "lines": [], "text": ""}
+    try:
+        text = PIPELINE_LOG.read_text(encoding="utf-8")
+        # Return last 200 lines max
+        lines = text.splitlines()
+        if len(lines) > 200:
+            lines = lines[-200:]
+            text = "\n".join(lines)
+        return {"ok": True, "lines": lines, "text": text}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc), "lines": [], "text": ""}
 
 
 def create_job(form: dict) -> dict:

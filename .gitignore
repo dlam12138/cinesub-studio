@@ -8,6 +8,11 @@ models/
 output/
 work/
 uploads/
+input/
+archive/
+failed/
+logs/
+config/providers.local.json
 __pycache__/
 *.pyc
 *.pyo
@@ -28,3 +33,7 @@ __pycache__/
 *.mp3
 *.flac
 *.aac
+*.lang.json
+*.state.json
+*.quality_report.json
+*.review_needed.srt

@@ -2,14 +2,18 @@
 
 ## 项目结构
 
-- `transcribe.py`: 核心识别脚本。负责 ffmpeg 抽音频、加载 faster-whisper、输出 SRT。
-- `web_server.py`: 本地 Web 后台。负责上传、本机路径任务、任务状态、日志、下载 SRT。
-- `web/index.html`: 本地前端页面。不要引入构建工具，保持单文件静态页面。
+- `transcribe.py`: 核心识别脚本。负责 ffmpeg 抽音频、加载 faster-whisper、输出 SRT、保存语言识别 JSON。
+- `subtitle_translate.py`: 字幕翻译模块。解析 SRT、调用 LLM API、输出双语/译文 SRT、翻译缓存。
+- `quality_checker.py`: 自动质检模块。SRT 格式检查 + 翻译质量检查 + 生成质量报告和 review_needed.srt。
+- `batch_worker.py`: 批量生产流水线。自动发现视频 → 提取音频 → 转写 → 翻译 → 质检 → 归档，支持断点续跑和状态追踪。
+- `web_server.py`: 本地 Web 后台。负责上传、本机路径任务、任务状态、日志、下载 SRT、Provider 管理 API。
+- `web/index.html`: 本地前端页面。三个标签页：流水线控制台、单文件处理、模型接口。不要引入构建工具，保持单文件静态页面。
+- `provider_store.py`: Provider 配置管理模块。负责 config/providers.local.json 的读写、脱敏、原子写入。
 - `run_transcribe.ps1`: 命令行识别入口。
 - `start_web.ps1`: Web 控制台入口，默认服务地址 `http://127.0.0.1:7860`。
 - `install.ps1`: 安装和重建 `.venv`，pip 缓存固定到 `.cache\pip`。
 - `download_model_file.py`: 直接下载模型文件的兜底工具。
-- `models/`, `.cache/`, `uploads/`, `output/`, `work/`, `.venv/`: 运行产物，不要当源码修改。
+- `models/`, `.cache/`, `uploads/`, `output/`, `work/`, `input/`, `archive/`, `failed/`, `.venv/`: 运行产物，不要当源码修改。
 
 ## 运行命令
 
@@ -31,10 +35,17 @@ cd D:\Claude项目操作\电影翻译
 
 ## 测试命令
 
-基础导入检查，避免写 `__pycache__`：
+基础导入检查（全部模块），避免写 `__pycache__`：
 
 ```powershell
-.\.venv\Scripts\python.exe -B -c "import transcribe, web_server, download_model_file; print('imports ok')"
+.\.venv\Scripts\python.exe -B -c "import transcribe, web_server, download_model_file, subtitle_translate, quality_checker, batch_worker; print('imports ok')"
+```
+
+自测：
+
+```powershell
+.\.venv\Scripts\python.exe -B subtitle_translate.py --self-test
+.\.venv\Scripts\python.exe -B quality_checker.py --self-test
 ```
 
 Web 服务检查：
@@ -44,15 +55,110 @@ Web 服务检查：
 Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/ | Select-Object -ExpandProperty StatusCode
 ```
 
-本地 `small` 模型加载检查：
+批量流水线检查：
 
 ```powershell
-$env:HF_HOME='D:\Claude项目操作\电影翻译\.cache\huggingface'
-$env:HF_HUB_CACHE='D:\Claude项目操作\电影翻译\.cache\huggingface\hub'
-.\.venv\Scripts\python.exe -B -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8', download_root='D:/Claude项目操作/电影翻译/models', local_files_only=True); print('local small model loads')"
+.\.venv\Scripts\python.exe -B batch_worker.py --scan
+.\.venv\Scripts\python.exe -B batch_worker.py --status
+.\.venv\Scripts\python.exe -B batch_worker.py --review
 ```
 
 功能验收时优先用短音视频样本跑 `small + cpu + int8 + local_files_only`，确认 `output/*.srt` 生成且时间轴格式为 `HH:MM:SS,mmm --> HH:MM:SS,mmm`。
+
+## Pipeline 控制台
+
+Web 控制台现在包含两个标签页：
+
+### 流水线控制台（默认）
+- 扫描 input：调用 `GET /api/pipeline/scan` → 后端执行 `batch_worker.py --scan`
+- 查看状态：调用 `GET /api/pipeline/status` → 后端执行 `batch_worker.py --status`
+- 异常复核：调用 `GET /api/pipeline/review` → 后端执行 `batch_worker.py --review`
+- 重试失败：调用 `POST /api/pipeline/retry-failed` → 后台线程执行 `batch_worker.py --retry-failed`，日志写入 `logs/pipeline.log`
+- 刷新全部：依次调用以上三个 GET 接口
+- 操作日志：实时显示前端操作记录
+
+### 单文件处理
+- 保留原有的上传、转写、翻译、下载 SRT 全部功能
+- 通过 `POST /api/jobs` 创建任务，`GET /api/jobs/<id>` 轮询状态
+
+### Pipeline API 测试
+
+```powershell
+# 启动服务
+.\start_web.ps1
+
+# 测试各 API 端点（另一个终端）
+Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/pipeline/scan | Select-Object StatusCode
+Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/pipeline/status | Select-Object StatusCode
+Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/pipeline/review | Select-Object StatusCode
+Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/pipeline/logs | Select-Object StatusCode
+Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/jobs | Select-Object StatusCode
+```
+
+### Pipeline 控制台约束
+
+**命令执行：**
+- 所有 pipeline 命令通过 `sys.executable -B batch_worker.py --<action>` 执行
+- 不要硬编码 `python` 或 `python3`
+- scan/status/review 同步执行（30s 超时），run/retry-failed 后台执行
+
+**语义隔离（关键）：**
+- `POST /api/pipeline/run` → 执行 `--input` 完整流水线（扫描 + 处理全部 input）
+- `POST /api/pipeline/retry-failed` → 仅执行 `--retry-failed`，只重试失败任务，**不扫描新文件**
+- 两者互斥，不可混用。绝对不要在 `retry-failed` 里调用 `pipeline.run()` 或 `scan()`
+
+**并发保护：**
+- 同一时间只允许一个后台流水线任务运行
+- 重复点击返回 HTTP 409，前端必须展示提示
+- 避免多个 `batch_worker.py` 同时运行导致的 .state.json 冲突、文件移动冲突、LLM API 重复消耗
+
+**只读保证：**
+- `GET /api/pipeline/scan`、`status`、`review`、`logs`、`task` 只能读取，不得修改文件
+- 日志不存在时 `/api/pipeline/logs` 返回 `{"ok": true, "lines": [], "text": ""}`，不报错
+
+**安全：**
+- Web 服务只绑定 `127.0.0.1`，不要默认暴露到局域网
+- 不要破坏原有 Web UI（POST /api/jobs、GET /download 等）
+
+**前端：**
+- 不引入 React/Vue/CDN/npm，保持单文件 HTML
+- 不要另起端口服务，复用 7860
+- 命令失败时必须展示 stderr 和 returncode
+- 按钮命名：扫描 input / 开始处理 input / 重试失败（明确区分语义）
+
+**日志：**
+- 后台任务日志写入 `logs/pipeline.log`
+- 默认只返回最近 200 行
+- TODO: 日志超过 5MB 时轮转为 `pipeline.log.1`
+
+### Provider 管理约束
+
+**安全：**
+- `config/providers.local.json` 已 gitignore，绝对不要提交
+- `GET /api/providers` 和 `GET /api/providers/active` 必须返回脱敏后的 api_key_masked
+- 后端日志、错误消息、stdout 决不输出完整 API Key
+- 编辑 Provider 时，api_key 为空则保留旧值，不要覆盖为空
+
+**原子写入：**
+- 写配置必须先写 `.tmp` 文件再 `os.replace()` 到目标
+- 避免写一半导致配置损坏
+
+**CLI 优先级（严格顺序）：**
+1. CLI 显式参数（--api-key 等）
+2. --provider <id> 指定的 Provider 配置
+3. active provider
+4. 程序默认值
+
+**集成约束：**
+- `POST /api/pipeline/run` 和 `POST /api/pipeline/retry-failed` 默认使用 active provider
+- Provider 配置包含 Whisper 模型和设备设置（whisper_model, whisper_device）
+- `provider_store.py` 是独立的纯 Python 模块，不依赖 web_server
+- 前端 Provider 下拉框不覆盖用户手动输入
+
+**测试连接：**
+- 仅支持 OpenAI-compatible（POST {base}/chat/completions）
+- 发送极短消息，max_tokens=5，15s 超时
+- 错误消息中不包含 API Key
 
 ## 代码风格
 

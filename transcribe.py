@@ -208,7 +208,12 @@ def transcribe_to_srt(
     beam_size: int,
     vad_filter: bool,
     local_files_only: bool,
-) -> None:
+) -> dict | None:
+    """Run Whisper transcription and write SRT.
+
+    Returns language detection info dict (or None on failure):
+        {"source_language": "ja", "language_probability": 0.94, "model": "large-v3"}
+    """
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -248,7 +253,24 @@ def transcribe_to_srt(
     detected = getattr(info, "language", None)
     probability = getattr(info, "language_probability", None)
     if detected:
-        print(f"Detected language: {detected} ({probability:.2f})" if probability is not None else f"Detected language: {detected}")
+        prob_str = f"{probability:.2f}" if probability is not None else "N/A"
+        print(f"Detected language: {detected} ({prob_str})")
+
+        # ── 保存语言识别结果为结构化 JSON ──
+        lang_info = {
+            "source_language": detected,
+            "language_probability": round(probability, 4) if probability is not None else None,
+            "model": model_name,
+        }
+        lang_json_path = srt_path.with_suffix(".lang.json")
+        import json as _json
+        lang_json_path.write_text(
+            _json.dumps(lang_info, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"Language detection saved: {lang_json_path}")
+    else:
+        lang_info = None
 
     with srt_path.open("w", encoding="utf-8") as file:
         for index, segment in enumerate(segments, start=1):
@@ -259,6 +281,8 @@ def transcribe_to_srt(
             file.write(f"{index}\n")
             file.write(f"{format_srt_time(segment.start)} --> {format_srt_time(segment.end)}\n")
             file.write(f"{text}\n\n")
+
+    return lang_info
 
 
 def format_srt_time(seconds: float) -> str:

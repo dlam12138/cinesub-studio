@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>电影字幕识别</title>
+  <title>CineSub Studio Pipeline</title>
   <style>
     :root {
       color-scheme: light;
@@ -15,7 +15,12 @@
       --primary: #1f6feb;
       --primary-dark: #174ea6;
       --danger: #b42318;
+      --danger-dark: #912018;
       --ok: #067647;
+      --ok-bg: #dcfae6;
+      --warn: #b54708;
+      --warn-bg: #fffaeb;
+      --err-bg: #fee4e2;
       --radius: 8px;
     }
 
@@ -27,31 +32,247 @@
       color: var(--text);
     }
 
+    /* ── Header & Tabs ── */
     header {
-      padding: 22px 28px 12px;
+      padding: 20px 28px 0;
       border-bottom: 1px solid var(--line);
       background: var(--panel);
     }
 
     h1 {
-      margin: 0 0 6px;
+      margin: 0 0 4px;
       font-size: 24px;
       font-weight: 650;
     }
 
     .sub {
-      margin: 0;
+      margin: 0 0 14px;
       color: var(--muted);
       font-size: 14px;
     }
 
+    .tabs {
+      display: flex;
+      gap: 2px;
+    }
+
+    .tab-btn {
+      padding: 10px 24px;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      border-radius: var(--radius) var(--radius) 0 0;
+      background: #f1f3f5;
+      color: var(--muted);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+
+    .tab-btn:hover { background: #e4e7eb; }
+    .tab-btn.active {
+      background: var(--bg);
+      color: var(--text);
+      border-color: var(--line);
+      margin-bottom: -1px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── Main Layout ── */
     main {
+      padding: 18px 28px 28px;
+      max-width: 1480px;
+      margin: 0 auto;
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Pipeline: Action Buttons ── */
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+
+    .actions button {
+      min-height: 40px;
+      padding: 8px 20px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+
+    .actions button:hover {
+      background: #eef2f6;
+      border-color: #b0b8c4;
+    }
+
+    .actions button.primary {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+
+    .actions button.primary:hover { background: var(--primary-dark); }
+
+    .actions button.danger {
+      background: var(--danger);
+      color: #fff;
+      border-color: var(--danger);
+    }
+
+    .actions button.danger:hover { background: var(--danger-dark); }
+
+    .actions button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .actions .spacer { flex: 1; }
+
+    /* ── Pipeline: Cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px;
+      min-height: 120px;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      font-weight: 650;
+      color: var(--text);
+    }
+
+    .card .placeholder {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .card.full-width {
+      grid-column: 1 / -1;
+    }
+
+    /* ── Card Content: Tables ── */
+    .mini-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .mini-table th {
+      text-align: left;
+      padding: 6px 8px;
+      border-bottom: 2px solid var(--line);
+      color: var(--muted);
+      font-weight: 650;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .3px;
+    }
+
+    .mini-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #f1f3f5;
+      vertical-align: top;
+    }
+
+    .mini-table tr:hover td { background: #fafbfc; }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      border-radius: 999px;
+      padding: 2px 9px;
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .badge-ok { background: var(--ok-bg); color: var(--ok); }
+    .badge-warn { background: var(--warn-bg); color: var(--warn); }
+    .badge-err { background: var(--err-bg); color: var(--danger); }
+    .badge-pending { background: #eef2f6; color: #344054; }
+    .badge-running { background: #e0ecff; color: #1849a9; }
+
+    /* ── Issue list ── */
+    .issue-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      font-size: 13px;
+    }
+
+    .issue-list li {
+      padding: 6px 0;
+      border-bottom: 1px solid #f1f3f5;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+    }
+
+    .issue-list li:last-child { border-bottom: 0; }
+
+    .issue-icon { flex-shrink: 0; }
+
+    /* ── Mini Log ── */
+    .mini-log {
+      min-height: 160px;
+      max-height: 420px;
+      overflow: auto;
+      padding: 10px;
+      border: 0;
+      border-radius: 4px;
+      background: #101828;
+      color: #d0d5dd;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      margin: 0;
+    }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--line);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Transcribe Tab: two-column ── */
+    .transcribe-layout {
       display: grid;
       grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
       gap: 18px;
-      padding: 18px 28px 28px;
-      max-width: 1380px;
-      margin: 0 auto;
     }
 
     section {
@@ -61,7 +282,7 @@
       padding: 18px;
     }
 
-    h2 {
+    section h2 {
       margin: 0 0 16px;
       font-size: 17px;
     }
@@ -95,9 +316,7 @@
       background: #f1f3f5;
     }
 
-    input[type="file"] {
-      padding: 7px;
-    }
+    input[type="file"] { padding: 7px; }
 
     .row {
       display: grid;
@@ -119,7 +338,7 @@
       min-height: auto;
     }
 
-    button {
+    .btn-full {
       width: 100%;
       margin-top: 18px;
       min-height: 42px;
@@ -132,13 +351,13 @@
       cursor: pointer;
     }
 
-    button:hover { background: var(--primary-dark); }
-    button:disabled {
+    .btn-full:hover { background: var(--primary-dark); }
+    .btn-full:disabled {
       opacity: .55;
       cursor: not-allowed;
     }
 
-    .status {
+    .job-status {
       display: flex;
       gap: 10px;
       align-items: center;
@@ -146,7 +365,7 @@
       flex-wrap: wrap;
     }
 
-    .badge {
+    .badge-status {
       display: inline-flex;
       align-items: center;
       min-height: 26px;
@@ -158,17 +377,17 @@
       color: #344054;
     }
 
-    .badge.running { background: #e0ecff; color: #1849a9; }
-    .badge.done { background: #dcfae6; color: var(--ok); }
-    .badge.failed { background: #fee4e2; color: var(--danger); }
+    .badge-status.running { background: #e0ecff; color: #1849a9; }
+    .badge-status.done { background: #dcfae6; color: var(--ok); }
+    .badge-status.failed { background: #fee4e2; color: var(--danger); }
 
-    .download {
+    .dl-link {
       color: var(--primary);
       font-weight: 650;
       text-decoration: none;
     }
 
-    .log {
+    .log-panel {
       min-height: 460px;
       max-height: calc(100vh - 240px);
       overflow: auto;
@@ -190,327 +409,1137 @@
       line-height: 1.5;
     }
 
-    @media (max-width: 900px) {
-      main {
-        grid-template-columns: 1fr;
-        padding: 14px;
-      }
+    .summary-bar {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
 
-      header {
-        padding: 18px 14px 12px;
-      }
+    .summary-bar span {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #eef2f6;
+      font-weight: 600;
+    }
+
+    .summary-bar .s-err { background: var(--err-bg); color: var(--danger); }
+    .summary-bar .s-warn { background: var(--warn-bg); color: var(--warn); }
+    .summary-bar .s-ok { background: var(--ok-bg); color: var(--ok); }
+
+    /* ── Responsive ── */
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.45); z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: var(--panel); border-radius: var(--radius);
+      padding: 24px; width: 520px; max-height: 85vh; overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    }
+    .modal h3 { margin: 0 0 16px; }
+    .modal .btn-row { display: flex; gap: 10px; margin-top: 16px; }
+    .modal .btn-row button { flex: 1; min-height: 38px; border: 0; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600; }
+    .modal .btn-save { background: var(--primary); color: #fff; }
+    .modal .btn-cancel { background: #eef2f6; color: var(--text); }
+
+    /* ── Provider table ── */
+    .provider-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .provider-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--line); color: var(--muted); font-weight: 650; font-size: 12px; }
+    .provider-table td { padding: 8px 10px; border-bottom: 1px solid #f1f3f5; vertical-align: middle; }
+    .provider-table tr:hover td { background: #fafbfc; }
+    .provider-table .col-act { white-space: nowrap; }
+    .provider-table .col-act button { padding: 3px 9px; margin-right: 4px; border: 1px solid var(--line); border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }
+    .provider-table .col-act button:hover { background: #eef2f6; }
+    .provider-table .col-act .btn-danger { color: var(--danger); border-color: var(--danger); }
+    .provider-table .col-act .btn-primary { color: var(--primary); border-color: var(--primary); }
+
+    .provider-active-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 12px 16px; background: var(--ok-bg); border: 1px solid #a3e4bc; border-radius: var(--radius); margin-bottom: 16px;
+    }
+    .provider-active-bar strong { color: var(--ok); }
+
+    @media (max-width: 900px) {
+      main { padding: 14px; }
+      header { padding: 18px 14px 0; }
+      .cards { grid-template-columns: 1fr; }
+      .transcribe-layout { grid-template-columns: 1fr; }
+      .actions { flex-direction: column; }
+      .actions button { width: 100%; }
+      .modal { width: 95vw; }
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>电影字幕识别</h1>
-    <p class="sub">本地 faster-whisper 控制台，模型、缓存和输出都保存在当前项目目录。</p>
-  </header>
 
-  <main>
-    <section>
-      <h2>识别设置</h2>
-      <form id="jobForm">
-        <label for="file">上传视频或音频</label>
-        <input id="file" name="file" type="file" accept="video/*,audio/*,.mkv,.srt,.wav,.mp3,.m4a,.flac,.opus">
+<header>
+  <h1>CineSub Studio Pipeline</h1>
+  <p class="sub">字幕批量处理控制台 — 自动发现、转写、翻译、质检，只把异常交给人</p>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">⚙ 流水线控制台</button>
+    <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">📝 单文件处理</button>
+    <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">🔑 模型接口</button>
+  </nav>
+</header>
 
-        <label for="path">或填写本机文件路径</label>
-        <input id="path" name="path" type="text" placeholder="D:\Movies\movie.mp4">
+<main>
+  <!-- ═══════════════ Pipeline Tab ═══════════════ -->
+  <div id="tab-pipeline" class="tab-content active">
 
-        <div class="row">
-          <div>
-            <label for="model">模型</label>
-            <select id="model" name="model">
-              <option value="tiny">tiny - 快速测试</option>
-              <option value="base">base - 轻量</option>
-              <option value="small" selected>small - CPU 推荐</option>
-              <option value="medium">medium - 效果更好</option>
-              <option value="large-v3">large-v3 - 高质量</option>
-              <option value="distil-large-v3">distil-large-v3</option>
-            </select>
-          </div>
-          <div>
-            <label for="device">设备</label>
-            <select id="device" name="device">
-              <option value="cpu" selected>CPU</option>
-              <option value="cuda">NVIDIA CUDA</option>
-              <option value="auto">自动</option>
-            </select>
-          </div>
-        </div>
+    <div class="actions">
+      <button onclick="pipelineAction('scan')" id="btn-scan">🔍 扫描 input</button>
+      <button onclick="pipelineAction('status')" id="btn-status">📊 查看状态</button>
+      <button onclick="pipelineAction('review')" id="btn-review">⚠️ 异常复核</button>
+      <button onclick="pipelineAction('run')" id="btn-run" class="primary">▶ 开始处理 input</button>
+      <span class="spacer"></span>
+      <button onclick="pipelineAction('retry')" id="btn-retry" class="danger">🔄 重试失败</button>
+      <button onclick="refreshAll()" id="btn-refresh">↻ 刷新全部</button>
+    </div>
 
-        <div class="row">
-          <div>
-            <label for="compute_type">计算精度</label>
-            <select id="compute_type" name="compute_type">
-              <option value="">自动</option>
-              <option value="int8">int8 - CPU 省内存</option>
-              <option value="float16">float16 - GPU</option>
-              <option value="float32">float32</option>
-            </select>
-          </div>
-          <div>
-            <label for="language">源语言</label>
-            <select id="language" name="language">
-              <option value="">自动检测</option>
-              <option value="en">英语 en</option>
-              <option value="zh">中文 zh</option>
-              <option value="ja">日语 ja</option>
-              <option value="ko">韩语 ko</option>
-              <option value="fr">法语 fr</option>
-              <option value="de">德语 de</option>
-              <option value="es">西语 es</option>
-              <option value="ru">俄语 ru</option>
-            </select>
-          </div>
-        </div>
-
-        <label for="hf_endpoint">模型下载源</label>
-        <select id="hf_endpoint" name="hf_endpoint">
-          <option value="">Hugging Face 官方</option>
-          <option value="https://hf-mirror.com" selected>hf-mirror.com 镜像</option>
-        </select>
-
-        <label for="beam_size">Beam size</label>
-        <input id="beam_size" name="beam_size" type="number" min="1" max="10" value="5">
-
-        <label class="check">
-          <input id="vad" name="vad" type="checkbox" checked>
-          启用静音过滤 VAD
-        </label>
-
-        <label class="check">
-          <input id="local_files_only" name="local_files_only" type="checkbox">
-          只使用本地已下载模型
-        </label>
-
-        <hr style="border:0; border-top:1px solid var(--line); margin: 18px 0 12px;">
-
-        <h2>翻译设置</h2>
-
-        <label class="check">
-          <input id="translate_enabled" name="translate_enabled" type="checkbox">
-          启用大模型翻译
-        </label>
-
-        <label for="api_provider">API 协议</label>
-        <select id="api_provider" name="api_provider" disabled>
-          <option value="openai-compatible" selected>OpenAI-Compatible</option>
-          <option value="anthropic">Anthropic Claude</option>
-        </select>
-
-        <label for="api_base">API Base URL</label>
-        <input id="api_base" name="api_base" type="text" disabled
-               placeholder="https://api.openai.com/v1">
-
-        <label for="api_key">API Key</label>
-        <input id="api_key" name="api_key" type="password" disabled placeholder="sk-...">
-
-        <label for="llm_model">大模型名称</label>
-        <input id="llm_model" name="llm_model" type="text" disabled
-               placeholder="gpt-4o-mini / qwen-plus / llama3.1 / claude-3-5-sonnet-latest">
-
-        <div class="row">
-          <div>
-            <label for="target_language">目标语言</label>
-            <select id="target_language" name="target_language" disabled>
-              <option value="zh-CN" selected>中文 zh-CN</option>
-              <option value="zh-TW">繁体中文 zh-TW</option>
-              <option value="en">英文 en</option>
-              <option value="ja">日文 ja</option>
-              <option value="ko">韩文 ko</option>
-              <option value="fr">法文 fr</option>
-              <option value="de">德文 de</option>
-              <option value="es">西文 es</option>
-              <option value="ru">俄文 ru</option>
-            </select>
-          </div>
-          <div>
-            <label for="translation_mode">翻译模式</label>
-            <select id="translation_mode" name="translation_mode" disabled>
-              <option value="bilingual" selected>双语 bilingual</option>
-              <option value="translated">纯翻译 translated</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="row">
-          <div>
-            <label for="translation_batch_size">批量大小 (1-50)</label>
-            <input id="translation_batch_size" name="translation_batch_size" type="number"
-                   min="1" max="50" value="20" disabled>
-          </div>
-          <div>
-            <label for="translation_temperature">Temperature (0-1)</label>
-            <input id="translation_temperature" name="translation_temperature" type="number"
-                   min="0" max="1" step="0.1" value="0.2" disabled>
-          </div>
-        </div>
-
-        <label class="check">
-          <input id="context_enabled" name="context_enabled" type="checkbox" checked disabled>
-          联系上下文
-        </label>
-
-        <label for="context_window">上下文窗口 (0-10)</label>
-        <input id="context_window" name="context_window" type="number"
-               min="0" max="10" value="3" disabled>
-
-        <label for="translation_prompt">自定义翻译提示词（追加到默认提示词后）</label>
-        <textarea id="translation_prompt" name="translation_prompt" rows="3" disabled
-                  placeholder="用户额外要求…（留空使用默认提示词）"></textarea>
-
-        <button id="startBtn" type="submit">开始识别</button>
-      </form>
-      <p class="hint">第一次使用某个模型会下载模型文件；后台会忽略系统里失效的代理设置。国内网络可尝试 hf-mirror.com，模型下载完成后可以勾选"只使用本地已下载模型"。<br>翻译使用大模型 API，API Key 不会持久化到磁盘或日志中。</p>
-    </section>
-
-    <section>
-      <h2>任务状态</h2>
-      <div class="status">
-        <span id="badge" class="badge">idle</span>
-        <a id="downloadSource" class="download" href="#" hidden>下载原文 SRT</a>
-        <a id="downloadTranslated" class="download" href="#" hidden>下载双语 SRT</a>
+    <div class="cards">
+      <div class="card">
+        <h2>📁 待处理文件</h2>
+        <div id="scan-result" class="placeholder">点击"扫描 input"查看待处理文件</div>
       </div>
-      <pre id="log" class="log">等待任务开始。</pre>
-    </section>
-  </main>
 
-  <script>
-    const form = document.getElementById("jobForm");
-    const startBtn = document.getElementById("startBtn");
-    const badge = document.getElementById("badge");
-    const logBox = document.getElementById("log");
-    const downloadSource = document.getElementById("downloadSource");
-    const downloadTranslated = document.getElementById("downloadTranslated");
+      <div class="card">
+        <h2>📊 任务状态</h2>
+        <div id="status-result" class="placeholder">点击"查看状态"查看所有任务进度</div>
+      </div>
 
-    const translateCheck = document.getElementById("translate_enabled");
-    const contextCheck = document.getElementById("context_enabled");
-    const contextWindow = document.getElementById("context_window");
+      <div class="card">
+        <h2>⚠️ 异常复核摘要</h2>
+        <div id="review-result" class="placeholder">点击"异常复核"查看需要人工关注的片段</div>
+      </div>
 
-    let activeJob = null;
-    let timer = null;
+      <div class="card">
+        <h2>📋 操作日志</h2>
+        <pre id="pipeline-log" class="mini-log">就绪。点击上方按钮执行操作。</pre>
+      </div>
+    </div>
+  </div>
 
-    // Translation fields that depend on translate_enabled checkbox
-    const translateFields = [
-      "api_provider", "api_base", "api_key", "llm_model",
-      "target_language", "translation_mode", "translation_batch_size",
-      "translation_temperature", "context_enabled", "context_window",
-      "translation_prompt",
-    ];
+  <!-- ═══════════════ Transcribe Tab ═══════════════ -->
+  <div id="tab-transcribe" class="tab-content">
+    <div class="transcribe-layout">
+      <section>
+        <h2>识别设置</h2>
+        <form id="jobForm">
+          <label for="file">上传视频或音频</label>
+          <input id="file" name="file" type="file" accept="video/*,audio/*,.mkv,.srt,.wav,.mp3,.m4a,.flac,.opus">
 
-    function setTranslateFieldsDisabled(disabled) {
-      translateFields.forEach(function(name) {
-        var el = document.getElementById(name);
-        if (el) el.disabled = disabled;
+          <label for="path">或填写本机文件路径</label>
+          <input id="path" name="path" type="text" placeholder="D:\Movies\movie.mp4">
+
+          <div class="row">
+            <div>
+              <label for="model">模型</label>
+              <select id="model" name="model">
+                <option value="tiny">tiny - 快速测试</option>
+                <option value="base">base - 轻量</option>
+                <option value="small" selected>small - CPU 推荐</option>
+                <option value="medium">medium - 效果更好</option>
+                <option value="large-v3">large-v3 - 高质量</option>
+                <option value="distil-large-v3">distil-large-v3</option>
+              </select>
+            </div>
+            <div>
+              <label for="device">设备</label>
+              <select id="device" name="device">
+                <option value="cpu" selected>CPU</option>
+                <option value="cuda">NVIDIA CUDA</option>
+                <option value="auto">自动</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="compute_type">计算精度</label>
+              <select id="compute_type" name="compute_type">
+                <option value="">自动</option>
+                <option value="int8">int8 - CPU 省内存</option>
+                <option value="float16">float16 - GPU</option>
+                <option value="float32">float32</option>
+              </select>
+            </div>
+            <div>
+              <label for="language">源语言</label>
+              <select id="language" name="language">
+                <option value="">自动检测</option>
+                <option value="en">英语 en</option>
+                <option value="zh">中文 zh</option>
+                <option value="ja">日语 ja</option>
+                <option value="ko">韩语 ko</option>
+                <option value="fr">法语 fr</option>
+                <option value="de">德语 de</option>
+                <option value="es">西语 es</option>
+                <option value="ru">俄语 ru</option>
+              </select>
+            </div>
+          </div>
+
+          <label for="hf_endpoint">模型下载源</label>
+          <select id="hf_endpoint" name="hf_endpoint">
+            <option value="">Hugging Face 官方</option>
+            <option value="https://hf-mirror.com" selected>hf-mirror.com 镜像</option>
+          </select>
+
+          <label for="beam_size">Beam size</label>
+          <input id="beam_size" name="beam_size" type="number" min="1" max="10" value="5">
+
+          <label class="check">
+            <input id="vad" name="vad" type="checkbox" checked>
+            启用静音过滤 VAD
+          </label>
+
+          <label class="check">
+            <input id="local_files_only" name="local_files_only" type="checkbox">
+            只使用本地已下载模型
+          </label>
+
+          <hr style="border:0; border-top:1px solid var(--line); margin: 18px 0 12px;">
+
+          <h2>翻译设置</h2>
+
+          <label for="provider_select">模型接口配置</label>
+          <select id="provider_select" name="provider_select" onchange="onProviderSelect()">
+            <option value="">-- 手动输入 --</option>
+          </select>
+
+          <label class="check">
+            <input id="translate_enabled" name="translate_enabled" type="checkbox">
+            启用大模型翻译
+          </label>
+
+          <label for="api_provider">API 协议</label>
+          <select id="api_provider" name="api_provider" disabled>
+            <option value="openai-compatible" selected>OpenAI-Compatible</option>
+            <option value="anthropic">Anthropic Claude</option>
+          </select>
+
+          <label for="api_base">API Base URL</label>
+          <input id="api_base" name="api_base" type="text" disabled
+                 placeholder="https://api.openai.com/v1">
+
+          <label for="api_key">API Key</label>
+          <input id="api_key" name="api_key" type="password" disabled placeholder="sk-...">
+
+          <label for="llm_model">大模型名称</label>
+          <input id="llm_model" name="llm_model" type="text" disabled
+                 placeholder="gpt-4o / deepseek-chat / claude-3-5-sonnet-latest">
+
+          <div class="row">
+            <div>
+              <label for="target_language">目标语言</label>
+              <select id="target_language" name="target_language" disabled>
+                <option value="zh-CN" selected>中文 zh-CN</option>
+                <option value="zh-TW">繁体中文 zh-TW</option>
+                <option value="en">英文 en</option>
+                <option value="ja">日文 ja</option>
+                <option value="ko">韩文 ko</option>
+                <option value="fr">法文 fr</option>
+                <option value="de">德文 de</option>
+                <option value="es">西文 es</option>
+                <option value="ru">俄文 ru</option>
+              </select>
+            </div>
+            <div>
+              <label for="translation_mode">翻译模式</label>
+              <select id="translation_mode" name="translation_mode" disabled>
+                <option value="bilingual" selected>双语 bilingual</option>
+                <option value="translated">纯翻译 translated</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="translation_batch_size">批量大小 (1-50)</label>
+              <input id="translation_batch_size" name="translation_batch_size" type="number"
+                     min="1" max="50" value="20" disabled>
+            </div>
+            <div>
+              <label for="translation_temperature">Temperature (0-1)</label>
+              <input id="translation_temperature" name="translation_temperature" type="number"
+                     min="0" max="1" step="0.1" value="0.2" disabled>
+            </div>
+          </div>
+
+          <label class="check">
+            <input id="context_enabled" name="context_enabled" type="checkbox" checked disabled>
+            联系上下文
+          </label>
+
+          <label for="context_window">上下文窗口 (0-10)</label>
+          <input id="context_window" name="context_window" type="number"
+                 min="0" max="10" value="3" disabled>
+
+          <label for="translation_prompt">自定义翻译提示词（追加到默认提示词后）</label>
+          <textarea id="translation_prompt" name="translation_prompt" rows="3" disabled
+                    placeholder="用户额外要求…（留空使用默认提示词）"></textarea>
+
+          <button id="startBtn" type="submit" class="btn-full">开始识别</button>
+        </form>
+        <p class="hint">第一次使用某个模型会下载模型文件；后台会忽略系统里失效的代理设置。国内网络可尝试 hf-mirror.com，模型下载完成后可以勾选"只使用本地已下载模型"。<br>翻译使用大模型 API，API Key 不会持久化到磁盘或日志中。</p>
+      </section>
+
+      <section>
+        <h2>任务状态</h2>
+        <div class="job-status">
+          <span id="badge" class="badge-status">idle</span>
+          <a id="downloadSource" class="dl-link" href="#" hidden>下载原文 SRT</a>
+          <a id="downloadTranslated" class="dl-link" href="#" hidden>下载双语 SRT</a>
+        </div>
+        <pre id="log" class="log-panel">等待任务开始。</pre>
+      </section>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Provider Tab ═══════════════ -->
+  <div id="tab-providers" class="tab-content">
+    <div class="provider-active-bar" id="providerActiveBar">
+      <span>当前默认：</span>
+      <strong id="activeProviderName">(未设置)</strong>
+    </div>
+
+    <div class="actions">
+      <button onclick="showProviderModal()" class="primary">+ 新增接口</button>
+      <button onclick="loadProviders()">↻ 刷新</button>
+      <button onclick="testActiveProvider()">⚡ 测试当前</button>
+      <span class="spacer"></span>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>接口列表</h2>
+      <div id="providerList" class="placeholder">加载中...</div>
+    </div>
+  </div>
+
+  <!-- Provider Edit Modal -->
+  <div class="modal-overlay" id="providerModal">
+    <div class="modal">
+      <h3 id="providerModalTitle">新增接口</h3>
+      <input type="hidden" id="provEditId">
+      <label>Provider ID <span style="color:var(--muted);font-weight:400">(唯一标识，如 openai-main)</span></label>
+      <input id="provEditIdField" type="text" placeholder="openai-main">
+      <label>名称</label>
+      <input id="provEditName" type="text" placeholder="OpenAI 主接口">
+      <div class="row">
+        <div><label>协议</label>
+          <select id="provEditProtocol"><option value="openai-compatible">OpenAI-Compatible</option><option value="anthropic">Anthropic Claude</option></select>
+        </div>
+        <div><label>API Base URL</label>
+          <input id="provEditBase" type="text" placeholder="https://api.openai.com/v1">
+        </div>
+      </div>
+      <label>API Key <span style="color:var(--muted);font-weight:400">(编辑时留空则保留原 key)</span></label>
+      <input id="provEditKey" type="password" placeholder="sk-...">
+      <div class="row">
+        <div><label>翻译模型</label><input id="provEditTransModel" type="text" placeholder="gpt-4o"></div>
+        <div><label>聊天模型</label><input id="provEditChatModel" type="text" placeholder="gpt-4o"></div>
+      </div>
+      <div class="row">
+        <div><label>Whisper 模型</label>
+          <select id="provEditWhisperModel">
+            <option value="large-v3">large-v3</option><option value="medium">medium</option><option value="small">small</option><option value="tiny">tiny</option>
+          </select>
+        </div>
+        <div><label>Whisper 设备</label>
+          <select id="provEditWhisperDevice">
+            <option value="cpu">CPU</option><option value="cuda">CUDA</option><option value="auto">自动</option>
+          </select>
+        </div>
+      </div>
+      <label>备注</label>
+      <input id="provEditNotes" type="text" placeholder="可选">
+      <label class="check"><input id="provEditEnabled" type="checkbox" checked> 启用</label>
+      <div class="btn-row">
+        <button class="btn-cancel" onclick="closeProviderModal()">取消</button>
+        <button class="btn-save" onclick="saveProvider()">保存</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ═══════════════════ Pipeline API ═══════════════════
+
+var pipelineLoading = {};
+
+function setLoading(action, state) {
+  pipelineLoading[action] = state;
+  var btnMap = {scan:'btn-scan', status:'btn-status', review:'btn-review', retry:'btn-retry', run:'btn-run'};
+  var btn = document.getElementById(btnMap[action]);
+  if (btn) btn.disabled = state;
+}
+
+function appendLog(text) {
+  var el = document.getElementById('pipeline-log');
+  var now = new Date().toLocaleTimeString();
+  el.textContent += '[' + now + '] ' + text + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+async function pipelineAction(action) {
+  if (pipelineLoading[action]) return;
+  setLoading(action, true);
+
+  // POST actions: run, retry-failed
+  var isPost = (action === 'retry' || action === 'run');
+  var method = isPost ? 'POST' : 'GET';
+  var urlPath = (action === 'retry') ? 'retry-failed' : action;
+  var url = '/api/pipeline/' + urlPath;
+
+  var labelMap = {scan:'扫描 input', status:'查看状态', review:'异常复核', retry:'重试失败', run:'开始处理 input'};
+  appendLog('执行: ' + (labelMap[action] || action) + ' ...');
+
+  try {
+    var resp = await fetch(url, { method: method });
+    var data = await resp.json();
+
+    // Handle 409 Conflict (task already running)
+    if (resp.status === 409) {
+      appendLog('[409] ' + (data.error || '已有流水线任务正在运行，请等待完成'));
+      appendLog('  提示: 可通过"查看状态"或"操作日志"了解当前进度');
+      setLoading(action, false);
+      return;
+    }
+
+    // Handle 202 Accepted (background task started)
+    if (resp.status === 202) {
+      appendLog('[202] ' + (data.message || '后台任务已启动'));
+      appendLog('  提示: 任务在后台运行，可稍后点击"查看状态"检查进度');
+      // Refresh status after a moment
+      setTimeout(function() { pipelineAction('status'); }, 2000);
+      setLoading(action, false);
+      return;
+    }
+
+    // Standard GET response
+    if (data.ok) {
+      var exitMsg = ' (returncode=' + (data.returncode !== undefined ? data.returncode : '?') + ')';
+      appendLog((labelMap[action] || action) + exitMsg + ' OK');
+      // Show stderr if present
+      if (data.error && data.error.trim()) {
+        appendLog('  [stderr] ' + data.error.trim().split('\n').slice(0, 5).join(' | '));
+      }
+    } else {
+      appendLog((labelMap[action] || action) + ' 失败 (returncode=' + (data.returncode !== undefined ? data.returncode : '?') + ')');
+      if (data.error && data.error.trim()) {
+        appendLog('  [stderr] ' + data.error.trim());
+      }
+      if (data.output && data.output.trim()) {
+        appendLog('  [stdout] ' + data.output.trim().slice(0, 500));
+      }
+    }
+
+    // Render result in the appropriate card
+    switch (action) {
+      case 'scan': renderScan(data); break;
+      case 'status': renderStatus(data); break;
+      case 'review': renderReview(data); break;
+      case 'run':
+      case 'retry':
+        // POST actions: show message, refresh status after delay
+        if (data.ok) {
+          appendLog(data.message || '操作已启动');
+        }
+        break;
+    }
+  } catch (err) {
+    appendLog((labelMap[action] || action) + ' 请求失败: ' + err.message);
+  } finally {
+    setLoading(action, false);
+  }
+}
+
+// ═══════════════════ Render Functions ═══════════════════
+
+function parseScanOutput(output) {
+  // Parse batch_worker.py --scan output lines like:
+  //   [✓] movie.mp4 — completed
+  //   [ ] show.mkv — pending
+  //   [✗] bad.mp4 — transcribing
+  var files = [];
+  var lines = output.split('\n');
+  var inList = false;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line) continue;
+    if (line.indexOf('待处理文件') >= 0 || line.indexOf('Found') >= 0) { inList = true; continue; }
+
+    var m = line.match(/^\[(.)\]\s+(.+?)\s+[—\-]\s+(.+)$/);
+    if (m) {
+      files.push({mark: m[1], name: m[2].trim(), stage: m[3].trim()});
+      continue;
+    }
+
+    // Simpler pattern: "  status file — stage"
+    var m2 = line.match(/^\s*(.{1,3})\s+(.+?)\s+[—\-]\s+(.+)$/);
+    if (m2 && inList) {
+      files.push({mark: m2[1].trim(), name: m2[2].trim(), stage: m2[3].trim()});
+    }
+  }
+  return files;
+}
+
+function renderScan(data) {
+  var el = document.getElementById('scan-result');
+  var files = parseScanOutput(data.output || '');
+
+  if (files.length === 0) {
+    var infoLines = (data.output || '').trim().split('\n').filter(function(l) { return l.trim(); });
+    if (infoLines.length > 0) {
+      el.innerHTML = '<div class="placeholder">' + escapeHtml(infoLines[infoLines.length - 1]) + '</div>';
+    } else {
+      el.innerHTML = '<div class="placeholder">没有发现待处理文件。请将视频放入 input/ 目录。</div>';
+    }
+    return;
+  }
+
+  var markMap = {'✓': 'badge-ok', '✗': 'badge-err', ' ': 'badge-pending'};
+  var html = '<div class="summary-bar"><span class="s-ok">共 ' + files.length + ' 个文件</span></div>';
+  html += '<table class="mini-table"><thead><tr><th>文件</th><th>阶段</th><th>状态</th></tr></thead><tbody>';
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    var cls = markMap[f.mark] || 'badge-pending';
+    var label = f.mark === '✓' ? '已完成' : f.mark === '✗' ? '失败' : '待处理';
+    html += '<tr><td>' + escapeHtml(f.name) + '</td><td>' + escapeHtml(f.stage) + '</td><td><span class="badge ' + cls + '">' + label + '</span></td></tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function parseStatusOutput(output) {
+  // Parse batch_worker.py --status output (table format)
+  var tasks = [];
+  var lines = output.split('\n');
+  var inTable = false;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (line.indexOf('───') >= 0) { inTable = true; continue; }
+    if (!inTable) continue;
+    if (!line.trim()) continue;
+    // Skip header
+    if (line.indexOf('文件') >= 0 && line.indexOf('状态') >= 0) continue;
+
+    // Parse columns: file (40) | status (12) | stage (20) | retry
+    // Simple approach: split by 2+ spaces
+    var parts = line.trim().split(/\s{2,}/);
+    if (parts.length >= 3) {
+      tasks.push({
+        file: parts[0].trim(),
+        status: parts[1].trim(),
+        stage: parts[2].trim(),
+        retry: parts.length >= 4 ? parts[3].trim() : '-'
       });
-      // context_window is also controlled by context_enabled
-      if (!disabled && contextCheck.checked) {
-        contextWindow.disabled = false;
+    }
+  }
+  return tasks;
+}
+
+function renderStatus(data) {
+  var el = document.getElementById('status-result');
+  var output = data.output || '';
+  var tasks = parseStatusOutput(output);
+
+  if (output.indexOf('暂无任务记录') >= 0 || (tasks.length === 0 && !output.trim())) {
+    el.innerHTML = '<div class="placeholder">暂无任务记录。将视频放入 input/ 目录后运行流水线。</div>';
+    return;
+  }
+
+  if (tasks.length === 0) {
+    // Just show raw output
+    el.innerHTML = '<pre class="mini-log" style="max-height:200px">' + escapeHtml(output.trim()) + '</pre>';
+    return;
+  }
+
+  var statusCls = {'已完成':'badge-ok', '处理中':'badge-running', '失败':'badge-err', '等待中':'badge-pending'};
+  var html = '<div class="summary-bar"><span class="s-ok">共 ' + tasks.length + ' 个任务</span></div>';
+  html += '<table class="mini-table"><thead><tr><th>文件</th><th>状态</th><th>阶段</th><th>重试</th></tr></thead><tbody>';
+  for (var i = 0; i < tasks.length; i++) {
+    var t = tasks[i];
+    var cls = statusCls[t.status] || 'badge-pending';
+    html += '<tr><td>' + escapeHtml(t.file) + '</td><td><span class="badge ' + cls + '">' + escapeHtml(t.status) + '</span></td><td>' + escapeHtml(t.stage) + '</td><td>' + escapeHtml(t.retry) + '</td></tr>';
+  }
+  html += '</tbody></table>';
+
+  // Also show error lines
+  var errLines = output.split('\n').filter(function(l) { return l.indexOf('错误') >= 0 || l.indexOf('error') >= 0; });
+  if (errLines.length > 0) {
+    html += '<div style="margin-top:10px;font-size:12px;color:var(--danger)">' + escapeHtml(errLines.join('\n')) + '</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function parseReviewOutput(output) {
+  // Parse batch_worker.py --review output
+  var reports = [];
+  var lines = output.split('\n');
+  var currentVideo = null;
+  var currentIssues = [];
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line) continue;
+
+    // Video header: "  ✓ movie.mp4" or "  ✗ movie.mp4"
+    var vm = line.match(/^[✓⚠✗]\s+(.+)$/);
+    if (vm) {
+      if (currentVideo) {
+        reports.push({name: currentVideo, issues: currentIssues});
       }
+      currentVideo = vm[1];
+      currentIssues = [];
+      continue;
     }
 
-    translateCheck.addEventListener("change", function() {
-      setTranslateFieldsDisabled(!this.checked);
-      // Reset context state when toggling translation
-      if (this.checked) {
-        contextCheck.checked = true;
-        contextWindow.value = "3";
-        contextWindow.disabled = false;
-      }
-    });
-
-    contextCheck.addEventListener("change", function() {
-      contextWindow.disabled = !this.checked;
-      if (!this.checked) {
-        contextWindow.value = "0";
-      } else if (contextWindow.value === "0") {
-        contextWindow.value = "3";
-      }
-    });
-
-    form.addEventListener("submit", async function(event) {
-      event.preventDefault();
-      var file = document.getElementById("file").files[0];
-      var path = document.getElementById("path").value.trim();
-      if (!file && !path) {
-        alert("请选择文件，或填写本机文件路径。");
-        return;
-      }
-
-      if (translateCheck.checked) {
-        var apiBase = document.getElementById("api_base").value.trim();
-        var apiKey = document.getElementById("api_key").value.trim();
-        var llmModel = document.getElementById("llm_model").value.trim();
-        if (!apiBase) { alert("翻译已启用，请填写 API Base URL。"); return; }
-        if (!apiKey) { alert("翻译已启用，请填写 API Key。"); return; }
-        if (!llmModel) { alert("翻译已启用，请填写大模型名称。"); return; }
-      }
-
-      startBtn.disabled = true;
-      setStatus("queued");
-      logBox.textContent = "Uploading / creating job...\n";
-      downloadSource.hidden = true;
-      downloadTranslated.hidden = true;
-
-      try {
-        var response = await fetch("/api/jobs", {
-          method: "POST",
-          body: new FormData(form),
-        });
-        var payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "创建任务失败");
-        activeJob = payload.id;
-        pollJob();
-        timer = setInterval(pollJob, 1200);
-      } catch (err) {
-        setStatus("failed");
-        logBox.textContent += String(err.message || err) + "\n";
-        startBtn.disabled = false;
-      }
-    });
-
-    async function pollJob() {
-      if (!activeJob) return;
-      var response = await fetch("/api/jobs/" + activeJob);
-      var job = await response.json();
-      if (!response.ok) {
-        logBox.textContent += (job.error || "状态读取失败") + "\n";
-        return;
-      }
-
-      setStatus(job.status);
-      logBox.textContent = (job.logs || []).join("\n");
-      logBox.scrollTop = logBox.scrollHeight;
-
-      if (job.status === "done" || job.status === "failed") {
-        clearInterval(timer);
-        startBtn.disabled = false;
-      }
-
-      if (job.status === "done") {
-        if (job.source_output) {
-          downloadSource.href = "/download?job=" + job.id + "&type=source";
-          downloadSource.hidden = false;
-        }
-        if (job.translated_output) {
-          downloadTranslated.href = "/download?job=" + job.id + "&type=translated";
-          downloadTranslated.hidden = false;
-        }
-        // Fallback: if only "output" exists and no separate paths
-        if (!job.source_output && !job.translated_output && job.output) {
-          downloadSource.textContent = "下载 SRT";
-          downloadSource.href = "/download?job=" + job.id;
-          downloadSource.hidden = false;
-        }
-      }
+    // Issue line: "    ✗ #128 [too_long] 描述"
+    var im = line.match(/^\s*([✗⚠ℹ])\s+(?:#(\d+)\s+)?\[(\w+)\]\s+(.+)$/);
+    if (im) {
+      currentIssues.push({
+        icon: im[1],
+        index: im[2] || '',
+        type: im[3],
+        text: im[4]
+      });
+      continue;
     }
 
-    function setStatus(status) {
-      badge.textContent = status;
-      badge.className = "badge " + status;
+    // Summary line
+    var sm = line.match(/状态:\s*(\w+).*问题:\s*(\d+).*错误:\s*(\d+).*警告:\s*(\d+)/);
+    if (sm && currentVideo) {
+      // Attach summary to current report
     }
-  </script>
+  }
+  if (currentVideo) {
+    reports.push({name: currentVideo, issues: currentIssues});
+  }
+  return reports;
+}
+
+function renderReview(data) {
+  var el = document.getElementById('review-result');
+  var output = data.output || '';
+
+  if (output.indexOf('暂无质检报告') >= 0 || !output.trim()) {
+    el.innerHTML = '<div class="placeholder">暂无质检报告。运行流水线后会自动生成质检结果。</div>';
+    return;
+  }
+
+  // Parse summary from output
+  var totalMatch = output.match(/汇总:\s*(\d+)\s*个问题\s*\((\d+)\s*错误,\s*(\d+)\s*警告\)/);
+  var totalIssues = totalMatch ? parseInt(totalMatch[1]) : 0;
+  var totalErrors = totalMatch ? parseInt(totalMatch[2]) : 0;
+  var totalWarnings = totalMatch ? parseInt(totalMatch[3]) : 0;
+
+  var html = '';
+  if (totalIssues > 0) {
+    html += '<div class="summary-bar">';
+    html += '<span class="s-ok">共 ' + totalIssues + ' 个问题</span>';
+    if (totalErrors > 0) html += '<span class="s-err">' + totalErrors + ' 错误</span>';
+    if (totalWarnings > 0) html += '<span class="s-warn">' + totalWarnings + ' 警告</span>';
+    html += '</div>';
+  }
+
+  // Parse individual report sections
+  var reports = parseReviewOutput(output);
+
+  if (reports.length > 0) {
+    html += '<ul class="issue-list">';
+    for (var r = 0; r < reports.length; r++) {
+      var rep = reports[r];
+      for (var j = 0; j < Math.min(rep.issues.length, 15); j++) {
+        var iss = rep.issues[j];
+        html += '<li><span class="issue-icon">' + iss.icon + '</span> ';
+        if (iss.index) html += '<strong>#' + iss.index + '</strong> ';
+        html += '[' + iss.type + '] ' + escapeHtml(iss.text) + '</li>';
+      }
+    }
+    html += '</ul>';
+  } else {
+    // Show raw output as fallback
+    html += '<pre class="mini-log" style="max-height:180px">' + escapeHtml(output.trim().slice(0, 2000)) + '</pre>';
+  }
+
+  if (totalIssues === 0 && reports.length === 0 && output.trim()) {
+    html += '<div class="placeholder">✓ 所有检查通过，无需复核</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+// ═══════════════════ Refresh All (read-only, no side effects) ═══════════════════
+
+function refreshAll() {
+  appendLog('刷新全部（只读操作）...');
+  pipelineAction('scan');
+  pipelineAction('status');
+  pipelineAction('review');
+}
+
+// ═══════════════════ Utility ═══════════════════
+
+function escapeHtml(text) {
+  var map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
+  return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+// ═══════════════════ Transcribe Tab (preserved from original) ═══════════
+
+(function() {
+  var form = document.getElementById("jobForm");
+  var startBtn = document.getElementById("startBtn");
+  var badge = document.getElementById("badge");
+  var logBox = document.getElementById("log");
+  var downloadSource = document.getElementById("downloadSource");
+  var downloadTranslated = document.getElementById("downloadTranslated");
+
+  var translateCheck = document.getElementById("translate_enabled");
+  var contextCheck = document.getElementById("context_enabled");
+  var contextWindow = document.getElementById("context_window");
+
+  var activeJob = null;
+  var timer = null;
+
+  var translateFields = [
+    "api_provider", "api_base", "api_key", "llm_model",
+    "target_language", "translation_mode", "translation_batch_size",
+    "translation_temperature", "context_enabled", "context_window",
+    "translation_prompt",
+  ];
+
+  function setTranslateFieldsDisabled(disabled) {
+    translateFields.forEach(function(name) {
+      var el = document.getElementById(name);
+      if (el) el.disabled = disabled;
+    });
+    if (!disabled && contextCheck.checked) {
+      contextWindow.disabled = false;
+    }
+  }
+
+  translateCheck.addEventListener("change", function() {
+    setTranslateFieldsDisabled(!this.checked);
+    if (this.checked) {
+      contextCheck.checked = true;
+      contextWindow.value = "3";
+      contextWindow.disabled = false;
+    }
+  });
+
+  contextCheck.addEventListener("change", function() {
+    contextWindow.disabled = !this.checked;
+    if (!this.checked) {
+      contextWindow.value = "0";
+    } else if (contextWindow.value === "0") {
+      contextWindow.value = "3";
+    }
+  });
+
+  function setStatus(status) {
+    badge.textContent = status;
+    badge.className = "badge-status " + status;
+  }
+
+  async function pollJob() {
+    if (!activeJob) return;
+    var response = await fetch("/api/jobs/" + activeJob);
+    var job = await response.json();
+    if (!response.ok) {
+      logBox.textContent += (job.error || "状态读取失败") + "\n";
+      return;
+    }
+
+    setStatus(job.status);
+    logBox.textContent = (job.logs || []).join("\n");
+    logBox.scrollTop = logBox.scrollHeight;
+
+    if (job.status === "done" || job.status === "failed") {
+      clearInterval(timer);
+      startBtn.disabled = false;
+    }
+
+    if (job.status === "done") {
+      if (job.source_output) {
+        downloadSource.href = "/download?job=" + job.id + "&type=source";
+        downloadSource.hidden = false;
+      }
+      if (job.translated_output) {
+        downloadTranslated.href = "/download?job=" + job.id + "&type=translated";
+        downloadTranslated.hidden = false;
+      }
+      if (!job.source_output && !job.translated_output && job.output) {
+        downloadSource.textContent = "下载 SRT";
+        downloadSource.href = "/download?job=" + job.id;
+        downloadSource.hidden = false;
+      }
+    }
+  }
+
+  form.addEventListener("submit", async function(event) {
+    event.preventDefault();
+    var file = document.getElementById("file").files[0];
+    var path = document.getElementById("path").value.trim();
+    if (!file && !path) {
+      alert("请选择文件，或填写本机文件路径。");
+      return;
+    }
+
+    if (translateCheck.checked) {
+      var apiBase = document.getElementById("api_base").value.trim();
+      var apiKey = document.getElementById("api_key").value.trim();
+      var llmModel = document.getElementById("llm_model").value.trim();
+      if (!apiBase) { alert("翻译已启用，请填写 API Base URL。"); return; }
+      if (!apiKey) { alert("翻译已启用，请填写 API Key。"); return; }
+      if (!llmModel) { alert("翻译已启用，请填写大模型名称。"); return; }
+    }
+
+    startBtn.disabled = true;
+    setStatus("queued");
+    logBox.textContent = "Uploading / creating job...\n";
+    downloadSource.hidden = true;
+    downloadTranslated.hidden = true;
+
+    try {
+      var response = await fetch("/api/jobs", {
+        method: "POST",
+        body: new FormData(form),
+      });
+      var payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "创建任务失败");
+      activeJob = payload.id;
+      pollJob();
+      timer = setInterval(pollJob, 1200);
+    } catch (err) {
+      setStatus("failed");
+      logBox.textContent += String(err.message || err) + "\n";
+      startBtn.disabled = false;
+    }
+  });
+})();
+
+// ═══════════════════ Provider Management ═══════════════════
+
+var providerCache = [];
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(function(c) {
+    c.classList.toggle('active', c.id === 'tab-' + name);
+  });
+  if (name === 'providers') loadProviders();
+  if (name === 'transcribe') loadProviderSelect();
+}
+
+async function loadProviders() {
+  try {
+    var resp = await fetch('/api/providers');
+    var data = await resp.json();
+    providerCache = data.providers || [];
+    renderProviderList();
+    renderActiveBar();
+  } catch (err) {
+    document.getElementById('providerList').innerHTML = '<div class="placeholder">加载失败: ' + escapeHtml(String(err)) + '</div>';
+  }
+}
+
+function renderActiveBar() {
+  var el = document.getElementById('activeProviderName');
+  var active = null;
+  for (var i = 0; i < providerCache.length; i++) {
+    if (providerCache[i].id === (providerCache[i]._active || '')) active = providerCache[i];
+  }
+  if (!active) {
+    // Try to get from API
+    fetch('/api/providers/active').then(function(r) { return r.json(); }).then(function(d) {
+      if (d.active) {
+        el.textContent = d.active.name + ' | ' + d.active.protocol + ' | ' + (d.active.translation_model || d.active.chat_model || '?');
+      } else {
+        el.textContent = '(未设置)';
+      }
+    }).catch(function() { el.textContent = '(未设置)'; });
+  }
+}
+
+function renderProviderList() {
+  var el = document.getElementById('providerList');
+  if (providerCache.length === 0) {
+    el.innerHTML = '<div class="placeholder">暂无接口配置。点击"+ 新增接口"添加。</div>';
+    return;
+  }
+  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>协议</th><th>API Base</th><th>模型</th><th>Key</th><th>启用</th><th class="col-act">操作</th></tr></thead><tbody>';
+  for (var i = 0; i < providerCache.length; i++) {
+    var p = providerCache[i];
+    var keyStatus = p.api_key_masked || (p.api_key ? '已设置' : '<span style="color:var(--danger)">未设置</span>');
+    var enabledBadge = p.enabled !== false ? '<span class="badge badge-ok">是</span>' : '<span class="badge badge-err">否</span>';
+    html += '<tr>';
+    html += '<td><strong>' + escapeHtml(p.name) + '</strong></td>';
+    html += '<td>' + escapeHtml(p.protocol) + '</td>';
+    html += '<td style="font-size:12px">' + escapeHtml(p.api_base || '') + '</td>';
+    html += '<td>' + escapeHtml(p.translation_model || p.chat_model || '-') + '</td>';
+    html += '<td>' + keyStatus + '</td>';
+    html += '<td>' + enabledBadge + '</td>';
+    html += '<td class="col-act">';
+    html += '<button class="btn-primary" onclick="setActiveProvider(\'' + p.id + '\')">默认</button>';
+    html += '<button onclick="editProvider(\'' + p.id + '\')">编辑</button>';
+    html += '<button onclick="testProvider(\'' + p.id + '\')">测试</button>';
+    html += '<button class="btn-danger" onclick="deleteProvider(\'' + p.id + '\')">删除</button>';
+    html += '</td></tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+// ── Modal ──
+
+function showProviderModal(editId) {
+  var modal = document.getElementById('providerModal');
+  var title = document.getElementById('providerModalTitle');
+  document.getElementById('provEditId').value = '';
+  document.getElementById('provEditIdField').value = '';
+  document.getElementById('provEditName').value = '';
+  document.getElementById('provEditProtocol').value = 'openai-compatible';
+  document.getElementById('provEditBase').value = '';
+  document.getElementById('provEditKey').value = '';
+  document.getElementById('provEditTransModel').value = '';
+  document.getElementById('provEditChatModel').value = '';
+  document.getElementById('provEditWhisperModel').value = 'large-v3';
+  document.getElementById('provEditWhisperDevice').value = 'cpu';
+  document.getElementById('provEditNotes').value = '';
+  document.getElementById('provEditEnabled').checked = true;
+
+  if (editId) {
+    // Edit mode: find provider
+    var p = null;
+    for (var i = 0; i < providerCache.length; i++) {
+      if (providerCache[i].id === editId) { p = providerCache[i]; break; }
+    }
+    if (p) {
+      title.textContent = '编辑接口: ' + p.name;
+      document.getElementById('provEditId').value = p.id;
+      document.getElementById('provEditIdField').value = p.id;
+      document.getElementById('provEditIdField').disabled = true;
+      document.getElementById('provEditName').value = p.name || '';
+      document.getElementById('provEditProtocol').value = p.protocol || 'openai-compatible';
+      document.getElementById('provEditBase').value = p.api_base || '';
+      // Don't show api_key for edit - leave blank to keep old
+      document.getElementById('provEditTransModel').value = p.translation_model || '';
+      document.getElementById('provEditChatModel').value = p.chat_model || '';
+      document.getElementById('provEditWhisperModel').value = p.whisper_model || 'large-v3';
+      document.getElementById('provEditWhisperDevice').value = p.whisper_device || 'cpu';
+      document.getElementById('provEditNotes').value = p.notes || '';
+      document.getElementById('provEditEnabled').checked = p.enabled !== false;
+    }
+  } else {
+    title.textContent = '新增接口';
+    document.getElementById('provEditIdField').disabled = false;
+  }
+  modal.classList.add('active');
+}
+
+function closeProviderModal() {
+  document.getElementById('providerModal').classList.remove('active');
+}
+
+function editProvider(id) { showProviderModal(id); }
+
+// ── CRUD ──
+
+async function saveProvider() {
+  var editId = document.getElementById('provEditId').value;
+  var isEdit = !!editId;
+  var idField = document.getElementById('provEditIdField');
+  var nameField = document.getElementById('provEditName');
+
+  var providerId = idField.value.trim();
+  if (!providerId) { alert('Provider ID 不能为空'); return; }
+  if (!nameField.value.trim()) { alert('名称不能为空'); return; }
+
+  var data = {
+    id: providerId,
+    name: nameField.value.trim(),
+    protocol: document.getElementById('provEditProtocol').value,
+    api_base: document.getElementById('provEditBase').value.trim(),
+    api_key: document.getElementById('provEditKey').value.trim(),
+    translation_model: document.getElementById('provEditTransModel').value.trim(),
+    chat_model: document.getElementById('provEditChatModel').value.trim(),
+    whisper_model: document.getElementById('provEditWhisperModel').value,
+    whisper_device: document.getElementById('provEditWhisperDevice').value,
+    notes: document.getElementById('provEditNotes').value.trim(),
+    enabled: document.getElementById('provEditEnabled').checked,
+  };
+
+  try {
+    var method = isEdit ? 'PUT' : 'POST';
+    var url = isEdit ? '/api/providers/' + encodeURIComponent(providerId) : '/api/providers';
+    var resp = await fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    var result = await resp.json();
+    if (resp.ok) {
+      closeProviderModal();
+      loadProviders();
+    } else {
+      alert('保存失败: ' + (result.error || '未知错误'));
+    }
+  } catch (err) {
+    alert('请求失败: ' + err.message);
+  }
+}
+
+async function deleteProvider(id) {
+  if (!confirm('确定删除接口 "' + id + '"？此操作不可撤销。')) return;
+  try {
+    var resp = await fetch('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
+    var result = await resp.json();
+    if (resp.ok) {
+      loadProviders();
+    } else {
+      alert('删除失败: ' + (result.error || '未知错误'));
+    }
+  } catch (err) {
+    alert('请求失败: ' + err.message);
+  }
+}
+
+async function setActiveProvider(id) {
+  try {
+    var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
+    var result = await resp.json();
+    if (resp.ok) {
+      loadProviders();
+      loadProviderSelect();
+    } else {
+      alert('设置失败: ' + (result.error || '未知错误'));
+    }
+  } catch (err) {
+    alert('请求失败: ' + err.message);
+  }
+}
+
+async function testProvider(id) {
+  var btn = event.target;
+  var origText = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/test', { method: 'POST' });
+    var result = await resp.json();
+    if (result.ok) {
+      alert('连接成功！\n延迟: ' + result.latency_ms + 'ms\n模型: ' + result.model);
+    } else {
+      alert('连接失败: ' + (result.error || '未知错误'));
+    }
+  } catch (err) {
+    alert('测试请求失败: ' + err.message);
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+}
+
+async function testActiveProvider() {
+  try {
+    var resp = await fetch('/api/providers/active');
+    var data = await resp.json();
+    if (data.active && data.active.id) {
+      testProvider(data.active.id);
+    } else {
+      alert('未设置默认接口。请先添加并设为默认。');
+    }
+  } catch (err) {
+    alert('获取默认接口失败: ' + err.message);
+  }
+}
+
+// ── Provider Selector for Transcribe Tab ──
+
+async function loadProviderSelect() {
+  var sel = document.getElementById('provider_select');
+  if (!sel) return;
+  var currentVal = sel.value;
+
+  try {
+    var resp = await fetch('/api/providers');
+    var data = await resp.json();
+    var providers = data.providers || [];
+
+    // Rebuild options
+    sel.innerHTML = '<option value="">-- 手动输入 --</option>';
+    var activeId = '';
+    for (var i = 0; i < providers.length; i++) {
+      var p = providers[i];
+      var label = p.name + ' (' + (p.translation_model || p.chat_model || '?') + ')';
+      sel.innerHTML += '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(label) + '</option>';
+    }
+
+    // Get active provider
+    try {
+      var ar = await fetch('/api/providers/active');
+      var ad = await ar.json();
+      if (ad.active) activeId = ad.active.id;
+    } catch (e) {}
+
+    // Restore previous selection or default to active
+    if (currentVal && sel.querySelector('option[value="' + currentVal + '"]')) {
+      sel.value = currentVal;
+    } else if (activeId) {
+      sel.value = activeId;
+      onProviderSelect(); // Auto-fill if default selected
+    }
+  } catch (err) {
+    // Silently fail - user can still use manual input
+  }
+}
+
+function onProviderSelect() {
+  var sel = document.getElementById('provider_select');
+  var id = sel.value;
+  if (!id) return; // Manual mode
+
+  // Find in cache
+  var p = null;
+  for (var i = 0; i < providerCache.length; i++) {
+    if (providerCache[i].id === id) { p = providerCache[i]; break; }
+  }
+  if (!p) {
+    // Try to reload
+    loadProviderSelect();
+    return;
+  }
+
+  // Auto-fill fields
+  if (p.protocol) document.getElementById('api_provider').value = p.protocol;
+  if (p.api_base) document.getElementById('api_base').value = p.api_base;
+  if (p.api_key_masked) document.getElementById('api_key').placeholder = '已保存: ' + p.api_key_masked;
+  if (p.translation_model || p.chat_model) document.getElementById('llm_model').value = p.translation_model || p.chat_model || '';
+}
+
+// Set up key event to prevent provider autofill from being treated as manual override
+document.getElementById('api_key').addEventListener('focus', function() {
+  // When user manually focuses the key field, switch provider selector to manual
+  var sel = document.getElementById('provider_select');
+  if (sel && sel.value) {
+    // Don't reset - just let user type. The manual value takes priority.
+  }
+});
+
+// Load on page init
+loadProviderSelect();
+</script>
 </body>
 </html>

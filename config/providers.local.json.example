@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "active": "",
+  "providers": [
+    {
+      "id": "my-provider",
+      "name": "我的接口",
+      "protocol": "openai-compatible",
+      "api_base": "https://api.openai.com/v1",
+      "api_key": "sk-your-key-here",
+      "chat_model": "gpt-4o",
+      "translation_model": "gpt-4o",
+      "whisper_model": "large-v3",
+      "whisper_device": "cpu",
+      "enabled": true,
+      "notes": "在此描述此接口的用途"
+    }
+  ]
+}
