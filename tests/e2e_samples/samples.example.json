@@ -9,6 +9,15 @@
       "manual_notes": ""
     },
     {
+      "id": "fr_short_asr_only",
+      "file": "tests/e2e_samples/fr_short/sample.mp4",
+      "language_profile": "fr-film",
+      "provider": "",
+      "extra_args": ["--no-translate"],
+      "expected_language": "fr",
+      "manual_notes": ""
+    },
+    {
       "id": "auto_unknown_short",
       "file": "tests/e2e_samples/auto_unknown_short/sample.mp4",
       "language_profile": "auto-detect",

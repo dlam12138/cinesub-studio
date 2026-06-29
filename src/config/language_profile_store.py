@@ -18,7 +18,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "language_profiles.local.json"
 
 _cache: dict | None = None
@@ -83,18 +83,37 @@ BUILTIN_PROFILES: list[dict] = [
         "quality": {
             "language_probability_warning": 0.90,
             "language_probability_error": 0.70,
-            "max_cps_zh": 8,
-            "max_chars_per_line_zh": 18,
-            "max_chars_per_subtitle_zh": 36,
+            "max_cps_zh": 10,
+            "max_chars_per_line_zh": 20,
+            "max_chars_per_subtitle_zh": 40,
         },
         "llm_stages": {
             "proofread_source": True,
             "polish_translation": True,
         },
         "translation_style": (
-            "法语电影中文字幕风格。翻译自然、简洁、适合观影。"
-            "保留法语人名地名的原文写法，必要时括号标注中文译名。不要过度本地化。"
-            "保持字幕编号和时间轴不变。不要解释，不要注释。"
+            "你是一位专业的法语电影字幕翻译师。请将法语字幕翻译成自然、简洁、适合观影的简体中文。"
+            "\n\n"
+            "=== 翻译原则 ===\n"
+            "1. 优先使用双行字幕，每行独立语义完整，避免三行及以上。\n"
+            "2. 以意译为主，允许适度压缩。当法语表达冗长时，提取核心含义并精简表达，不追求逐字对应。\n"
+            "3. 完整翻译：避免省略关键信息（主语、谓语、核心情感），确保译文完整传达原文含义。\n"
+            "4. 根据场景调整语言风格：正式场合（演讲、法庭、新闻）使用书面语；日常对话使用口语化表达。\n"
+            "5. 粗俗语言处理：脏话使用中文中同等力度的表达，或根据影片分级适当弱化。\n"
+            "6. 标点规范：使用中文全角标点（，。！？），不使用英文半角标点。\n"
+            "7. 专有名词：人名、地名使用中文通用译法（如 Jean → 让）。无通用译法的保留法语原文并加注释。\n"
+            "8. 文化典故：涉及中国观众不熟悉的法国文化典故时，采用意译或简短注释，不直接使用原文。\n"
+            "9. 双关与幽默：优先保留幽默效果，可适当改写以触发中文观众的笑点。若无法保留双关，使用同类型幽默替换。\n"
+            "10. 角色语气一致性：每个角色保持稳定的语气风格。粗鲁的角色始终用粗鲁的语气，文雅的角色始终用文雅的语气。\n"
+            "\n"
+            "=== 硬性约束 ===\n"
+            "1. 单行长度不超过20个字符，每行字幕字数限制在约束范围内。\n"
+            "2. 字幕阅读节奏：每秒不超过10个字符（CPS），确保观众有足够时间阅读。\n"
+            "\n"
+            "=== 输出格式 ===\n"
+            "- 保持原文的字幕编号和时间轴\n"
+            "- 使用双行字幕，每行独立语义完整\n"
+            "- 不添加任何解释性注释，只输出翻译后的文本"
         ),
     },
     {

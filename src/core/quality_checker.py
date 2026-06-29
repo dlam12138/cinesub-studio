@@ -290,6 +290,7 @@ def check_translation_quality(
     # 中英文混乱检查（针对中文目标）
     if target_language in ("zh-CN", "zh-TW"):
         _check_mixed_language(translated_entries, report)
+        _check_foreign_terms_in_chinese(translated_entries, report)
 
     # 语言置信度检查（也应用于译文）
     if quality_thresholds:
@@ -607,9 +608,22 @@ def _check_mixed_language(entries: list[SrtEntry], report: QualityReport) -> Non
     """检查中英文是否混乱（大量英文字母出现在中文翻译中）。
 
     合理的英文（专有名词、缩写）不应被误报，所以设置较高阈值。
+    对于双语字幕（原文+译文），只检查译文行（第二行），避免原文被误报。
     """
     for entry in entries:
         text = entry.text
+
+        # 检测是否为双语字幕：按行拆分，如果有换行且第二行有明显中文
+        lines = text.split("\n")
+        if len(lines) >= 2:
+            first_line = lines[0]
+            second_line = lines[1]
+            first_cn = len(re.findall(r"[一-鿿]", first_line))
+            second_cn = len(re.findall(r"[一-鿿]", second_line))
+            # 如果第二行中文比第一行多，认为是双语字幕，只检查第二行（译文）
+            if second_cn > first_cn:
+                text = second_line
+
         # 统计英文字母和汉字的比例
         en_chars = len(re.findall(r"[a-zA-Z]", text))
         cn_chars = len(re.findall(r"[一-鿿]", text))
@@ -625,6 +639,54 @@ def _check_mixed_language(entries: list[SrtEntry], report: QualityReport) -> Non
                 snippet=text[:100],
                 suggestion="检查该条目翻译是否完整",
             ))
+
+
+def _check_foreign_terms_in_chinese(entries: list[SrtEntry], report: QualityReport) -> None:
+    """Flag suspicious long Latin terms left in Chinese subtitles.
+
+    Proper nouns can be valid in subtitles, so this is intentionally a warning
+    and ignores short all-caps abbreviations like AI, G7, P5, and UNESCO.
+    """
+    allowed_terms = {
+        "AI", "API", "GDP", "G7", "G20", "NATO", "ONU", "P5", "UN", "UNESCO",
+    }
+    term_pattern = re.compile(r"\b[A-Za-zÀ-ÖØ-öø-ÿ]{4,}(?:[-'][A-Za-zÀ-ÖØ-öø-ÿ]{2,})*\b")
+
+    for entry in entries:
+        text = _target_text_for_chinese(entry.text)
+        if not re.search(r"[一-鿿]", text):
+            continue
+
+        suspicious: list[str] = []
+        for match in term_pattern.findall(text):
+            normalized = match.strip(".,;:!?，。；：！？()（）[]【】")
+            if not normalized:
+                continue
+            if normalized.upper() in allowed_terms:
+                continue
+            if len(normalized) < 6 and "-" not in normalized and "'" not in normalized:
+                continue
+            suspicious.append(normalized)
+
+        if suspicious:
+            report.issues.append(QualityIssue(
+                index=entry.index,
+                type="foreign_term_in_chinese",
+                severity="warning",
+                text=f"中文字幕疑似残留外文专名：{', '.join(suspicious[:3])}",
+                snippet=text[:100],
+                suggestion="检查该专名是否应译为中文通用译名，或加入术语白名单",
+            ))
+
+
+def _target_text_for_chinese(text: str) -> str:
+    """Return likely target-language lines from translated/bilingual subtitles."""
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    if len(lines) >= 2:
+        target_lines = [line for line in lines if re.search(r"[一-鿿]", line)]
+        if target_lines:
+            return "\n".join(target_lines)
+    return text
 
 
 def _finalize_report(report: QualityReport) -> None:
@@ -704,33 +766,46 @@ def generate_review_srt(
 
 
 def print_report_summary(report: QualityReport) -> None:
-    """在终端打印质量报告摘要。"""
+    """在终端打印质量报告摘要。兼容 Windows GBK 控制台。"""
     status_icon = {"pass": "✓", "warning": "⚠", "fail": "✗"}.get(report.status, "?")
-    print(f"\n{'='*60}")
-    print(f"  质量检查报告  {status_icon} {report.status.upper()}")
-    print(f"{'='*60}")
-    print(f"  总条目数: {report.total_entries}")
-    print(f"  问题总数: {report.summary.get('total_issues', 0)}")
-    print(f"  错误: {report.summary.get('errors', 0)}  "
+    severity_icon = {"error": "✗", "warning": "⚠", "info": "ℹ"}
+
+    def _safe_print(text: str) -> None:
+        try:
+            print(text)
+        except UnicodeEncodeError:
+            # 降级为 ASCII 近似字符
+            safe = text.replace("✓", "[OK]").replace("⚠", "[!]").replace("✗", "[X]").replace("ℹ", "[i]")
+            try:
+                print(safe)
+            except UnicodeEncodeError:
+                pass  # 忽略无法打印的输出
+
+    _safe_print(f"\n{'='*60}")
+    _safe_print(f"  质量检查报告  {status_icon} {report.status.upper()}")
+    _safe_print(f"{'='*60}")
+    _safe_print(f"  总条目数: {report.total_entries}")
+    _safe_print(f"  问题总数: {report.summary.get('total_issues', 0)}")
+    _safe_print(f"  错误: {report.summary.get('errors', 0)}  "
           f"警告: {report.summary.get('warnings', 0)}  "
           f"提示: {report.summary.get('info', 0)}")
 
     issue_types = report.summary.get("issue_types", {})
     if issue_types:
-        print(f"\n  问题分布:")
+        _safe_print(f"\n  问题分布:")
         for itype, count in sorted(issue_types.items(), key=lambda x: -x[1]):
-            print(f"    - {itype}: {count}")
+            _safe_print(f"    - {itype}: {count}")
 
     if report.issues:
-        print(f"\n  详细问题列表:")
+        _safe_print(f"\n  详细问题列表:")
         for issue in report.issues:
-            icon = {"error": "✗", "warning": "⚠", "info": "ℹ"}.get(issue.severity, "?")
+            icon = severity_icon.get(issue.severity, "?")
             idx_str = f"#{issue.index}" if issue.index > 0 else "全局"
-            print(f"    {icon} {idx_str} [{issue.type}] {issue.text}")
+            _safe_print(f"    {icon} {idx_str} [{issue.type}] {issue.text}")
             if issue.suggestion:
-                print(f"      建议: {issue.suggestion}")
+                _safe_print(f"      建议: {issue.suggestion}")
 
-    print(f"{'='*60}\n")
+    _safe_print(f"{'='*60}\n")
 
 
 # ── 主入口（独立使用） ───────────────────────────────────────────────────
@@ -950,6 +1025,27 @@ Repeat content.
         ut_types = {i.type for i in ut_report.issues}
         if "possibly_untranslated" not in ut_types:
             errors.append("未检测到未翻译的日文内容")
+
+        # 测试中文字幕外文专名残留检测
+        foreign_term_srt = temp_dir / "foreign_term.srt"
+        ft_content = """\
+1
+00:00:01,000 --> 00:00:03,000
+d'avoir les trésors du Sainte-Saint-Doué
+拥有 Sainte-Saint-Doué 的珍宝
+
+2
+00:00:03,500 --> 00:00:06,000
+UNESCO
+在联合国教科文组织列入名录之前
+"""
+        foreign_term_srt.write_text(ft_content, encoding="utf-8")
+        ft_report = check_translation_quality(
+            foreign_term_srt, foreign_term_srt, target_language="zh-CN"
+        )
+        ft_types = {i.type for i in ft_report.issues}
+        if "foreign_term_in_chinese" not in ft_types:
+            errors.append("未检测到中文字幕外文专名残留")
 
         # 测试 JSON 报告输出
         report_path = temp_dir / "quality_report.json"

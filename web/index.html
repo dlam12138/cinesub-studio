@@ -21,6 +21,9 @@
       --warn: #b54708;
       --warn-bg: #fffaeb;
       --err-bg: #fee4e2;
+      --info-bg: #eff6ff;
+      --ink: #0f172a;
+      --soft: #f8fafc;
       --radius: 8px;
     }
 
@@ -49,6 +52,72 @@
       margin: 0 0 14px;
       color: var(--muted);
       font-size: 14px;
+    }
+
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(170px, 1fr));
+      gap: 10px;
+      margin: 0 0 14px;
+    }
+
+    .status-pill {
+      min-height: 54px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, #fff, #f8fafc);
+    }
+
+    .status-pill span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+
+    .status-pill strong {
+      display: block;
+      margin-top: 4px;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.25;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .hint-inline {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+      margin-bottom: 4px;
+    }
+
+    .help-text {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      max-width: 68ch;
+    }
+
+    .recommend-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      margin-left: 6px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--ok-bg);
+      color: var(--ok);
+      font-size: 11px;
+      font-weight: 700;
+      vertical-align: middle;
     }
 
     .tabs {
@@ -141,6 +210,255 @@
 
     .actions .spacer { flex: 1; }
 
+    .settings-panel {
+      margin-bottom: 16px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .settings-head {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      justify-content: flex-start;
+      margin-bottom: 14px;
+    }
+
+    .settings-head h2,
+    .settings-head h3 {
+      margin: 0;
+      color: var(--ink);
+      font-size: 16px;
+    }
+
+    .panel-copy {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      max-width: 760px;
+    }
+
+    .option-card {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid #e5eaf0;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #fff, #f8fafc);
+      box-shadow: 0 1px 0 rgba(15, 23, 42, .02);
+    }
+
+    .option-card label:first-child {
+      margin-top: 0;
+    }
+
+    .inline-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .secondary-btn {
+      min-height: 36px;
+      padding: 7px 14px;
+      border: 1px solid #b9c7d8;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--primary);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .secondary-btn:hover { background: var(--info-bg); }
+
+    .danger-zone {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #f3b7b0;
+      border-radius: 8px;
+      background: #fff7f6;
+    }
+
+    .inspect-result {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .inspect-result.ok { border-color: #a3e4bc; background: #f6fef9; }
+    .inspect-result.warn { border-color: #fedf89; background: #fffcf5; }
+    .inspect-result.err { border-color: #f3b7b0; background: #fff7f6; }
+
+    details.advanced-settings {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    details.advanced-settings summary {
+      cursor: pointer;
+      color: var(--primary);
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+      margin-bottom: 14px;
+    }
+
+    .toolbar .wide { grid-column: span 2; }
+
+    .field label,
+    .inline-field label {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .field input,
+    .field select {
+      min-height: 36px;
+      padding: 7px 9px;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+
+    .toolbar-actions button {
+      min-height: 38px;
+      padding: 8px 16px;
+    }
+
+    .inline-field {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .inline-field label { margin: 0; white-space: nowrap; }
+    .inline-field select { width: auto; min-width: 150px; }
+
+    .option-card.inline-field {
+      display: block;
+    }
+
+    .option-card.inline-field label {
+      display: block;
+      margin: 0 0 6px;
+      white-space: normal;
+    }
+
+    .option-card.inline-field select {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .option-card.check.compact {
+      display: block;
+      min-height: 0;
+      padding: 12px;
+      border-color: #e5eaf0;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #fff, #f8fafc);
+    }
+
+    .option-card.check.compact input {
+      margin-right: 8px;
+    }
+
+    .check.compact {
+      min-height: 36px;
+      margin: 0;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+    }
+
+    .form-block {
+      padding: 14px 0 4px;
+      border-top: 1px solid var(--line);
+      margin-top: 16px;
+    }
+
+    .form-block:first-of-type {
+      padding-top: 0;
+      border-top: 0;
+      margin-top: 0;
+    }
+
+    .form-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .file-source {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    .small-upload {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .small-upload summary {
+      cursor: pointer;
+      color: var(--primary);
+      font-weight: 650;
+    }
+
+    .storage-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .storage-item {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fbfcfe;
+    }
+
+    .storage-item strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .storage-item span {
+      color: var(--muted);
+      font-size: 12px;
+      word-break: break-all;
+    }
+
     /* ── Pipeline: Cards ── */
     .cards {
       display: grid;
@@ -171,6 +489,22 @@
     .card.full-width {
       grid-column: 1 / -1;
     }
+
+    .card button {
+      min-height: 36px;
+      padding: 7px 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .card button:hover { background: #eef2f6; }
+    .card button.danger { color: var(--danger); border-color: #f3b7b0; }
 
     /* ── Card Content: Tables ── */
     .mini-table {
@@ -271,7 +605,7 @@
     /* ── Transcribe Tab: two-column ── */
     .transcribe-layout {
       display: grid;
-      grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
+      grid-template-columns: minmax(460px, 620px) minmax(0, 1fr);
       gap: 18px;
     }
 
@@ -468,10 +802,17 @@
     @media (max-width: 900px) {
       main { padding: 14px; }
       header { padding: 18px 14px 0; }
+      .status-strip { grid-template-columns: 1fr; }
       .cards { grid-template-columns: 1fr; }
       .transcribe-layout { grid-template-columns: 1fr; }
+      .toolbar { grid-template-columns: 1fr; }
+      .toolbar .wide { grid-column: auto; }
+      .storage-grid { grid-template-columns: 1fr; }
       .actions { flex-direction: column; }
       .actions button { width: 100%; }
+      .toolbar-actions button,
+      .inline-field,
+      .inline-field select { width: 100%; }
       .modal { width: 95vw; }
     }
   </style>
@@ -480,7 +821,13 @@
 
 <header>
   <h1>CineSub Studio Pipeline</h1>
-  <p class="sub">字幕批量处理控制台 — 自动发现、转写、翻译、质检，只把异常交给人</p>
+  <p class="sub">流水线识别、翻译、质检</p>
+  <div class="status-strip">
+    <div class="status-pill"><span>模型接口</span><strong id="statusProvider">读取中...</strong></div>
+    <div class="status-pill"><span>语言配置</span><strong id="statusProfile">auto-detect</strong></div>
+    <div class="status-pill"><span>临时空间</span><strong id="statusTempSpace">读取中...</strong></div>
+    <div class="status-pill"><span>模型缓存</span><strong id="statusModelCache">项目内 .cache / models</strong></div>
+  </div>
   <nav class="tabs">
     <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">⚙ 流水线控制台</button>
     <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">📝 单文件处理</button>
@@ -493,24 +840,95 @@
   <!-- ═══════════════ Pipeline Tab ═══════════════ -->
   <div id="tab-pipeline" class="tab-content active">
 
-    <div class="actions">
-      <button onclick="pipelineAction('scan')" id="btn-scan">🔍 扫描 input</button>
-      <button onclick="pipelineAction('status')" id="btn-status">📊 查看状态</button>
-      <button onclick="pipelineAction('review')" id="btn-review">⚠️ 异常复核</button>
-      <button onclick="pipelineAction('run')" id="btn-run" class="primary">▶ 开始处理 input</button>
-      <span style="font-size:13px;align-self:center;color:var(--muted);margin:0 4px">Provider:</span>
-      <select id="pipelineProviderSelect" style="width:auto;min-width:120px" onchange="updatePipelineProvider()"></select>
-      <span style="font-size:13px;align-self:center;color:var(--muted);margin:0 4px">语言:</span>
-      <select id="pipelineLangProfileSelect" style="width:auto;min-width:120px" onchange="updatePipelineLangProfile()"></select>
-      <span class="spacer"></span>
-      <button onclick="pipelineAction('retry')" id="btn-retry" class="danger">🔄 重试失败</button>
-      <button onclick="refreshAll()" id="btn-refresh">↻ 刷新全部</button>
+    <div class="settings-panel">
+      <div class="settings-head">
+        <h2>流水线参数</h2>
+        <p class="panel-copy">适合批量处理目录里的电影。先扫目录，再开始处理；失败重试只处理失败任务，不扫描新文件。</p>
+      </div>
+      <div class="toolbar">
+      <div class="field wide option-card">
+        <label for="pipelineInputDir">输入目录<span class="recommend-badge">可填绝对路径</span></label>
+        <input id="pipelineInputDir" type="text" value="input" placeholder="input 或 D:\Movies">
+        <span class="help-text">相对路径会从项目目录开始找；蓝光电影建议放在任意磁盘目录，然后填完整路径。</span>
+      </div>
+      <div class="field option-card">
+        <label for="pipelineModel">模型<span class="recommend-badge">small 稳妥</span></label>
+        <select id="pipelineModel">
+          <option value="tiny">tiny</option>
+          <option value="base">base</option>
+          <option value="small" selected>small</option>
+          <option value="medium">medium</option>
+          <option value="large-v3">large-v3</option>
+          <option value="distil-large-v3">distil-large-v3</option>
+        </select>
+        <span class="help-text">模型越大越准也越慢。CPU 先用 small；追求质量再试 medium / large-v3。</span>
+      </div>
+      <div class="field option-card">
+        <label for="pipelineDevice">设备<span class="recommend-badge">CPU 最稳</span></label>
+        <select id="pipelineDevice">
+          <option value="cpu" selected>CPU</option>
+          <option value="cuda">NVIDIA CUDA</option>
+          <option value="auto">自动</option>
+        </select>
+        <span class="help-text">CPU 兼容最好；NVIDIA CUDA 更快但依赖显卡和驱动；不确定就选 CPU。</span>
+      </div>
+      <div class="field option-card">
+        <label for="pipelineComputeType">精度</label>
+        <select id="pipelineComputeType">
+          <option value="" selected>自动</option>
+          <option value="int8">int8</option>
+          <option value="float16">float16</option>
+          <option value="float32">float32</option>
+        </select>
+        <span class="help-text">自动会按设备选择。CPU 通常 int8 省内存；CUDA 通常 float16；float32 最吃内存。</span>
+      </div>
+      <div class="field option-card">
+        <label for="pipelineLanguage">源语言</label>
+        <select id="pipelineLanguage">
+          <option value="" selected>自动检测</option>
+          <option value="en">英语</option>
+          <option value="zh">中文</option>
+          <option value="ja">日语</option>
+          <option value="ko">韩语</option>
+          <option value="fr">法语</option>
+          <option value="de">德语</option>
+          <option value="es">西语</option>
+          <option value="ru">俄语</option>
+        </select>
+        <span class="help-text">不知道就自动检测。明确知道电影语言时指定它，可减少识别误判。</span>
+      </div>
+      <label class="check compact option-card">
+        <input type="checkbox" id="pipelineTranslateEnabled" checked>
+        启用翻译
+        <span class="help-text">勾选后会调用当前模型接口，产生 API 消耗；只要原文字幕就取消。</span>
+      </label>
+      <div class="inline-field option-card">
+        <label for="pipelineProviderSelect">模型接口</label>
+        <select id="pipelineProviderSelect" onchange="updatePipelineProvider()"></select>
+        <span class="help-text">默认使用当前激活接口。这里选择只影响本次流水线。</span>
+      </div>
+      <div class="inline-field option-card">
+        <label for="pipelineLangProfileSelect">语言配置</label>
+        <select id="pipelineLangProfileSelect" onchange="updatePipelineLangProfile()"></select>
+        <span class="help-text">语言配置会带入识别、翻译风格和质检阈值；不懂就用 active profile。</span>
+      </div>
+      </div>
+    </div>
+
+    <div class="actions toolbar-actions">
+        <button onclick="pipelineAction('scan')" id="btn-scan">🔍 扫描</button>
+        <button onclick="pipelineAction('status')" id="btn-status">📊 查看状态</button>
+        <button onclick="pipelineAction('review')" id="btn-review">⚠️ 异常复核</button>
+        <button onclick="pipelineAction('run')" id="btn-run" class="primary">▶ 开始处理</button>
+        <span class="spacer"></span>
+        <button onclick="pipelineAction('retry')" id="btn-retry" class="danger">🔄 重试失败</button>
+        <button onclick="refreshAll()" id="btn-refresh">↻ 刷新全部</button>
     </div>
 
     <div class="cards">
       <div class="card">
         <h2>📁 待处理文件</h2>
-        <div id="scan-result" class="placeholder">点击"扫描 input"查看待处理文件</div>
+        <div id="scan-result" class="placeholder">点击"扫描"查看待处理文件</div>
       </div>
 
       <div class="card">
@@ -527,6 +945,19 @@
         <h2>📋 操作日志</h2>
         <pre id="pipeline-log" class="mini-log">就绪。点击上方按钮执行操作。</pre>
       </div>
+
+      <div class="card full-width">
+        <h2>缓存与中间文件</h2>
+        <div id="storage-result" class="placeholder">中间音频写入 work/，旧上传副本写入 uploads/。停止服务不会自动删除缓存。</div>
+        <div class="danger-zone">
+          <strong>释放空间只会删除可再生成文件</strong>
+          <span class="help-text">只清理临时音频和小样本上传副本；不会删除 output 字幕成品、models 模型、.cache 模型缓存或翻译缓存。</span>
+        <div class="inline-actions">
+          <button type="button" onclick="loadStorageStatus()">刷新缓存状态</button>
+          <button type="button" onclick="cleanupTransientFiles()" class="danger">释放临时空间</button>
+        </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -535,178 +966,263 @@
     <div class="transcribe-layout">
       <section>
         <h2>识别设置</h2>
+        <p class="hint">第一次使用某个模型会下载模型文件；后台会忽略系统里失效的代理设置。国内网络可尝试 hf-mirror.com，模型下载完成后可以勾选"只使用本地已下载模型"。<br>翻译使用大模型 API，API Key 不会持久化到磁盘或日志中。</p>
         <form id="jobForm">
-          <label for="file">上传视频或音频</label>
-          <input id="file" name="file" type="file" accept="video/*,audio/*,.mkv,.srt,.wav,.mp3,.m4a,.flac,.opus">
-
-          <label for="path">或填写本机文件路径</label>
-          <input id="path" name="path" type="text" placeholder="D:\Movies\movie.mp4">
-
-          <div class="row">
-            <div>
-              <label for="model">模型</label>
-              <select id="model" name="model">
-                <option value="tiny">tiny - 快速测试</option>
-                <option value="base">base - 轻量</option>
-                <option value="small" selected>small - CPU 推荐</option>
-                <option value="medium">medium - 效果更好</option>
-                <option value="large-v3">large-v3 - 高质量</option>
-                <option value="distil-large-v3">distil-large-v3</option>
-              </select>
+          <div class="form-block settings-panel">
+            <div class="settings-head">
+              <h3>目标文件</h3>
+              <p class="panel-copy">大电影不要上传，直接填本机路径。后台读取原片并抽音频到 work/，原片不会被复制。</p>
             </div>
-            <div>
-              <label for="device">设备</label>
-              <select id="device" name="device">
-                <option value="cpu" selected>CPU</option>
-                <option value="cuda">NVIDIA CUDA</option>
-                <option value="auto">自动</option>
-              </select>
+            <div class="file-source">
+              <label for="path">本机文件路径（直接处理，不复制原片）<span class="recommend-badge">蓝光推荐</span></label>
+              <input id="path" name="path" type="text" placeholder="D:\Movies\电影.mkv">
+              <span class="hint-inline">适合蓝光级别大文件。原片保持在原位置，抽取的音频写入项目 work/，字幕和质检结果写入 output/。</span>
+              <div class="inline-actions">
+                <button id="inspectBtn" type="button" class="secondary-btn" onclick="inspectInputFile()">预检路径</button>
+                <span class="help-text">预检只看路径、大小、扩展名和预计输出名，不读取视频内容。</span>
+              </div>
+              <div id="inspect-result" class="inspect-result" hidden></div>
+
+              <details class="small-upload">
+                <summary>上传小样本测试</summary>
+                <label for="file">上传视频或音频（仅建议短样本）</label>
+                <input id="file" name="file" type="file" accept="video/*,audio/*,.mkv,.srt,.wav,.mp3,.m4a,.flac,.opus">
+                <span class="hint-inline">上传会先保存一份到 uploads/；大电影请使用上面的本机路径。</span>
+              </details>
             </div>
           </div>
 
-          <div class="row">
-            <div>
-              <label for="compute_type">计算精度</label>
-              <select id="compute_type" name="compute_type">
-                <option value="">自动</option>
-                <option value="int8">int8 - CPU 省内存</option>
-                <option value="float16">float16 - GPU</option>
-                <option value="float32">float32</option>
-              </select>
+          <div class="form-block settings-panel">
+            <div class="settings-head">
+              <h3>识别参数</h3>
+              <p class="panel-copy">看不懂就保持默认：small + CPU + 自动语言，是最不容易翻车的组合。</p>
             </div>
-            <div>
-              <label for="language">源语言</label>
-              <select id="language" name="language">
-                <option value="">自动检测</option>
-                <option value="en">英语 en</option>
-                <option value="zh">中文 zh</option>
-                <option value="ja">日语 ja</option>
-                <option value="ko">韩语 ko</option>
-                <option value="fr">法语 fr</option>
-                <option value="de">德语 de</option>
-                <option value="es">西语 es</option>
-                <option value="ru">俄语 ru</option>
-              </select>
+            <div class="row">
+              <div class="option-card">
+                <label for="model">模型<span class="recommend-badge">small 默认</span></label>
+                <select id="model" name="model">
+                  <option value="tiny">tiny - 快速测试</option>
+                  <option value="base">base - 轻量</option>
+                  <option value="small" selected>small - CPU 推荐</option>
+                  <option value="medium">medium - 效果更好</option>
+                  <option value="large-v3">large-v3 - 高质量</option>
+                  <option value="distil-large-v3">distil-large-v3</option>
+                </select>
+                <span class="help-text">模型越大越慢、越吃内存。small 适合 CPU；medium / large-v3 更准；distil-large-v3 更偏 GPU。</span>
+              </div>
+              <div class="option-card">
+                <label for="device">设备<span class="recommend-badge">CPU 稳</span></label>
+                <select id="device" name="device">
+                  <option value="cpu" selected>CPU</option>
+                  <option value="cuda">NVIDIA CUDA</option>
+                  <option value="auto">自动</option>
+                </select>
+                <span class="help-text">CPU 最兼容；CUDA 速度更快但要求 NVIDIA 显卡环境；自动适合你不确定机器配置时。</span>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="option-card">
+                <label for="language">源语言</label>
+                <select id="language" name="language">
+                  <option value="">自动检测</option>
+                  <option value="en">英语 en</option>
+                  <option value="zh">中文 zh</option>
+                  <option value="ja">日语 ja</option>
+                  <option value="ko">韩语 ko</option>
+                  <option value="fr">法语 fr</option>
+                  <option value="de">德语 de</option>
+                  <option value="es">西语 es</option>
+                  <option value="ru">俄语 ru</option>
+                </select>
+                <span class="help-text">不确定就自动检测。明确知道是英语、日语、法语等，手动指定可减少误判。</span>
+              </div>
+            </div>
+
+            <details class="advanced-settings">
+              <summary>高级识别参数</summary>
+              <div class="row">
+                <div class="option-card">
+                  <label for="compute_type">计算精度</label>
+                  <select id="compute_type" name="compute_type">
+                    <option value="">自动</option>
+                    <option value="int8">int8 - CPU 省内存</option>
+                    <option value="float16">float16 - GPU</option>
+                    <option value="float32">float32</option>
+                  </select>
+                  <span class="help-text">CPU 通常选 int8，省内存；CUDA 通常选 float16；float32 最吃内存，只在你明确需要时用。</span>
+                </div>
+                <div class="option-card">
+                  <label for="hf_endpoint">模型下载源</label>
+                  <select id="hf_endpoint" name="hf_endpoint">
+                    <option value="">Hugging Face 官方</option>
+                    <option value="https://hf-mirror.com" selected>hf-mirror.com 镜像</option>
+                  </select>
+                  <span class="help-text">首次使用模型会下载到项目目录。国内网络可用镜像；模型下好后可勾选“只使用本地模型”。</span>
+                </div>
+              </div>
+              <div class="row">
+                <div class="option-card">
+                  <label for="beam_size">Beam size<span class="recommend-badge">5 稳</span></label>
+                  <input id="beam_size" name="beam_size" type="number" min="1" max="10" value="5">
+                  <span class="help-text">识别时同时尝试几条候选文本。默认 5 比较稳；越大越慢，不等于一定更准。</span>
+                </div>
+                <div class="option-card">
+                  <label class="check">
+                    <input id="vad" name="vad" type="checkbox" checked>
+                    启用静音过滤 VAD
+                  </label>
+                  <span class="help-text">自动跳过无声片段，电影对白建议开启；极短音频或音乐素材异常时再关闭。</span>
+
+                  <label class="check">
+                    <input id="local_files_only" name="local_files_only" type="checkbox">
+                    只使用本地已下载模型
+                  </label>
+                  <span class="help-text">离线或模型已下载时启用；第一次跑某个模型不要勾，否则会找不到模型。</span>
+
+                  <label class="check">
+                    <input id="condition_on_previous_text" name="condition_on_previous_text" type="checkbox" checked>
+                    参考前文识别
+                  </label>
+                  <span class="help-text">让 Whisper 记住上一段内容。长对白建议开启；歌词、跳切、多语言混杂可关闭。</span>
+                </div>
+              </div>
+            </details>
+          </div>
+
+          <div class="form-block settings-panel">
+            <div class="settings-head">
+              <h3>语言与翻译</h3>
+              <p class="panel-copy">语言配置管识别习惯、翻译风格和质检阈值；模型接口只管 API 和大模型名称。</p>
+            </div>
+            <div class="row">
+              <div class="option-card">
+                <label for="lang_profile_select">语言配置档案</label>
+                <select id="lang_profile_select" onchange="onLangProfileSelect()">
+                  <option value="">-- 手动设置 --</option>
+                </select>
+                <span class="help-text">不懂就用默认 active profile。它会自动带入源语言、目标语言、翻译风格和质检阈值。</span>
+              </div>
+              <div class="option-card">
+                <label class="check">
+                  <input id="translate_enabled" name="translate_enabled" type="checkbox">
+                  启用大模型翻译
+                </label>
+                <span class="help-text">勾选后会调用 Provider 里的 API。只想生成原文 SRT 时不要勾。</span>
+              </div>
+            </div>
+
+            <div id="translateSettings" style="display:none">
+              <div class="row">
+                <div class="option-card">
+                  <label for="provider_select">模型接口配置</label>
+                  <select id="provider_select" name="provider_select" onchange="onProviderSelect()">
+                    <option value="">-- 选择已保存的接口 --</option>
+                  </select>
+                  <span class="help-text">这里选已保存的 Provider，API Key 不会展示到页面和日志。</span>
+                </div>
+                <div class="option-card">
+                  <label for="llm_model_display">大模型名称</label>
+                  <input id="llm_model" name="llm_model" type="hidden">
+                  <input id="llm_model_display" type="text" readonly placeholder="选择模型接口后自动显示">
+                  <span class="help-text">模型名从 Provider 自动带出，避免单文件页面重复填写 API Base / API Key。</span>
+                </div>
+              </div>
+
+            <div class="row">
+              <div class="option-card">
+                <label for="target_language">目标语言</label>
+                <select id="target_language" name="target_language">
+                  <option value="zh-CN" selected>中文 zh-CN</option>
+                  <option value="zh-TW">繁体中文 zh-TW</option>
+                  <option value="en">英文 en</option>
+                  <option value="ja">日文 ja</option>
+                  <option value="ko">韩文 ko</option>
+                  <option value="fr">法文 fr</option>
+                  <option value="de">德文 de</option>
+                  <option value="es">西文 es</option>
+                  <option value="ru">俄文 ru</option>
+                </select>
+                <span class="help-text">字幕目标语言。中文用户默认 zh-CN；繁体字幕选 zh-TW。</span>
+              </div>
+              <div class="option-card">
+                <label for="translation_mode">翻译模式</label>
+                <select id="translation_mode" name="translation_mode">
+                  <option value="bilingual" selected>双语 bilingual</option>
+                  <option value="translated">纯翻译 translated</option>
+                </select>
+                <span class="help-text">双语适合校对和学习；纯翻译适合最终观看版。</span>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="option-card">
+                <label for="translation_batch_size">批量大小 (1-50)<span class="recommend-badge">20 推荐</span></label>
+                <span class="hint-inline">每批翻译多少条字幕</span>
+                <input id="translation_batch_size" name="translation_batch_size" type="number" min="1" max="50" value="20">
+                <span class="help-text">每次丢给大模型多少条字幕。越大请求越少，但失败后重试成本更高。</span>
+              </div>
+              <div class="option-card">
+                <label for="translation_temperature">Temperature (0-1)<span class="recommend-badge">0.2 稳</span></label>
+                <span class="hint-inline">0=保守，1=创意</span>
+                <input id="translation_temperature" name="translation_temperature" type="number" min="0" max="1" step="0.1" value="0.2">
+                <span class="help-text">控制翻译发挥程度。字幕要稳，默认 0.2；越高越自由，也越可能跑偏。</span>
+              </div>
+            </div>
+
+            <details class="advanced-settings">
+              <summary>高级翻译参数</summary>
+              <div class="row">
+                <div class="option-card">
+                  <label class="check">
+                    <input id="context_enabled" name="context_enabled" type="checkbox" checked>
+                    联系上下文
+                  </label>
+                  <span class="help-text">让模型参考相邻字幕，人物代词和剧情衔接更稳。极短字幕测试时可关闭。</span>
+                </div>
+                <div class="option-card">
+                  <label for="context_window">上下文窗口 (0-10)<span class="recommend-badge">3 推荐</span></label>
+                  <span class="hint-inline">翻译时参考前后多少条字幕</span>
+                  <input id="context_window" name="context_window" type="number" min="0" max="10" value="3">
+                  <span class="help-text">默认参考前后 3 条。数值越大越连贯，但 prompt 更长、API 消耗更高。</span>
+                </div>
+              </div>
+
+              <div class="option-card">
+                <label for="translation_prompt">自定义翻译提示词（追加到默认提示词后）</label>
+                <textarea id="translation_prompt" name="translation_prompt" rows="3" placeholder="例如：保持电影口语感；人名不翻译；术语按科幻片风格处理。"></textarea>
+                <span class="help-text">写给大模型的额外要求。留空就用系统默认字幕翻译策略。</span>
+              </div>
+            </details>
             </div>
           </div>
 
-          <label for="hf_endpoint">模型下载源</label>
-          <select id="hf_endpoint" name="hf_endpoint">
-            <option value="">Hugging Face 官方</option>
-            <option value="https://hf-mirror.com" selected>hf-mirror.com 镜像</option>
-          </select>
+          <div style="display:none">
+            <label for="api_provider">API 协议</label>
+            <select id="api_provider" name="api_provider">
+              <option value="openai-compatible" selected>OpenAI-Compatible</option>
+              <option value="anthropic">Anthropic Claude</option>
+            </select>
 
-          <label for="beam_size">Beam size</label>
-          <input id="beam_size" name="beam_size" type="number" min="1" max="10" value="5">
+            <label for="api_template">API 服务商</label>
+            <select id="api_template" name="api_template" onchange="onSingleApiTemplateChange()">
+              <option value="">自定义</option>
+            </select>
 
-          <label class="check">
-            <input id="vad" name="vad" type="checkbox" checked>
-            启用静音过滤 VAD
-          </label>
+            <label for="api_base">API Base URL</label>
+            <input id="api_base" name="api_base" type="text" placeholder="https://api.openai.com/v1">
 
-          <label class="check">
-            <input id="local_files_only" name="local_files_only" type="checkbox">
-            只使用本地已下载模型
-          </label>
+            <label for="api_key">API Key</label>
+            <input id="api_key" name="api_key" type="password" placeholder="sk-...">
 
-          <hr style="border:0; border-top:1px solid var(--line); margin: 18px 0 12px;">
-
-          <h2>语言与翻译设置</h2>
-
-          <label for="lang_profile_select">语言配置档案</label>
-          <select id="lang_profile_select" onchange="onLangProfileSelect()">
-            <option value="">-- 手动设置 --</option>
-          </select>
-
-          <label for="provider_select">模型接口配置</label>
-          <select id="provider_select" name="provider_select" onchange="onProviderSelect()">
-            <option value="">-- 手动输入 --</option>
-          </select>
-
-          <label class="check">
-            <input id="translate_enabled" name="translate_enabled" type="checkbox">
-            启用大模型翻译
-          </label>
-
-          <label for="api_provider">API 协议</label>
-          <select id="api_provider" name="api_provider" disabled>
-            <option value="openai-compatible" selected>OpenAI-Compatible</option>
-            <option value="anthropic">Anthropic Claude</option>
-          </select>
-
-          <label for="api_template">API 服务商</label>
-          <select id="api_template" name="api_template" disabled onchange="onSingleApiTemplateChange()">
-            <option value="">自定义</option>
-          </select>
-
-          <label for="api_base">API Base URL</label>
-          <input id="api_base" name="api_base" type="text" disabled
-                 placeholder="https://api.openai.com/v1">
-
-          <label for="api_key">API Key</label>
-          <input id="api_key" name="api_key" type="password" disabled placeholder="sk-...">
-
-          <label for="llm_model">大模型名称</label>
-          <input id="llm_model" name="llm_model" type="hidden">
-          <select id="llm_model_select" disabled onchange="onSingleModelSelectChange()">
-            <option value="">选择模型</option>
-          </select>
-          <input id="llm_model_custom" type="text" disabled
-                 placeholder="自定义模型名" style="display:none">
-
-          <div class="row">
-            <div>
-              <label for="target_language">目标语言</label>
-              <select id="target_language" name="target_language" disabled>
-                <option value="zh-CN" selected>中文 zh-CN</option>
-                <option value="zh-TW">繁体中文 zh-TW</option>
-                <option value="en">英文 en</option>
-                <option value="ja">日文 ja</option>
-                <option value="ko">韩文 ko</option>
-                <option value="fr">法文 fr</option>
-                <option value="de">德文 de</option>
-                <option value="es">西文 es</option>
-                <option value="ru">俄文 ru</option>
-              </select>
-            </div>
-            <div>
-              <label for="translation_mode">翻译模式</label>
-              <select id="translation_mode" name="translation_mode" disabled>
-                <option value="bilingual" selected>双语 bilingual</option>
-                <option value="translated">纯翻译 translated</option>
-              </select>
-            </div>
+            <select id="llm_model_select" onchange="onSingleModelSelectChange()">
+              <option value="">选择模型</option>
+            </select>
+            <input id="llm_model_custom" type="text" placeholder="自定义模型名" style="display:none">
           </div>
-
-          <div class="row">
-            <div>
-              <label for="translation_batch_size">批量大小 (1-50)</label>
-              <input id="translation_batch_size" name="translation_batch_size" type="number"
-                     min="1" max="50" value="20" disabled>
-            </div>
-            <div>
-              <label for="translation_temperature">Temperature (0-1)</label>
-              <input id="translation_temperature" name="translation_temperature" type="number"
-                     min="0" max="1" step="0.1" value="0.2" disabled>
-            </div>
-          </div>
-
-          <label class="check">
-            <input id="context_enabled" name="context_enabled" type="checkbox" checked disabled>
-            联系上下文
-          </label>
-
-          <label for="context_window">上下文窗口 (0-10)</label>
-          <input id="context_window" name="context_window" type="number"
-                 min="0" max="10" value="3" disabled>
-
-          <label for="translation_prompt">自定义翻译提示词（追加到默认提示词后）</label>
-          <textarea id="translation_prompt" name="translation_prompt" rows="3" disabled
-                    placeholder="用户额外要求…（留空使用默认提示词）"></textarea>
 
           <button id="startBtn" type="submit" class="btn-full">开始识别</button>
         </form>
-        <p class="hint">第一次使用某个模型会下载模型文件；后台会忽略系统里失效的代理设置。国内网络可尝试 hf-mirror.com，模型下载完成后可以勾选"只使用本地已下载模型"。<br>翻译使用大模型 API，API Key 不会持久化到磁盘或日志中。</p>
       </section>
 
       <section>
@@ -916,18 +1432,35 @@ async function pipelineAction(action) {
   var labelMap = {scan:'扫描 input', status:'查看状态', review:'异常复核', retry:'重试失败', run:'开始处理 input'};
 
   */
-  var labelMap = {scan:'scan input', status:'status', review:'review', retry:'retry failed', run:'run input'};
+  var labelMap = {scan:'扫描', status:'查看状态', review:'异常复核', retry:'重试失败', run:'开始处理'};
 
-  // Include provider & language profile selections in POST body
+  var inputDirEl = document.getElementById('pipelineInputDir');
+  var input_dir = inputDirEl ? inputDirEl.value.trim() : 'input';
+
+  // Include input_dir, provider & language profile selections in request
   var fetchOpts = { method: method };
   if (isPost) {
     var provSel = document.getElementById('pipelineProviderSelect');
     var lpSel = document.getElementById('pipelineLangProfileSelect');
-    var body = {};
+    var modelSel = document.getElementById('pipelineModel');
+    var deviceSel = document.getElementById('pipelineDevice');
+    var computeTypeSel = document.getElementById('pipelineComputeType');
+    var languageSel = document.getElementById('pipelineLanguage');
+    var translateCb = document.getElementById('pipelineTranslateEnabled');
+    var body = { input_dir: input_dir };
     if (provSel && provSel.value) body.provider_id = provSel.value;
     if (lpSel && lpSel.value) body.language_profile_id = lpSel.value;
+    body.model = modelSel ? modelSel.value : 'small';
+    body.device = deviceSel ? deviceSel.value : 'cpu';
+    if (computeTypeSel && computeTypeSel.value) body.compute_type = computeTypeSel.value;
+    body.translate_enabled = translateCb ? translateCb.checked : true;
+    if (languageSel && languageSel.value) body.language = languageSel.value;
     fetchOpts.headers = { 'Content-Type': 'application/json' };
     fetchOpts.body = JSON.stringify(body);
+  } else {
+    // GET requests: append input_dir as query param
+    var sep = url.indexOf('?') === -1 ? '?' : '&';
+    url += sep + 'input_dir=' + encodeURIComponent(input_dir);
   }
   appendLog('执行: ' + (labelMap[action] || action) + ' ...');
 
@@ -1050,7 +1583,7 @@ function renderScan(data) {
     if (infoLines.length > 0) {
       el.innerHTML = '<div class="placeholder">' + escapeHtml(infoLines[infoLines.length - 1]) + '</div>';
     } else {
-      el.innerHTML = '<div class="placeholder">没有发现待处理文件。请将视频放入 input/ 目录。</div>';
+      el.innerHTML = '<div class="placeholder">没有发现待处理文件。请将视频放入输入目录。</div>';
     }
     return;
   }
@@ -1102,7 +1635,7 @@ function renderStatus(data) {
   var tasks = parseStatusOutput(output);
 
   if (output.indexOf('暂无任务记录') >= 0 || (tasks.length === 0 && !output.trim())) {
-    el.innerHTML = '<div class="placeholder">暂无任务记录。将视频放入 input/ 目录后运行流水线。</div>';
+    el.innerHTML = '<div class="placeholder">暂无任务记录。将视频放入输入目录后运行流水线。</div>';
     return;
   }
 
@@ -1247,7 +1780,7 @@ function renderTextResult(targetId, data, emptyText) {
 }
 
 function renderScan(data) {
-  renderTextResult('scan-result', data, 'No input files found. Put videos in input/ and scan again.');
+  renderTextResult('scan-result', data, 'No input files found. Put videos in the input directory and scan again.');
 }
 
 function renderStatus(data) {
@@ -1263,6 +1796,151 @@ function refreshAll() {
   pipelineAction('scan');
   pipelineAction('status');
   pipelineAction('review');
+  loadStorageStatus();
+  loadTopStatus();
+}
+
+function formatBytes(bytes) {
+  var value = Number(bytes || 0);
+  var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  for (var i = 0; i < units.length; i++) {
+    if (value < 1024 || i === units.length - 1) {
+      return units[i] === 'B' ? Math.round(value) + ' B' : value.toFixed(1) + ' ' + units[i];
+    }
+    value = value / 1024;
+  }
+  return '0 B';
+}
+
+function setStatusText(id, text) {
+  var el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+async function loadTopStatus() {
+  try {
+    var providerResp = await fetch('/api/providers/active');
+    var providerData = await providerResp.json();
+    var p = providerData.active;
+    setStatusText('statusProvider', p ? ((p.name || p.id || '已配置') + ' | ' + (p.translation_model || '?')) : '未配置翻译接口');
+  } catch(e) {
+    setStatusText('statusProvider', '读取失败');
+  }
+  try {
+    var profileResp = await fetch('/api/language-profiles/active');
+    var profileData = await profileResp.json();
+    var lp = profileData.active;
+    setStatusText('statusProfile', lp ? ((lp.name || lp.id || 'auto-detect') + ' | ' + (lp.target_language || 'zh-CN')) : 'auto-detect');
+  } catch(e) {
+    setStatusText('statusProfile', 'auto-detect');
+  }
+  loadStorageStatus();
+}
+
+function renderStorageStatus(data) {
+  var el = document.getElementById('storage-result');
+  if (!el) return;
+  if (!data || !data.ok && !data.errors) {
+    el.innerHTML = '<div class="placeholder">缓存状态读取失败。</div>';
+    return;
+  }
+  var work = data.work_audio || {};
+  var uploads = data.uploads || {};
+  var tcache = data.translation_cache || {};
+  var modelCache = data.model_cache || {};
+  var cleanupBytes = Number(work.bytes || 0) + Number(uploads.bytes || 0);
+  setStatusText('statusTempSpace', '可释放 ' + formatBytes(cleanupBytes));
+  setStatusText('statusModelCache', modelCache.path ? '模型留在项目目录' : '项目内模型缓存');
+  var html = '<div class="storage-grid">';
+  html += '<div class="storage-item"><strong>临时音频</strong><span>' + escapeHtml(work.display || '0 B') + ' / ' + (work.count || 0) + ' 个文件<br>' + escapeHtml(work.path || 'work') + '</span></div>';
+  html += '<div class="storage-item"><strong>旧上传副本</strong><span>' + escapeHtml(uploads.display || '0 B') + ' / ' + (uploads.count || 0) + ' 个文件<br>' + escapeHtml(uploads.path || 'uploads') + '</span></div>';
+  html += '<div class="storage-item"><strong>翻译缓存</strong><span>' + escapeHtml(tcache.display || '0 B') + ' / ' + (tcache.count || 0) + ' 个文件<br>保留，不自动清理</span></div>';
+  html += '</div>';
+  html += '<div class="hint">预计可释放临时空间：' + escapeHtml(formatBytes(cleanupBytes)) + '。停止服务不会自动删除缓存；清理按钮不会删除 output/、models/、.cache/huggingface 或翻译缓存。模型缓存位置：' + escapeHtml(modelCache.path || '.cache/huggingface') + '</div>';
+  if (data.deleted && data.deleted.length) {
+    html += '<div class="hint">已清理：' + escapeHtml(data.deleted.join(', ')) + '</div>';
+  }
+  if (data.errors && data.errors.length) {
+    html += '<pre class="mini-log" style="max-height:120px">[cleanup errors]\n' + escapeHtml(data.errors.join('\n')) + '</pre>';
+  }
+  el.innerHTML = html;
+}
+
+async function loadStorageStatus() {
+  try {
+    var resp = await fetch('/api/storage/status');
+    var data = await resp.json();
+    renderStorageStatus(data);
+  } catch (err) {
+    var el = document.getElementById('storage-result');
+    if (el) el.innerHTML = '<div class="placeholder">缓存状态读取失败: ' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+async function cleanupTransientFiles() {
+  if (!confirm('释放临时空间：只删除 work/*.16k.wav 和 uploads/ 里的旧上传副本，不会删除字幕成品、模型或翻译缓存。继续？')) return;
+  try {
+    var resp = await fetch('/api/storage/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    var data = await resp.json();
+    renderStorageStatus(data);
+    appendLog('缓存清理完成，删除 ' + ((data.deleted || []).length) + ' 个文件');
+  } catch (err) {
+    appendLog('缓存清理失败: ' + err.message);
+  }
+}
+
+function renderInspectResult(data) {
+  var el = document.getElementById('inspect-result');
+  if (!el) return;
+  el.hidden = false;
+  if (!data || data.ok === false) {
+    el.className = 'inspect-result err';
+    el.innerHTML = '<strong>预检失败</strong><br>' + escapeHtml((data && data.error) || '无法读取预检结果。');
+    return;
+  }
+
+  var warnings = data.warnings || [];
+  el.className = 'inspect-result ' + (data.ready && warnings.length === 0 ? 'ok' : (data.ready ? 'warn' : 'err'));
+  var title = data.ready ? '可以直接处理' : '暂时不能处理';
+  var html = '<strong>' + title + '</strong>';
+  html += '<div>文件：' + escapeHtml(data.path || '') + '</div>';
+  html += '<div>大小：' + escapeHtml(data.display_size || formatBytes(data.bytes)) + '；扩展名：' + escapeHtml(data.extension || '(无)') + '</div>';
+  html += '<div>原文 SRT：' + escapeHtml(data.source_output || '') + (data.source_output_exists ? '（已存在，会覆盖）' : '') + '</div>';
+  html += '<div>翻译 SRT：' + escapeHtml(data.translated_output || '') + (data.translated_output_exists ? '（已存在，会覆盖）' : '') + '</div>';
+  if (warnings.length) {
+    html += '<div style="margin-top:6px"><strong>注意：</strong>' + escapeHtml(warnings.join('；')) + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+async function inspectInputFile() {
+  var pathEl = document.getElementById('path');
+  var btn = document.getElementById('inspectBtn');
+  var path = pathEl ? pathEl.value.trim() : '';
+  if (!path) {
+    renderInspectResult({ok: false, error: '请先填写本机文件路径。'});
+    return;
+  }
+  var body = {
+    path: path,
+    model: document.getElementById('model') ? document.getElementById('model').value : 'small',
+    target_language: document.getElementById('target_language') ? document.getElementById('target_language').value : 'zh-CN',
+    translation_mode: document.getElementById('translation_mode') ? document.getElementById('translation_mode').value : 'bilingual'
+  };
+  if (btn) btn.disabled = true;
+  try {
+    var resp = await fetch('/api/files/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    var data = await resp.json();
+    renderInspectResult(data);
+  } catch (err) {
+    renderInspectResult({ok: false, error: '预检请求失败: ' + err.message});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ═══════════════════ Utility ═══════════════════
@@ -1289,26 +1967,13 @@ function escapeHtml(text) {
   var activeJob = null;
   var timer = null;
 
-  var translateFields = [
-    "api_provider", "api_template", "api_base", "api_key", "llm_model",
-    "llm_model_select", "llm_model_custom",
-    "target_language", "translation_mode", "translation_batch_size",
-    "translation_temperature", "context_enabled", "context_window",
-    "translation_prompt",
-  ];
-
-  function setTranslateFieldsDisabled(disabled) {
-    translateFields.forEach(function(name) {
-      var el = document.getElementById(name);
-      if (el) el.disabled = disabled;
-    });
-    if (!disabled && contextCheck.checked) {
-      contextWindow.disabled = false;
-    }
+  function setTranslateFieldsVisible(visible) {
+    var div = document.getElementById('translateSettings');
+    if (div) div.style.display = visible ? 'block' : 'none';
   }
 
   translateCheck.addEventListener("change", function() {
-    setTranslateFieldsDisabled(!this.checked);
+    setTranslateFieldsVisible(this.checked);
     if (this.checked) {
       fillSingleApiTemplates();
       if (!document.getElementById("api_template").value) {
@@ -1317,12 +1982,10 @@ function escapeHtml(text) {
       }
       contextCheck.checked = true;
       contextWindow.value = "3";
-      contextWindow.disabled = false;
     }
   });
 
   contextCheck.addEventListener("change", function() {
-    contextWindow.disabled = !this.checked;
     if (!this.checked) {
       contextWindow.value = "0";
     } else if (contextWindow.value === "0") {
@@ -1422,10 +2085,16 @@ function escapeHtml(text) {
 
   form.addEventListener("submit", async function(event) {
     event.preventDefault();
-    var file = document.getElementById("file").files[0];
-    var path = document.getElementById("path").value.trim();
+    var fileEl = document.getElementById("file");
+    var pathEl = document.getElementById("path");
+    var file = fileEl && fileEl.files ? fileEl.files[0] : null;
+    var path = pathEl ? pathEl.value.trim() : "";
     if (!file && !path) {
-      alert("Choose a file or enter a local file path.");
+      alert("请填写本机文件路径，或上传一个小样本。");
+      return;
+    }
+    if (file && file.size > 256 * 1024 * 1024) {
+      alert("上传入口只适合小样本。大文件请填写本机路径，后台会直接读取原文件，不复制原片。");
       return;
     }
 
@@ -1434,14 +2103,14 @@ function escapeHtml(text) {
       var apiKey = document.getElementById("api_key").value.trim();
       var llmModel = document.getElementById("llm_model").value.trim();
       var savedProvider = document.getElementById("provider_select").value.trim();
-      if (!apiBase) { alert("Translation is enabled. API Base URL is required."); return; }
-      if (!apiKey && !savedProvider) { alert("Translation is enabled. Enter an API Key or choose a saved Provider."); return; }
-      if (!llmModel) { alert("Translation is enabled. Choose or enter a model name."); return; }
+      if (!apiBase) { alert("翻译已启用，请选择有效的模型接口配置。"); return; }
+      if (!apiKey && !savedProvider) { alert("翻译已启用，请选择已保存的模型接口配置。"); return; }
+      if (!llmModel) { alert("翻译已启用，请选择或填写大模型名称。"); return; }
     }
 
     startBtn.disabled = true;
     setStatus("queued");
-    logBox.textContent = "Uploading / creating job...\n";
+    logBox.textContent = path ? "正在创建直处理任务...\n" : "正在上传小样本并创建任务...\n";
     downloadSource.hidden = true;
     downloadTranslated.hidden = true;
 
@@ -1451,7 +2120,7 @@ function escapeHtml(text) {
         body: new FormData(form),
       });
       var payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Failed to create job.");
+      if (!response.ok) throw new Error(payload.error || "创建任务失败。");
       activeJob = payload.id;
       pollJob();
       timer = setInterval(pollJob, 1200);
@@ -1469,7 +2138,7 @@ async function loadPipelineSelects() {
   // Load provider select
   var ps = document.getElementById('pipelineProviderSelect');
   if (ps) {
-    ps.innerHTML = '<option value="">(active provider)</option>';
+    ps.innerHTML = '<option value="">使用当前默认接口</option>';
     try {
       var r = await fetch('/api/providers');
       var d = await r.json();
@@ -1481,13 +2150,22 @@ async function loadPipelineSelects() {
   // Load language profile select
   var ls = document.getElementById('pipelineLangProfileSelect');
   if (ls) {
-    ls.innerHTML = '<option value="">(active profile)</option>';
+    ls.innerHTML = '<option value="">使用当前默认语言配置</option>';
     try {
       var r2 = await fetch('/api/language-profiles');
       var d2 = await r2.json();
       (d2.profiles || []).forEach(function(p) {
         ls.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>';
       });
+    } catch(e) {}
+  }
+  // Set translate checkbox default based on active provider
+  var translateCb = document.getElementById('pipelineTranslateEnabled');
+  if (translateCb) {
+    try {
+      var r3 = await fetch('/api/providers/active');
+      var d3 = await r3.json();
+      translateCb.checked = !!(d3.active && d3.active.id);
     } catch(e) {}
   }
 }
@@ -1743,6 +2421,7 @@ function onLangProfileSelect() {
 
 // Load pipeline selects on page load
 loadPipelineSelects();
+loadTopStatus();
 loadLangProfileSelect();
 
 var providerCache = [];
@@ -1853,7 +2532,7 @@ function switchTab(name) {
   if (name === 'providers') loadProviders();
   if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); }
   if (name === 'langprofiles') loadLangProfiles();
-  if (name === 'pipeline') loadPipelineSelects();
+  if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); }
 }
 
 async function loadProviders() {
@@ -2179,6 +2858,8 @@ function onProviderSelect() {
       mc.value = p.translation_model;
       document.getElementById('llm_model').value = p.translation_model;
     }
+    var display = document.getElementById('llm_model_display');
+    if (display) display.value = p.translation_model;
   }
 }
 

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_CONFIG = PROJECT_ROOT / "tests" / "e2e_samples" / "samples.example.json"
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports"
 DEFAULT_STAGING_DIR = PROJECT_ROOT / "work" / "e2e_samples"
@@ -48,6 +48,12 @@ def main() -> int:
         action="store_true",
         help="Alias for --dry-run.",
     )
+    parser.add_argument(
+        "--sample",
+        action="append",
+        default=[],
+        help="Run only the named sample id. Can be passed multiple times.",
+    )
     args = parser.parse_args()
 
     config_path = _resolve_path(args.config)
@@ -63,6 +69,17 @@ def main() -> int:
     if not isinstance(samples, list):
         print("E2E config error: 'samples' must be a list.")
         return 1
+
+    selected_samples = {sample_id.strip() for sample_id in args.sample if sample_id.strip()}
+    if selected_samples:
+        samples = [
+            sample for sample in samples
+            if isinstance(sample, dict)
+            and str(sample.get("id") or sample.get("sample_name") or "").strip() in selected_samples
+        ]
+        if not samples:
+            print(f"E2E config error: no samples matched: {', '.join(sorted(selected_samples))}")
+            return 1
 
     dry_run = args.dry_run or args.no_run
     results: list[dict[str, Any]] = []
@@ -83,35 +100,37 @@ def main() -> int:
 
         if not sample["source_file"].exists():
             print(f"  Missing sample file, skipped: {sample['source_file']}")
-            result = _collect_sample_result(sample, "missing_sample", None)
+            result = _collect_sample_result(sample, "missing_sample", None, "")
             results.append(result)
             continue
 
         if sample["preflight"]["errors"] and not dry_run:
             print("  Preflight failed; pipeline was not started.")
-            result = _collect_sample_result(sample, "preflight_failed", None)
+            result = _collect_sample_result(sample, "preflight_failed", None, "")
             results.append(result)
             had_pipeline_failure = True
             continue
 
         returncode: int | None = None
+        stderr_tail = ""
         if dry_run:
             print("  Dry run, collecting existing artifacts only.")
             status = "dry_run"
         else:
             sample["processing_file"] = _prepare_processing_file(sample)
-            returncode = _run_batch_worker(sample)
+            returncode, stderr_tail = _run_batch_worker(sample)
             status = "completed" if returncode == 0 else "pipeline_failed"
             if returncode != 0:
                 had_pipeline_failure = True
 
-        result = _collect_sample_result(sample, status, returncode)
+        result = _collect_sample_result(sample, status, returncode, stderr_tail)
         results.append(result)
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "config": _display_path(config_path),
         "dry_run": dry_run,
+        "selected_samples": sorted(selected_samples),
         "samples": results,
     }
 
@@ -148,11 +167,23 @@ def _normalize_sample(raw: Any) -> dict[str, Any]:
     if not file_value:
         raise ValueError(f"sample '{sample_id}' requires file/source_file")
 
+    source_file = _resolve_path(file_value)
+
+    # 自动发现：如果 file 指定的路径不存在，且是目录或父目录是目录，则自动查找视频文件
+    if not source_file.exists():
+        parent = source_file if source_file.is_dir() else source_file.parent
+        if parent.is_dir():
+            video_exts = {".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v"}
+            for child in sorted(parent.iterdir()):
+                if child.suffix.lower() in video_exts:
+                    source_file = child
+                    break
+
     return {
         "id": sample_id,
         "artifact_stem": _safe_stem(sample_id),
         "file": file_value,
-        "source_file": _resolve_path(file_value),
+        "source_file": source_file,
         "processing_file": None,
         "language_profile": str(raw.get("language_profile") or "auto-detect"),
         "provider": str(raw.get("provider") or ""),
@@ -255,12 +286,13 @@ def _prepare_processing_file(sample: dict[str, Any]) -> Path:
     return staged_path
 
 
-def _run_batch_worker(sample: dict[str, Any]) -> int:
+def _run_batch_worker(sample: dict[str, Any]) -> tuple[int, str]:
+    """Run batch_worker and capture returncode + stderr for diagnosis."""
     processing_file = sample.get("processing_file") or sample["source_file"]
     command = [
         sys.executable,
         "-B",
-        str(PROJECT_ROOT / "batch_worker.py"),
+        str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
         "--input",
         str(processing_file.parent),
         "--language-profile",
@@ -272,23 +304,46 @@ def _run_batch_worker(sample: dict[str, Any]) -> int:
     command.extend(str(arg) for arg in sample["extra_args"])
 
     print("  Running:", " ".join(_quote_for_display(part) for part in command))
-    completed = subprocess.run(command, cwd=str(PROJECT_ROOT))
+    completed = subprocess.run(
+        command,
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     print(f"  batch_worker.py exit code: {completed.returncode}")
-    return completed.returncode
+    # Keep last 2KB of stderr for diagnosis
+    stderr_tail = completed.stderr[-2048:] if completed.stderr else ""
+    if stderr_tail:
+        print(f"  stderr tail: {stderr_tail[:500]}")
+    return completed.returncode, stderr_tail
 
 
 def _collect_sample_result(
     sample: dict[str, Any],
     status: str,
     returncode: int | None,
+    stderr_tail: str = "",
 ) -> dict[str, Any]:
     stem = sample["artifact_stem"]
+    # Standard directories (batch worker output)
     source_srt = _find_newest(PROJECT_ROOT / "output" / "source", [f"{stem}.*.srt"])
     zh_srt = _find_newest(PROJECT_ROOT / "output" / "zh", [f"{stem}.*.translated.*.srt"])
     bilingual_srt = _find_newest(PROJECT_ROOT / "output" / "bilingual", [f"{stem}.*.bilingual.*.srt"])
     quality_report_path = _find_newest(PROJECT_ROOT / "output" / "reports", [f"{stem}.*.quality_report.json"])
     review_srt = _find_newest(PROJECT_ROOT / "output" / "reports", [f"{stem}.*.review_needed.srt"])
     lang_json_path = _find_newest(PROJECT_ROOT / "output" / "source", [f"{stem}.*.lang.json"])
+
+    # Fallback to root output directory (single-file processing output)
+    if not source_srt:
+        source_srt = _find_newest(PROJECT_ROOT / "output", [f"{stem}.*.srt"])
+    if not lang_json_path:
+        lang_json_path = _find_newest(PROJECT_ROOT / "output", [f"{stem}.*.lang.json"])
+    if not quality_report_path:
+        quality_report_path = _find_newest(PROJECT_ROOT / "output" / "reports", [f"{stem}.*.quality_report.json"])
+    if not review_srt:
+        review_srt = _find_newest(PROJECT_ROOT / "output" / "reports", [f"{stem}.*.review_needed.srt"])
 
     lang_data = _read_json(lang_json_path) if lang_json_path else {}
     quality_data = _read_json(quality_report_path) if quality_report_path else {}
@@ -306,6 +361,7 @@ def _collect_sample_result(
         "source_exists": sample["source_file"].exists(),
         "status": status,
         "pipeline_returncode": returncode,
+        "stderr_tail": stderr_tail[:1000] if stderr_tail else "",
         "language_profile": sample["language_profile"],
         "provider": sample["provider"],
         "preflight_errors": sample["preflight"]["errors"],
@@ -406,6 +462,7 @@ def _render_markdown(report: dict[str, Any]) -> str:
         f"- Generated: {report['generated_at']}",
         f"- Config: `{report['config']}`",
         f"- Dry run: `{report['dry_run']}`",
+        f"- Selected samples: `{', '.join(report.get('selected_samples') or []) or 'all'}`",
         "",
         "| Sample | Status | Profile | Detected | Probability | Counts | Quality Errors | Quality Warnings | Review Needed | Preflight | Conclusion |",
         "|---|---|---|---|---:|---|---:|---:|---:|---|---|",
@@ -454,6 +511,10 @@ def _render_markdown(report: dict[str, Any]) -> str:
             lines.append("- Preflight warnings:")
             for item in sample["preflight_warnings"]:
                 lines.append(f"  - {item}")
+        if sample.get("stderr_tail"):
+            lines.append("- Pipeline stderr (tail):")
+            for line in sample["stderr_tail"].splitlines()[:10]:
+                lines.append(f"  > {line[:200]}")
         for name, path in sample.get("artifacts", {}).items():
             if path:
                 lines.append(f"- {name}: `{path}`")

@@ -37,9 +37,8 @@ if ([version]$majorMinor -lt [version]"3.9" -or [version]$majorMinor -gt [versio
     Write-Warning 'If installation fails, install Python 3.12 and run: .\install.ps1 -Python py -PythonArgs "-3.12"'
 }
 
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    throw "ffmpeg was not found in PATH. Install ffmpeg first, then rerun this script."
-}
+Write-Host "FFmpeg runtime check is handled by Python ffmpeg_locator.py."
+Write-Host "To install the bundled Windows FFmpeg, run: .\scripts\download_ffmpeg.ps1"
 
 $env:PIP_CACHE_DIR = Join-Path $ProjectRoot ".cache\pip"
 $env:HF_HOME = Join-Path $ProjectRoot ".cache\huggingface"

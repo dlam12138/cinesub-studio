@@ -1,4 +1,4 @@
-﻿.venv/
+.venv/
 .cache/
 .tmp/
 .claude/
@@ -17,6 +17,8 @@ reports/
 tests/e2e_samples/samples.local.json
 config/providers.local.json
 config/language_profiles.local.json
+config/*.json
+config/*.txt
 __pycache__/
 *.pyc
 *.pyo
@@ -41,3 +43,18 @@ __pycache__/
 *.state.json
 *.quality_report.json
 *.review_needed.srt
+
+# Downloaded FFmpeg binaries
+tools/ffmpeg/
+tools/*.exe
+bin/ffmpeg.exe
+bin/ffprobe.exe
+bin/ffplay.exe
+vendor/ffmpeg/
+ffmpeg/bin/
+
+# Acceptance / QA artifacts (do NOT commit)
+acceptance/
+data/
+test_movies.txt
+web_screenshot_*.png

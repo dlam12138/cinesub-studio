@@ -14,13 +14,32 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 WEB_ROOT = PROJECT_ROOT / "web"
 UPLOAD_DIR = PROJECT_ROOT / "uploads"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 MODEL_DIR = PROJECT_ROOT / "models"
 WORK_DIR = PROJECT_ROOT / "work"
 PIPELINE_LOG = PROJECT_ROOT / "logs" / "pipeline.log"
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+SUPPORTED_MEDIA_EXTENSIONS = {
+    ".mp4",
+    ".mkv",
+    ".mov",
+    ".avi",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".m4v",
+    ".wav",
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".opus",
+    ".wma",
+}
 
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
@@ -28,6 +47,14 @@ JOBS_LOCK = threading.Lock()
 # Pipeline background task tracking
 PIPELINE_TASK: dict = {"running": False, "pid": None, "action": "", "started_at": 0}
 PIPELINE_TASK_LOCK = threading.Lock()
+
+
+def redact_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "***"
+    return value[:3] + "***" + value[-4:]
 
 
 def main() -> int:
@@ -47,6 +74,13 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "SubtitleWeb/1.0"
 
     def do_GET(self) -> None:
+        self._log_request()
+        try:
+            self._do_GET_impl()
+        except Exception as exc:
+            self._handle_exception(exc)
+
+    def _do_GET_impl(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path in ("/", "/index.html"):
             self.send_file(WEB_ROOT / "index.html", "text/html; charset=utf-8")
@@ -79,6 +113,10 @@ class Handler(BaseHTTPRequestHandler):
                 output_path_str = job.get("source_output", "")
             elif download_type == "translated":
                 output_path_str = job.get("translated_output", "")
+            elif download_type == "quality_report":
+                output_path_str = job.get("quality_report", "")
+            elif download_type == "review_needed":
+                output_path_str = job.get("review_needed", "")
             else:
                 # Default: prefer translated, fallback to source
                 output_path_str = job.get("translated_output", "") or job.get("output", "")
@@ -97,15 +135,21 @@ class Handler(BaseHTTPRequestHandler):
 
         # ── Pipeline API ──
         if parsed.path == "/api/pipeline/scan":
-            self.send_json(_run_pipeline_command("scan"))
+            query = parse_qs(parsed.query)
+            input_dir = (query.get("input_dir") or [""])[0].strip()
+            self.send_json(_run_pipeline_command("scan", input_dir=input_dir))
             return
 
         if parsed.path == "/api/pipeline/status":
-            self.send_json(_run_pipeline_command("status"))
+            query = parse_qs(parsed.query)
+            input_dir = (query.get("input_dir") or [""])[0].strip()
+            self.send_json(_run_pipeline_command("status", input_dir=input_dir))
             return
 
         if parsed.path == "/api/pipeline/review":
-            self.send_json(_run_pipeline_command("review"))
+            query = parse_qs(parsed.query)
+            input_dir = (query.get("input_dir") or [""])[0].strip()
+            self.send_json(_run_pipeline_command("review", input_dir=input_dir))
             return
 
         if parsed.path == "/api/pipeline/logs":
@@ -115,6 +159,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/pipeline/task":
             with PIPELINE_TASK_LOCK:
                 self.send_json(dict(PIPELINE_TASK))
+            return
+
+        if parsed.path == "/api/storage/status":
+            self.send_json(_storage_status())
             return
 
         # ── Provider API ──
@@ -151,7 +199,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error_json(404, "Not found")
 
     def do_PUT(self) -> None:
-        """Handle PUT requests — Provider and Language Profile updates."""
+        self._log_request()
+        try:
+            self._do_PUT_impl()
+        except Exception as exc:
+            self._handle_exception(exc)
+
+    def _do_PUT_impl(self) -> None:
         parsed = urlparse(self.path)
         path_parts = parsed.path.split("/")
 
@@ -195,7 +249,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error_json(404, "Not found")
 
     def do_DELETE(self) -> None:
-        """Handle DELETE requests — Provider and Language Profile deletions."""
+        self._log_request()
+        try:
+            self._do_DELETE_impl()
+        except Exception as exc:
+            self._handle_exception(exc)
+
+    def _do_DELETE_impl(self) -> None:
         parsed = urlparse(self.path)
         path_parts = parsed.path.split("/")
 
@@ -224,6 +284,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error_json(404, "Not found")
 
     def do_POST(self) -> None:
+        self._log_request()
+        try:
+            self._do_POST_impl()
+        except Exception as exc:
+            self._handle_exception(exc)
+
+    def _do_POST_impl(self) -> None:
         parsed = urlparse(self.path)
 
         # ── Pipeline: run (background) — 完整处理 input 目录 ──
@@ -231,6 +298,12 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json_body() or {}
             provider_id = body.get("provider") or body.get("provider_id", "")
             language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
+            input_dir = body.get("input_dir", "").strip()
+            model = body.get("model", "small")
+            device = body.get("device", "cpu")
+            compute_type = body.get("compute_type", "")
+            translate_enabled = body.get("translate_enabled", True)
+            language = body.get("language", "")
             with PIPELINE_TASK_LOCK:
                 if PIPELINE_TASK["running"]:
                     self.send_json(
@@ -242,7 +315,11 @@ class Handler(BaseHTTPRequestHandler):
                 PIPELINE_TASK["action"] = "run"
                 PIPELINE_TASK["started_at"] = time.time()
 
-            thread = threading.Thread(target=_run_pipeline_background, args=("run", provider_id, language_profile_id), daemon=True)
+            thread = threading.Thread(
+                target=_run_pipeline_background,
+                args=("run", provider_id, language_profile_id, input_dir, model, device, compute_type, translate_enabled, language),
+                daemon=True,
+            )
             thread.start()
             self.send_json({"ok": True, "message": "流水线已启动，正在处理 input 目录"}, status=202)
             return
@@ -252,6 +329,12 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json_body() or {}
             provider_id = body.get("provider") or body.get("provider_id", "")
             language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
+            input_dir = body.get("input_dir", "").strip()
+            model = body.get("model", "small")
+            device = body.get("device", "cpu")
+            compute_type = body.get("compute_type", "")
+            translate_enabled = body.get("translate_enabled", True)
+            language = body.get("language", "")
             with PIPELINE_TASK_LOCK:
                 if PIPELINE_TASK["running"]:
                     self.send_json(
@@ -263,7 +346,11 @@ class Handler(BaseHTTPRequestHandler):
                 PIPELINE_TASK["action"] = "retry-failed"
                 PIPELINE_TASK["started_at"] = time.time()
 
-            thread = threading.Thread(target=_run_pipeline_background, args=("retry-failed", provider_id, language_profile_id), daemon=True)
+            thread = threading.Thread(
+                target=_run_pipeline_background,
+                args=("retry-failed", provider_id, language_profile_id, input_dir, model, device, compute_type, translate_enabled, language),
+                daemon=True,
+            )
             thread.start()
             self.send_json({"ok": True, "message": "retry-failed 已启动，仅重试之前失败的任务"}, status=202)
             return
@@ -331,6 +418,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(result)
             return
 
+        if parsed.path == "/api/storage/cleanup":
+            self.send_json(_cleanup_transient_files())
+            return
+
+        if parsed.path == "/api/files/inspect":
+            body = self._read_json_body() or {}
+            self.send_json(_inspect_input_file(body))
+            return
+
         if parsed.path != "/api/jobs":
             self.send_error_json(404, "Not found")
             return
@@ -350,6 +446,32 @@ class Handler(BaseHTTPRequestHandler):
         # Use get_job() for response to strip _api_key
         self.send_json(get_job(job["id"]), status=201)
 
+    def _log_request(self) -> None:
+        print(f"[web] {self.command} {self.path}", flush=True)
+
+    def _handle_exception(self, exc: Exception) -> None:
+        import traceback
+
+        traceback.print_exc()
+        try:
+            self.send_error_json(500, f"Server error: {exc}")
+        except Exception:
+            pass
+
+    def _redact_payload(self, obj):
+        if isinstance(obj, dict):
+            redacted = {}
+            for key, value in obj.items():
+                lowered = str(key).lower()
+                if "api_key" in lowered or lowered in {"key", "token", "secret"}:
+                    redacted[key] = redact_secret(str(value or ""))
+                else:
+                    redacted[key] = self._redact_payload(value)
+            return redacted
+        if isinstance(obj, list):
+            return [self._redact_payload(item) for item in obj]
+        return obj
+
     def _read_json_body(self) -> dict | None:
         """读取 JSON 请求体。Content-Type 检查宽松。"""
         length = int(self.headers.get("Content-Length", "0"))
@@ -357,8 +479,15 @@ class Handler(BaseHTTPRequestHandler):
             return None
         try:
             raw = self.rfile.read(length)
-            return json.loads(raw.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = json.loads(raw.decode("utf-8"))
+            print(
+                "[web] payload "
+                + json.dumps(self._redact_payload(body), ensure_ascii=False),
+                flush=True,
+            )
+            return body
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            print(f"[web] invalid JSON payload: {exc}", flush=True)
             return None
 
     def read_multipart_form(self) -> dict:
@@ -369,6 +498,12 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0:
             raise ValueError("Empty request body.")
+        if length > MAX_UPLOAD_BYTES:
+            limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+            raise ValueError(
+                f"Uploaded file is too large for the browser upload path ({limit_mb}MB limit). "
+                "For full movies, enter the local target file path so the server reads it directly."
+            )
 
         raw_body = self.rfile.read(length)
         message = BytesParser(policy=default).parsebytes(
@@ -394,12 +529,15 @@ class Handler(BaseHTTPRequestHandler):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
     def send_error_json(self, status: int, message: str) -> None:
-        self.send_json({"error": message}, status=status)
+        self.send_json({"ok": False, "error": message}, status=status)
 
     def send_file(self, path: Path, content_type: str, download_name: str | None = None) -> None:
         if not path.exists():
@@ -409,6 +547,10 @@ class Handler(BaseHTTPRequestHandler):
         data = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        if path.resolve() == (WEB_ROOT / "index.html").resolve():
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(data)))
         if download_name:
             self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
@@ -422,16 +564,23 @@ class Handler(BaseHTTPRequestHandler):
 # ── Pipeline API helpers ──────────────────────────────────────────────────
 
 
-def _run_pipeline_command(action: str, timeout: int = 30) -> dict:
+def _run_pipeline_command(action: str, timeout: int = 30, input_dir: str = "") -> dict:
     """Run batch_worker.py --<action> and return structured result."""
     command = [
         sys.executable, "-B",
-        str(PROJECT_ROOT / "batch_worker.py"),
+        str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
         f"--{action}",
     ]
+    if input_dir:
+        command += ["--input", input_dir]
     env = os.environ.copy()
     env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
     env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
+    # Inject PYTHONPATH so cross-module imports work
+    _src = PROJECT_ROOT / "src"
+    _pp = ";".join(str(_src / sub) for sub in ["core", "pipeline", "config", "web", "tools"])
+    env["PYTHONPATH"] = _pp
+    force_utf8_env(env)
     clear_proxy_env(env)
 
     try:
@@ -460,26 +609,43 @@ def _run_pipeline_command(action: str, timeout: int = 30) -> dict:
         return {"ok": False, "command": action, "error": str(exc)}
 
 
-def _run_pipeline_background(action: str, provider_id: str = "", language_profile_id: str = "") -> None:
+def _run_pipeline_background(
+    action: str,
+    provider_id: str = "",
+    language_profile_id: str = "",
+    input_dir: str = "",
+    model: str = "small",
+    device: str = "cpu",
+    compute_type: str = "",
+    translate_enabled: bool = True,
+    language: str = "",
+) -> None:
     """Run batch_worker.py with --<action> in background, writing output to pipeline log.
 
     Args:
         action: "run" (full pipeline) or "retry-failed" (retry only)
         provider_id: optional provider ID for LLM API config
         language_profile_id: optional language profile ID for ASR/translation/quality config
+        input_dir: optional input directory path (default: project input/)
+        model: Whisper model size (default: small)
+        device: compute device (default: cpu)
+        compute_type: quantization type (default: auto)
+        translate_enabled: whether to enable LLM translation (default: True)
+        language: source language code (default: auto-detect)
     """
     PIPELINE_LOG.parent.mkdir(parents=True, exist_ok=True)
 
     if action == "run":
+        target_dir = input_dir if input_dir else str(PROJECT_ROOT / "input")
         command = [
             sys.executable, "-B",
-            str(PROJECT_ROOT / "batch_worker.py"),
-            "--input", str(PROJECT_ROOT / "input"),
+            str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
+            "--input", target_dir,
         ]
     else:
         command = [
             sys.executable, "-B",
-            str(PROJECT_ROOT / "batch_worker.py"),
+            str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
             f"--{action}",
         ]
 
@@ -507,10 +673,25 @@ def _run_pipeline_background(action: str, provider_id: str = "", language_profil
         command += ["--provider", provider_id]
     if language_profile_id:
         command += ["--language-profile", language_profile_id]
+    if model:
+        command += ["--model", model]
+    if device:
+        command += ["--device", device]
+    if compute_type:
+        command += ["--compute-type", compute_type]
+    if language:
+        command += ["--language", language]
+    if not translate_enabled:
+        command += ["--no-translate"]
 
     env = os.environ.copy()
     env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
     env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
+    # Inject PYTHONPATH so cross-module imports work
+    _src = PROJECT_ROOT / "src"
+    _pp = ";".join(str(_src / sub) for sub in ["core", "pipeline", "config", "web", "tools"])
+    env["PYTHONPATH"] = _pp
+    force_utf8_env(env)
     clear_proxy_env(env)
 
     action_label = {"run": "完整流水线", "retry-failed": "重试失败任务"}.get(action, action)
@@ -543,7 +724,7 @@ def _run_pipeline_background(action: str, provider_id: str = "", language_profil
         assert process.stdout is not None
         with PIPELINE_LOG.open("a", encoding="utf-8") as log:
             for line in process.stdout:
-                log.write(line)
+                log.write(clean_log_line(line))
                 log.flush()
 
         returncode = process.wait()
@@ -575,6 +756,179 @@ def _read_pipeline_log() -> dict:
         return {"ok": False, "error": str(exc), "lines": [], "text": ""}
 
 
+def _format_bytes(size: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(max(size, 0))
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{size} B"
+
+
+def _sum_files(paths: list[Path]) -> tuple[int, int]:
+    total = 0
+    count = 0
+    for path in paths:
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+                count += 1
+        except OSError:
+            continue
+    return count, total
+
+
+def _storage_status() -> dict:
+    """Return lightweight project storage info without scanning model caches."""
+    audio_count, audio_size = _sum_files(list(WORK_DIR.glob("*.16k.wav")))
+    upload_count, upload_size = _sum_files([p for p in UPLOAD_DIR.iterdir()] if UPLOAD_DIR.exists() else [])
+    translation_cache = WORK_DIR / "translation-cache"
+    cache_files = list(translation_cache.glob("*.json")) if translation_cache.exists() else []
+    cache_count, cache_size = _sum_files(cache_files)
+    return {
+        "ok": True,
+        "work_audio": {
+            "path": str(WORK_DIR),
+            "count": audio_count,
+            "bytes": audio_size,
+            "display": _format_bytes(audio_size),
+        },
+        "uploads": {
+            "path": str(UPLOAD_DIR),
+            "count": upload_count,
+            "bytes": upload_size,
+            "display": _format_bytes(upload_size),
+        },
+        "translation_cache": {
+            "path": str(translation_cache),
+            "count": cache_count,
+            "bytes": cache_size,
+            "display": _format_bytes(cache_size),
+            "managed_by_cleanup": False,
+        },
+        "model_cache": {
+            "path": str(PROJECT_ROOT / ".cache" / "huggingface"),
+            "managed_by_cleanup": False,
+        },
+        "note": "Stopping the web service does not automatically delete caches.",
+    }
+
+
+def _cleanup_transient_files() -> dict:
+    """Delete only safe, reproducible intermediates inside the project."""
+    deleted: list[str] = []
+    errors: list[str] = []
+    targets: list[Path] = []
+    if WORK_DIR.exists():
+        targets.extend(WORK_DIR.glob("*.16k.wav"))
+    if UPLOAD_DIR.exists():
+        targets.extend(path for path in UPLOAD_DIR.iterdir() if path.is_file())
+
+    allowed_roots = [WORK_DIR.resolve(), UPLOAD_DIR.resolve()]
+    for target in targets:
+        try:
+            resolved = target.resolve()
+            if not any(resolved.is_relative_to(root) for root in allowed_roots):
+                errors.append(f"Skipped unexpected path: {target}")
+                continue
+            size = resolved.stat().st_size
+            resolved.unlink()
+            deleted.append(f"{target.name} ({_format_bytes(size)})")
+        except OSError as exc:
+            errors.append(f"{target}: {exc}")
+
+    status = _storage_status()
+    status.update({
+        "ok": not errors,
+        "deleted": deleted,
+        "errors": errors,
+    })
+    return status
+
+
+def _inspect_input_file(body: dict) -> dict:
+    """Inspect a local media path without reading, copying, or creating files."""
+    path_text = str(body.get("path") or "").strip()
+    model = str(body.get("model") or "small").strip() or "small"
+    target_language = str(body.get("target_language") or "zh-CN").strip() or "zh-CN"
+    translation_mode = str(body.get("translation_mode") or "bilingual").strip()
+    mode_tag = "translated" if translation_mode == "translated" else "bilingual"
+
+    if not path_text:
+        return {
+            "ok": False,
+            "error": "请输入本机文件路径。",
+            "path": "",
+            "exists": False,
+            "supported": False,
+        }
+
+    try:
+        input_path = Path(path_text).expanduser().resolve()
+    except OSError as exc:
+        return {
+            "ok": False,
+            "error": f"路径无法解析: {exc}",
+            "path": path_text,
+            "exists": False,
+            "supported": False,
+        }
+
+    suffix = input_path.suffix.lower()
+    exists = input_path.exists()
+    is_file = input_path.is_file() if exists else False
+    supported = suffix in SUPPORTED_MEDIA_EXTENSIONS
+    readable = bool(exists and is_file and os.access(input_path, os.R_OK))
+    size = 0
+    mtime = None
+    if exists and is_file:
+        try:
+            stat = input_path.stat()
+            size = stat.st_size
+            mtime = stat.st_mtime
+        except OSError:
+            readable = False
+
+    source_output = OUTPUT_DIR / f"{input_path.stem}.{model}.srt"
+    translated_output = OUTPUT_DIR / f"{input_path.stem}.{model}.{mode_tag}.{target_language}.srt"
+    warnings: list[str] = []
+    if not exists:
+        warnings.append("文件不存在，请检查路径是否完整。")
+    elif not is_file:
+        warnings.append("这个路径不是文件。单文件处理需要视频或音频文件。")
+    if exists and is_file and not supported:
+        warnings.append(f"扩展名 {suffix or '(无扩展名)'} 暂不支持。")
+    if exists and is_file and not readable:
+        warnings.append("当前服务进程可能没有读取该文件的权限。")
+    if source_output.exists():
+        warnings.append("预计原文 SRT 已存在，重新处理会覆盖同名输出。")
+    if translated_output.exists():
+        warnings.append("预计翻译 SRT 已存在，重新翻译会覆盖同名输出。")
+
+    return {
+        "ok": True,
+        "path": str(input_path),
+        "exists": exists,
+        "is_file": is_file,
+        "supported": supported,
+        "readable": readable,
+        "extension": suffix,
+        "bytes": size,
+        "display_size": _format_bytes(size),
+        "modified_at": mtime,
+        "model": model,
+        "target_language": target_language,
+        "translation_mode": mode_tag,
+        "source_output": str(source_output.resolve()),
+        "source_output_exists": source_output.exists(),
+        "translated_output": str(translated_output.resolve()),
+        "translated_output_exists": translated_output.exists(),
+        "warnings": warnings,
+        "ready": bool(exists and is_file and supported and readable),
+    }
+
+
 def create_job(form: dict) -> dict:
     input_path = resolve_input(form)
     model = get_text(form, "model", "small")
@@ -585,6 +939,7 @@ def create_job(form: dict) -> dict:
     local_files_only = get_text(form, "local_files_only", "") == "on"
     beam_size = get_text(form, "beam_size", "5")
     vad = get_text(form, "vad", "on") == "on"
+    condition_on_previous_text = get_text(form, "condition_on_previous_text", "on") == "on"
 
     if device not in {"cpu", "cuda", "auto"}:
         raise ValueError("Invalid device.")
@@ -649,6 +1004,8 @@ def create_job(form: dict) -> dict:
         except (ValueError, TypeError):
             raise ValueError("Context window must be a number between 0 and 10.")
 
+    language_profile = get_text(form, "language_profile", "").strip()
+
     job_id = uuid.uuid4().hex[:12]
     job = {
         "id": job_id,
@@ -669,6 +1026,7 @@ def create_job(form: dict) -> dict:
             "local_files_only": local_files_only,
             "beam_size": beam_size_int,
             "vad": vad,
+            "condition_on_previous_text": condition_on_previous_text,
             "translate_enabled": translate_enabled,
             "provider_id": provider_select,
             "api_provider": api_provider,
@@ -676,6 +1034,7 @@ def create_job(form: dict) -> dict:
             "api_key_masked": mask_secret(api_key) if api_key else "",
             "llm_model": llm_model,
             "target_language": target_language,
+            "language_profile": language_profile,
             "translation_batch_size": translation_batch_size,
             "translation_temperature": translation_temperature,
             "translation_mode": translation_mode,
@@ -697,19 +1056,19 @@ def resolve_input(form: dict) -> Path:
     upload = form.get("file")
     path_text = get_text(form, "path", "").strip()
 
-    if isinstance(upload, dict) and upload.get("content"):
-        filename = sanitize_filename(str(upload.get("filename") or "upload.bin"))
-        saved_path = UPLOAD_DIR / f"{int(time.time())}-{uuid.uuid4().hex[:8]}-{filename}"
-        saved_path.write_bytes(upload["content"])
-        return saved_path.resolve()
-
     if path_text:
         path = Path(path_text).expanduser().resolve()
         if not path.exists():
             raise ValueError(f"Input path does not exist: {path}")
         return path
 
-    raise ValueError("Choose a file or provide a local file path.")
+    if isinstance(upload, dict) and upload.get("content"):
+        filename = sanitize_filename(str(upload.get("filename") or "upload.bin"))
+        saved_path = UPLOAD_DIR / f"{int(time.time())}-{uuid.uuid4().hex[:8]}-{filename}"
+        saved_path.write_bytes(upload["content"])
+        return saved_path.resolve()
+
+    raise ValueError("Enter a local target file path, or upload a small sample file.")
 
 
 def run_job(job_id: str) -> None:
@@ -724,7 +1083,7 @@ def run_job(job_id: str) -> None:
     options = raw_job["options"]
     command = [
         sys.executable,
-        str(PROJECT_ROOT / "transcribe.py"),
+        str(PROJECT_ROOT / "src" / "core" / "transcribe.py"),
         raw_job["input"],
         "--model",
         options["model"],
@@ -748,6 +1107,13 @@ def run_job(job_id: str) -> None:
         command += ["--local-files-only"]
     if not options["vad"]:
         command += ["--no-vad"]
+    if not options.get("condition_on_previous_text", True):
+        command += ["--no-condition-on-previous-text"]
+
+    # Language Profile
+    lang_profile = options.get("language_profile", "")
+    if lang_profile:
+        command += ["--language-profile", lang_profile]
 
     # Translation args (API key passed via env var, NOT command line)
     if options.get("translate_enabled"):
@@ -770,6 +1136,11 @@ def run_job(job_id: str) -> None:
     env = os.environ.copy()
     env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
     env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
+    # Inject PYTHONPATH so cross-module imports work for transcribe.py
+    _src = PROJECT_ROOT / "src"
+    _pp = ";".join(str(_src / sub) for sub in ["core", "pipeline", "config", "web", "tools"])
+    env["PYTHONPATH"] = _pp
+    force_utf8_env(env)
     clear_proxy_env(env)
     if options["hf_endpoint"]:
         env["HF_ENDPOINT"] = options["hf_endpoint"]
@@ -795,11 +1166,48 @@ def run_job(job_id: str) -> None:
 
     returncode = process.wait()
     source_output, translated_output = find_output_paths(raw_job)
+    quality_report = ""
+    review_needed = ""
     if returncode == 0:
+        # ── 质量检查 ──
+        try:
+            from quality_checker import run_quality_check
+            from language_profile_store import get_language_profile, get_active_language_profile
+            report_dir = OUTPUT_DIR / "reports"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            source_path = Path(source_output) if source_output else None
+            translated_path = Path(translated_output) if translated_output else None
+            if source_path and source_path.exists():
+                # 获取 Language Profile 质检阈值
+                profile_id = options.get("language_profile", "")
+                if not profile_id:
+                    active = get_active_language_profile()
+                    if active:
+                        profile_id = active.get("id", "")
+                thresholds = {}
+                if profile_id:
+                    profile = get_language_profile(profile_id)
+                    if profile:
+                        thresholds = profile.get("quality", {})
+                _ = run_quality_check(
+                    source_srt=source_path,
+                    translated_srt=translated_path if translated_path and translated_path.exists() else None,
+                    target_language=options.get("target_language", "zh-CN"),
+                    output_dir=report_dir,
+                    quality_thresholds=thresholds,
+                )
+                quality_report = str(report_dir / f"{source_path.stem}.quality_report.json")
+                review_needed = str(report_dir / f"{source_path.stem}.review_needed.srt")
+                logs = append_log(job_id, "Quality check completed.")
+        except Exception as exc:
+            logs = append_log(job_id, f"Quality check failed: {exc}")
+
         set_job(job_id, status="done", returncode=returncode,
                 output=translated_output or source_output,
                 source_output=source_output,
                 translated_output=translated_output,
+                quality_report=quality_report,
+                review_needed=review_needed,
                 logs=logs + ["Finished."])
     else:
         set_job(job_id, status="failed", returncode=returncode,
@@ -878,10 +1286,18 @@ def append_log(job_id: str, line: str) -> list[str]:
     with JOBS_LOCK:
         job = JOBS[job_id]
         if line:
-            job["logs"].append(line)
+            job["logs"].append(clean_log_line(line))
             job["logs"] = job["logs"][-300:]
         job["updated_at"] = time.time()
         return list(job["logs"])
+
+
+def clean_log_line(line: str) -> str:
+    """Keep browser logs readable and avoid long Chinese absolute paths."""
+    project = str(PROJECT_ROOT)
+    project_alt = project.replace("\\", "/")
+    cleaned = line.replace(project, ".").replace(project_alt, ".")
+    return cleaned
 
 
 def list_jobs() -> list[dict]:
@@ -894,6 +1310,8 @@ def list_jobs() -> list[dict]:
                 "output": job.get("output", ""),
                 "source_output": job.get("source_output", ""),
                 "translated_output": job.get("translated_output", ""),
+                "quality_report": job.get("quality_report", ""),
+                "review_needed": job.get("review_needed", ""),
                 "options": job["options"],
                 "created_at": job["created_at"],
                 "updated_at": job["updated_at"],
@@ -914,6 +1332,11 @@ def clear_proxy_env(env: dict[str, str]) -> None:
         "GIT_HTTPS_PROXY",
     ):
         env.pop(key, None)
+
+
+def force_utf8_env(env: dict[str, str]) -> None:
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
 
 
 if __name__ == "__main__":

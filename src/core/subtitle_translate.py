@@ -85,7 +85,7 @@ def _translation_cache_path(
         sort_keys=True,
     )
     digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:24]
-    return Path(__file__).resolve().parent / "work" / "translation-cache" / f"{digest}.json"
+    return Path(__file__).resolve().parent.parent.parent / "work" / "translation-cache" / f"{digest}.json"
 
 
 def _load_translation_cache(path: Path) -> dict[int, str]:

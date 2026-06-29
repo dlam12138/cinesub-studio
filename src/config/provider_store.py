@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import threading
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_DIR = PROJECT_ROOT / "config"
 CONFIG_PATH = CONFIG_DIR / "providers.local.json"
 
@@ -87,6 +89,14 @@ def _load_raw() -> dict:
 def _save_raw(data: dict) -> None:
     global _cache, _cache_mtime
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_PATH.exists():
+        try:
+            CONFIG_PATH.write_text(
+                json.dumps(DEFAULT_EMPTY_CONFIG, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except FileExistsError:
+            pass
     # 保存前清理旧字段
     clean = dict(data)
     clean["providers"] = [_migrate_provider(p) for p in clean.get("providers", [])]
@@ -95,14 +105,45 @@ def _save_raw(data: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(payload)
-        os.replace(tmp, CONFIG_PATH)
+        replaced = False
+        try:
+            os.replace(tmp, CONFIG_PATH)
+            replaced = True
+        except PermissionError:
+            # Some Windows/sandbox combinations update the target but still
+            # report WinError 5 for os.replace(). Treat that as success; if the
+            # target was not updated, fall back to a direct write so the local
+            # UI remains usable.
+            try:
+                if CONFIG_PATH.exists() and CONFIG_PATH.read_text(encoding="utf-8") == payload:
+                    replaced = True
+            except OSError:
+                pass
+            if not replaced:
+                CONFIG_PATH.write_text(payload, encoding="utf-8")
     except Exception:
+        _scrub_temp_file(tmp)
         try: os.unlink(tmp)
         except OSError: pass
         raise
+    finally:
+        _scrub_temp_file(tmp)
+        try: os.unlink(tmp)
+        except OSError: pass
     with _cache_lock:
         _cache = clean
         _cache_mtime = CONFIG_PATH.stat().st_mtime
+
+
+def _scrub_temp_file(path: str) -> None:
+    try:
+        if os.path.exists(path):
+            Path(path).write_text(
+                json.dumps(DEFAULT_EMPTY_CONFIG, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+    except OSError:
+        pass
 
 
 # ── 脱敏 ─────────────────────────────────────────────────────────────────
@@ -194,7 +235,7 @@ def upsert_provider(provider_data: dict) -> dict:
     api_base = (provider_data.get("api_base") or "").strip()
     api_key = provider_data.get("api_key", "")
     model = (provider_data.get("model") or provider_data.get("translation_model") or "").strip()
-    protocol = (provider_data.get("protocol") or "openai-compatible").strip()
+    protocol = normalize_protocol((provider_data.get("protocol") or "openai-compatible").strip())
 
     # 模板模式：自动填充 api_base / protocol / model
     if template_id and not api_base:
@@ -285,6 +326,15 @@ def resolve_provider_config(provider_id: str | None = None) -> dict:
 
 # ── Provider Templates（内置模板） ───────────────────────────────────────
 
+def normalize_protocol(value: str) -> str:
+    """统一协议名称为 'openai-compatible'（兼容下划线格式）。"""
+    if value in ("openai-compatible", "openai_compatible", "openai compatible"):
+        return "openai-compatible"
+    if value in ("anthropic",):
+        return value
+    return "openai-compatible"  # fallback
+
+
 PROVIDER_TEMPLATES = [
     {
         "id": "deepseek",
@@ -321,6 +371,27 @@ def get_provider_templates() -> list[dict]:
 
 # ── 测试连接 ─────────────────────────────────────────────────────────────
 
+def _local_proxy_problem() -> str:
+    """Return a diagnostic if proxy env points at a closed local port."""
+    for name in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"):
+        value = (os.environ.get(name) or "").strip()
+        if not value:
+            continue
+        parsed = urlparse(value if "://" in value else "http://" + value)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+        if host not in {"127.0.0.1", "localhost", "::1"} or not port:
+            continue
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return ""
+        except OSError:
+            return (
+                f"当前进程代理 {name}={value} 指向本机端口 {port}，但该端口不可连接；"
+                "请关闭这组代理环境变量后重启 Web，或先启动对应本地代理。"
+            )
+    return ""
+
 def test_provider_connection(provider_id: str) -> dict:
     provider = get_provider(provider_id)
     if not provider:
@@ -331,6 +402,14 @@ def test_provider_connection(provider_id: str) -> dict:
     if not api_base: return {"ok": False, "error": "API Base 未设置", "latency_ms": 0, "model": ""}
     if not api_key: return {"ok": False, "error": "API Key 未设置", "latency_ms": 0, "model": ""}
     if not model: return {"ok": False, "error": "模型未设置", "latency_ms": 0, "model": ""}
+
+    proto = normalize_protocol(provider.get("protocol", ""))
+    if proto != "openai-compatible":
+        return {"ok": False, "error": "当前测试连接暂只支持 OpenAI-compatible 协议", "latency_ms": 0, "model": ""}
+
+    proxy_problem = _local_proxy_problem()
+    if proxy_problem:
+        return {"ok": False, "error": proxy_problem, "latency_ms": 0, "model": model}
 
     url = api_base.rstrip("/") + "/chat/completions"
     body = json.dumps({

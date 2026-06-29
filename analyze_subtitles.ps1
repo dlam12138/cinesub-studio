@@ -8,5 +8,5 @@ if (-not (Test-Path -LiteralPath $Python)) {
     throw "Virtual environment not found. Run .\install.ps1 first."
 }
 
-& $Python -B (Join-Path $ProjectRoot "start_app.py") @args
+& $Python -B (Join-Path $ProjectRoot "src\tools\analyze_subtitles_workflow.py") @args
 exit $LASTEXITCODE

@@ -6,7 +6,7 @@ Batch Subtitle Pipeline Worker — 批量字幕生产流水线
     input/  →  自动发现  →  提取音频  →  Whisper 转写  →  LLM 翻译  →  质检  →  输出
 
 用法:
-    python batch_worker.py --input input --model large-v3 --device cuda
+    .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --input input --model large-v3 --device cuda
 
 架构:
     1. 文件扫描层 — 自动发现 input 目录中的新视频
@@ -37,7 +37,16 @@ from typing import Optional
 
 # ── 项目根目录 ───────────────────────────────────────────────────────────
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Ensure src subdirectories are on sys.path for cross-module imports when run directly
+_src = PROJECT_ROOT / "src"
+for _sub in ("core", "pipeline", "config", "web", "tools"):
+    _subpath = str(_src / _sub)
+    if _subpath not in sys.path:
+        sys.path.insert(0, _subpath)
+
+from ffmpeg_locator import find_ffmpeg
 
 # ── 目录结构 ─────────────────────────────────────────────────────────────
 
@@ -89,6 +98,14 @@ LOW_CONFIDENCE_EXTRA_PROMPT = (
 
 # 语言识别置信度阈值
 LANG_CONFIDENCE_THRESHOLD = 0.7
+
+
+def _is_valid_output_file(path: Path) -> bool:
+    """Return True only for existing non-empty stage outputs."""
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 # ── 任务状态数据结构 ─────────────────────────────────────────────────────
@@ -378,14 +395,14 @@ class BatchPipeline:
             try:
                 self._process_one(task)
                 completed += 1
-                print(f"  ✓ 完成")
+                print("  [OK] 完成")
             except Exception as exc:
                 failed += 1
                 task.status = "failed"
                 task.error = str(exc)
                 task.error_stage = task.stage
                 task.save()
-                print(f"  ✗ 失败: {exc}")
+                print(f"  [FAILED] 失败: {exc}")
                 traceback.print_exc()
 
         print()
@@ -420,7 +437,7 @@ class BatchPipeline:
 
         # ── 阶段 2: Whisper 转写 ──
         source_srt = DIR_OUTPUT_SOURCE / f"{stem}.{model}.srt"
-        if not source_srt.exists():
+        if not _is_valid_output_file(source_srt):
             task.stage = TaskStage.TRANSCRIBING
             task.save()
             print(f"  [2/5] Whisper 转写...")
@@ -457,7 +474,7 @@ class BatchPipeline:
             else:
                 output_translated = translated_srt
 
-            if not output_translated.exists():
+            if not _is_valid_output_file(output_translated):
                 task.stage = TaskStage.TRANSLATING
                 task.save()
                 print(f"  [3/5] LLM 翻译...")
@@ -482,7 +499,7 @@ class BatchPipeline:
 
             # ── 阶段 4: 质量检查 ──
             report_path = DIR_OUTPUT_REPORTS / f"{stem}.{model}.quality_report.json"
-            if not report_path.exists():
+            if not _is_valid_output_file(report_path):
                 task.stage = TaskStage.QUALITY_CHECKING
                 task.save()
                 print(f"  [4/5] 质量检查...")
@@ -538,11 +555,18 @@ class BatchPipeline:
             # 仍需确保格式正确
             pass
 
-        if shutil.which("ffmpeg") is None:
-            raise RuntimeError("ffmpeg 未找到，请确保 ffmpeg 在 PATH 中")
+        ffmpeg = find_ffmpeg(PROJECT_ROOT)
+        if ffmpeg is None:
+            raise RuntimeError(
+                "ffmpeg 未找到。\n"
+                "1. 将项目内置 ffmpeg.exe 放在 tools/ffmpeg/bin/ 目录下\n"
+                "2. 运行: py src/tools/download_ffmpeg.py (自动下载到 tools/ffmpeg/bin/)\n"
+                "3. 设置 CINESUB_FFMPEG 指向项目内 ffmpeg 路径\n"
+                "4. 仅在兜底场景下使用系统安装的 ffmpeg"
+            )
 
         command = [
-            "ffmpeg", "-y", "-i", str(input_path),
+            ffmpeg, "-y", "-i", str(input_path),
             "-vn", "-acodec", "pcm_s16le",
             "-ar", "16000", "-ac", "1",
             str(audio_path),
@@ -689,11 +713,11 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python batch_worker.py --input input --model large-v3 --device cuda
-  python batch_worker.py --input input --model small --no-translate
-  python batch_worker.py --input input --model large-v3 --api-base https://api.openai.com/v1 --api-key sk-xxx --llm-model gpt-4o
-  python batch_worker.py --scan                 # 仅扫描，不处理
-  python batch_worker.py --status               # 查看所有任务状态
+  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --input input --model large-v3 --device cuda
+  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --input input --model small --no-translate
+  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --input input --model large-v3 --api-base https://api.openai.com/v1 --api-key sk-xxx --llm-model gpt-4o
+  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --scan                 # 仅扫描，不处理
+  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --status               # 查看所有任务状态
         """.strip(),
     )
 
@@ -774,10 +798,15 @@ def main() -> int:
     os.environ.setdefault("HF_HOME", str(PROJECT_ROOT / ".cache" / "huggingface"))
     os.environ.setdefault("HF_HUB_CACHE", str(PROJECT_ROOT / ".cache" / "huggingface" / "hub"))
 
+    raw_argv = [arg.split("=", 1)[0] for arg in sys.argv[1:]]
+
+    def _explicit(*flags: str) -> bool:
+        return any(flag in raw_argv for flag in flags)
+
     # ── Provider 配置加载 ──
     # 优先级：CLI 显式参数 > Provider 配置 > 默认值
     provider_config: dict = {}
-    if args.provider is not None or (args.translate if hasattr(args, 'translate') else True):
+    if args.provider is not None or not args.no_translate:
         try:
             from provider_store import resolve_provider_config
             provider_config = resolve_provider_config(args.provider)
@@ -814,23 +843,29 @@ def main() -> int:
     # ASR 配置：CLI > Language Profile > 默认值（Provider 不再包含 ASR 字段）
     lp_asr = lang_profile_config.get("asr", {})
     effective_model = _first(
-        args.model if args.model != "large-v3" else None,
+        args.model if _explicit("--model") else None,
         lp_asr.get("whisper_model"),
         "large-v3"
     )
     effective_device = _first(
-        args.device if args.device != "cpu" else None,
+        args.device if _explicit("--device") else None,
         lp_asr.get("whisper_device"),
         "cpu"
     )
-    effective_compute_type = _first(args.compute_type, lp_asr.get("compute_type"))
-    effective_language = _first(args.language, lp_asr.get("language"))
-    effective_vad = not args.no_vad if args.no_vad else lp_asr.get("vad_filter", True)
-    effective_beam_size = args.beam_size if args.beam_size != 5 else lp_asr.get("beam_size", 5)
+    effective_compute_type = _first(
+        args.compute_type if _explicit("--compute-type") else None,
+        lp_asr.get("compute_type")
+    )
+    effective_language = _first(
+        args.language if _explicit("--language") else None,
+        lp_asr.get("language")
+    )
+    effective_vad = False if _explicit("--no-vad") else lp_asr.get("vad_filter", True)
+    effective_beam_size = args.beam_size if _explicit("--beam-size") else lp_asr.get("beam_size", 5)
 
     # 翻译配置：Language Profile 提供 translation_style 和 target_language
     effective_target_lang = _first(
-        args.target_language if args.target_language != "zh-CN" else None,
+        args.target_language if _explicit("--target-language") else None,
         lang_profile_config.get("target_language"),
         "zh-CN"
     )
@@ -892,7 +927,7 @@ def main() -> int:
             return 0
         print(f"\n待处理文件 ({len(tasks)}):")
         for t in tasks:
-            status_mark = {"completed": "[✓]", "failed": "[✗]", "pending": "[ ]"}.get(t.status, "[?]")
+            status_mark = {"completed": "[OK]", "failed": "[FAILED]", "pending": "[ ]"}.get(t.status, "[?]")
             print(f"  {status_mark} {t.file} — {t.stage}")
         return 0
 
@@ -1016,14 +1051,14 @@ def _retry_failed(pipeline: BatchPipeline) -> int:
         try:
             pipeline._process_one(task)
             completed += 1
-            print(f"  ✓ 完成")
+            print("  [OK] 完成")
         except Exception as exc:
             failed += 1
             task.status = "failed"
             task.error = str(exc)
             task.error_stage = task.stage
             task.save()
-            print(f"  ✗ 失败: {exc}")
+            print(f"  [FAILED] 失败: {exc}")
             traceback.print_exc()
 
     print(f"\n重试完成: 成功 {completed}, 失败 {failed}")
@@ -1067,7 +1102,7 @@ def _show_review() -> int:
         if not issues:
             continue
 
-        status_icon = {"pass": "✓", "warning": "⚠", "fail": "✗"}.get(status, "?")
+        status_icon = {"pass": "OK", "warning": "WARN", "fail": "FAIL"}.get(status, "?")
 
         # 提取视频名
         video_name = rf.stem.replace(".quality_report", "")
@@ -1081,7 +1116,7 @@ def _show_review() -> int:
         sorted_issues = sorted(issues, key=lambda i: severity_order.get(i.get("severity", "info"), 99))
 
         for issue in sorted_issues[:10]:  # 每个视频最多显示 10 个问题
-            icon = {"error": "✗", "warning": "⚠", "info": "ℹ"}.get(issue.get("severity"), "?")
+            icon = {"error": "ERROR", "warning": "WARN", "info": "INFO"}.get(issue.get("severity"), "?")
             idx = issue.get("index", 0)
             idx_str = f"#{idx}" if idx > 0 else "全局"
             snippet = issue.get("snippet", "")[:60]
@@ -1143,14 +1178,14 @@ def _show_review_detail(report_path: Path) -> int:
             print(f"    - {itype}: {count}")
 
     if not issues:
-        print(f"\n  ✓ 没有问题")
+        print("\n  [OK] 没有问题")
     else:
         print(f"\n  全部问题 ({len(issues)}):")
         severity_order = {"error": 0, "warning": 1, "info": 2}
         sorted_issues = sorted(issues, key=lambda i: severity_order.get(i.get("severity", "info"), 99))
 
         for issue in sorted_issues:
-            icon = {"error": "✗", "warning": "⚠", "info": "ℹ"}.get(issue.get("severity"), "?")
+            icon = {"error": "ERROR", "warning": "WARN", "info": "INFO"}.get(issue.get("severity"), "?")
             idx = issue.get("index", 0)
             idx_str = f"#{idx}" if idx > 0 else "全局"
             print(f"\n    {icon} {idx_str} [{issue.get('type', '?')}]")

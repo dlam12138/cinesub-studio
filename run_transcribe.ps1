@@ -18,12 +18,15 @@ Set-Location $ProjectRoot
 $env:HF_HOME = Join-Path $ProjectRoot ".cache\huggingface"
 $env:HF_HUB_CACHE = Join-Path $ProjectRoot ".cache\huggingface\hub"
 
+$srcDirs = @("core", "pipeline", "config", "web", "tools" | ForEach-Object { Join-Path $ProjectRoot "src\$_" })
+$env:PYTHONPATH = ($srcDirs -join ";")
+
 if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     throw "Virtual environment not found. Run .\install.ps1 first."
 }
 
 $argsList = @(
-    "transcribe.py",
+    "src/core/transcribe.py",
     $InputFile,
     "--model", $Model,
     "--device", $Device,

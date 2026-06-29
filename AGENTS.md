@@ -2,19 +2,40 @@
 
 ## 项目结构
 
-- `transcribe.py`: 核心识别脚本。负责 ffmpeg 抽音频、加载 faster-whisper、输出 SRT、保存语言识别 JSON。
-- `subtitle_translate.py`: 字幕翻译模块。解析 SRT、调用 LLM API、输出双语/译文 SRT、翻译缓存。
-- `quality_checker.py`: 自动质检模块。SRT 格式检查 + 翻译质量检查 + 生成质量报告和 review_needed.srt。
-- `batch_worker.py`: 批量生产流水线。自动发现视频 → 提取音频 → 转写 → 翻译 → 质检 → 归档，支持断点续跑和状态追踪。
-- `web_server.py`: 本地 Web 后台。负责上传、本机路径任务、任务状态、日志、下载 SRT、Provider 管理 API。
-- `web/index.html`: 本地前端页面。三个标签页：流水线控制台、单文件处理、模型接口。不要引入构建工具，保持单文件静态页面。
-- `provider_store.py`: Provider 配置管理模块。负责 config/providers.local.json 的读写、脱敏、原子写入。
-- `language_profile_store.py`: Language Profile 配置管理模块。负责 config/language_profiles.local.json 的读写、内置 3 个默认 profile。
+### 源码目录 (`src/`)
+
+- `src/core/`
+  - `transcribe.py`: 核心识别脚本。负责 ffmpeg 抽音频、加载 faster-whisper、输出 SRT、保存语言识别 JSON。
+  - `subtitle_translate.py`: 字幕翻译模块。解析 SRT、调用 LLM API、输出双语/译文 SRT、翻译缓存。
+  - `quality_checker.py`: 自动质检模块。SRT 格式检查 + 翻译质量检查 + 生成质量报告和 review_needed.srt。
+- `src/pipeline/`
+  - `batch_worker.py`: 批量生产流水线。自动发现视频 → 提取音频 → 转写 → 翻译 → 质检 → 归档，支持断点续跑和状态追踪。
+- `src/config/`
+  - `provider_store.py`: Provider 配置管理模块。负责 config/providers.local.json 的读写、脱敏、原子写入。
+  - `language_profile_store.py`: Language Profile 配置管理模块。负责 config/language_profiles.local.json 的读写、内置 3 个默认 profile。
+- `src/web/`
+  - `web_server.py`: 本地 Web 后台。负责上传、本机路径任务、任务状态、日志、下载 SRT、Provider 管理 API。
+- `src/tools/`
+  - `download_model_file.py`: 直接下载模型文件的兜底工具。
+  - `download_ffmpeg.py`: Python FFmpeg 下载兜底工具，安装到 `tools/ffmpeg/bin/`。
+  - `analyze_subtitles_workflow.py`: 字幕风格分析工作流入口，负责扫描、调用 analyzer、生成 prompt。
+- `src/__init__.py`: 路径注入，将 `src/` 下各子目录加入 `sys.path`，确保跨模块导入可用。
+
+### 入口脚本（根目录）
+
+- `start_app.py`: 双击启动器。启动 Web 服务、自动打开浏览器、显示状态窗口。
 - `run_transcribe.ps1`: 命令行识别入口。
-- `start_web.ps1`: Web 控制台入口，默认服务地址 `http://127.0.0.1:7860`。
+- `start_web.ps1`: Web 控制台 Windows 便利入口，薄包装调用 `start_app.py`，默认服务地址 `http://127.0.0.1:7860`。
 - `install.ps1`: 安装和重建 `.venv`，pip 缓存固定到 `.cache\pip`。
-- `download_model_file.py`: 直接下载模型文件的兜底工具。
-- `models/`, `.cache/`, `uploads/`, `output/`, `work/`, `input/`, `archive/`, `failed/`, `.venv/`: 运行产物，不要当源码修改。
+- `analyze_subtitles.ps1`: Windows 便利入口，只调用 `src/tools/analyze_subtitles_workflow.py`。
+
+### 前端
+
+- `web/index.html`: 本地前端页面。四个标签页：流水线控制台、单文件处理、模型接口、语言配置。不要引入构建工具，保持单文件静态页面。
+
+### 运行产物（不要当源码修改）
+
+- `models/`, `.cache/`, `uploads/`, `output/`, `work/`, `input/`, `archive/`, `failed/`, `.venv/`, `tools/`, `logs/`, `config/`: 运行产物，不要当源码修改。
 
 ## 运行命令
 
@@ -39,14 +60,16 @@ cd D:\Claude项目操作\电影翻译
 基础导入检查（全部模块），避免写 `__pycache__`：
 
 ```powershell
-.\.venv\Scripts\python.exe -B -c "import transcribe, web_server, download_model_file, subtitle_translate, quality_checker, batch_worker; print('imports ok')"
+$env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
+.\.venv\Scripts\python.exe -B -c "import transcribe, subtitle_translate, quality_checker, batch_worker, web_server, download_model_file; print('imports ok')"
 ```
 
 自测：
 
 ```powershell
-.\.venv\Scripts\python.exe -B subtitle_translate.py --self-test
-.\.venv\Scripts\python.exe -B quality_checker.py --self-test
+$env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
+.\.venv\Scripts\python.exe -B src\core\subtitle_translate.py --self-test
+.\.venv\Scripts\python.exe -B src\core\quality_checker.py --self-test
 ```
 
 Web 服务检查：
@@ -59,9 +82,10 @@ Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/ | Select-Object -
 批量流水线检查：
 
 ```powershell
-.\.venv\Scripts\python.exe -B batch_worker.py --scan
-.\.venv\Scripts\python.exe -B batch_worker.py --status
-.\.venv\Scripts\python.exe -B batch_worker.py --review
+$env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
+.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --scan
+.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --status
+.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --review
 ```
 
 功能验收时优先用短音视频样本跑 `small + cpu + int8 + local_files_only`，确认 `output/*.srt` 生成且时间轴格式为 `HH:MM:SS,mmm --> HH:MM:SS,mmm`。
@@ -99,7 +123,7 @@ Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/jobs | Select-
 ### Pipeline 控制台约束
 
 **命令执行：**
-- 所有 pipeline 命令通过 `sys.executable -B batch_worker.py --<action>` 执行
+- 所有 pipeline 命令通过 `sys.executable -B src\pipeline\batch_worker.py --<action>` 执行
 - 不要硬编码 `python` 或 `python3`
 - scan/status/review 同步执行（30s 超时），run/retry-failed 后台执行
 
@@ -210,6 +234,29 @@ Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/jobs | Select-
 - 不要默认下载大模型；新增下载行为必须可选，并说明大小和目标目录。
 - 不要在识别子进程外清理 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY`；代理清理只允许作用于本项目启动的识别子进程。
 - 不要把失败吞掉；所有后台失败必须回到 Web 日志。
+
+## FFmpeg 管理约束
+
+- 项目应优先使用内置 FFmpeg。
+- 不要求用户手动安装 FFmpeg 或配置系统 PATH。
+- Windows 下载脚本为 `scripts/download_ffmpeg.ps1`。
+- 下载后的二进制放在 `tools/ffmpeg/bin/`。
+- 不得提交 `ffmpeg.exe`、`ffprobe.exe`、`ffplay.exe`。
+- 不得提交 `.tmp/` 下载缓存。
+- `ffmpeg_locator.py` 是唯一 FFmpeg 查找入口。
+- 新增代码不得绕过 `ffmpeg_locator.py` 直接调用裸 `ffmpeg`。
+
+## PowerShell 管理约束
+
+- PowerShell 只作为 Windows 启动器、安装器和便利入口。
+- 修改功能时优先改 Python 模块、Python CLI 或 Web 后端，不要把新业务逻辑放进 `.ps1`。
+- 复杂流程、状态判断、路径扫描、JSON 读写、日志解析、进程调度必须优先放在 Python。
+- `.ps1` 不得直接管理后台流水线任务，不得用 `Start-Process` 维持核心服务。
+- `.ps1` 不得要求系统 PATH 中已有 FFmpeg；运行时由 `ffmpeg_locator.py` 查找。
+- `.ps1` 不得打印 API Key、token、secret 或完整 Provider 配置。
+- `start_web.ps1` 应保持薄包装，调用 `.venv\Scripts\python.exe -B start_app.py`。
+- `analyze_subtitles.ps1` 应保持薄包装，业务流程由 `src/tools/analyze_subtitles_workflow.py` 承担。
+- 如确需新增 PowerShell 文件，必须说明为什么不能用 Python，并保持为可替换的薄入口。
 
 ## 完成标准
 
