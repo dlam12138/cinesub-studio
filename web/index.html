@@ -550,6 +550,94 @@
     .badge-pending { background: #eef2f6; color: #344054; }
     .badge-running { background: #e0ecff; color: #1849a9; }
 
+    .progress-panel {
+      display: grid;
+      gap: 10px;
+    }
+
+    .progress-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .progress-track {
+      overflow: hidden;
+      height: 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #edf2f7;
+    }
+
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--primary), #0891b2);
+      transition: width .24s ease;
+    }
+
+    .progress-meta,
+    .task-sub {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      color: #64748b;
+      font-size: 12px;
+    }
+
+    .task-list {
+      display: grid;
+      gap: 8px;
+      max-height: 240px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .task-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 82px;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 9px;
+      border: 1px solid #e1e8f0;
+      border-radius: 7px;
+      background: #fff;
+    }
+
+    .task-row.failed,
+    .task-row.stale {
+      border-color: #fecaca;
+      background: #fffafa;
+    }
+
+    .task-row.completed {
+      border-color: #bbf7d0;
+      background: #fbfffc;
+    }
+
+    .task-name {
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .task-progress {
+      display: grid;
+      gap: 5px;
+      justify-items: end;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
     /* ── Issue list ── */
     .issue-list {
       list-style: none;
@@ -1403,12 +1491,16 @@
 // ═══════════════════ Pipeline API ═══════════════════
 
 var pipelineLoading = {};
+var pipelinePollTimer = null;
+var pipelineCanRetryFailed = false;
 
 function setLoading(action, state) {
   pipelineLoading[action] = state;
   var btnMap = {scan:'btn-scan', status:'btn-status', review:'btn-review', retry:'btn-retry', run:'btn-run'};
   var btn = document.getElementById(btnMap[action]);
-  if (btn) btn.disabled = state;
+  if (btn) {
+    btn.disabled = state || (action === 'retry' && !pipelineCanRetryFailed);
+  }
 }
 
 function appendLog(text) {
@@ -1491,6 +1583,7 @@ async function pipelineAction(action) {
       appendLog('[202] ' + (data.message || 'background task started'));
       appendLog('  Tip: check status again later');
       // Refresh status after a moment
+      loadPipelineProgress();
       setTimeout(function() { pipelineAction('status'); }, 2000);
       setLoading(action, false);
       return;
@@ -1530,6 +1623,7 @@ async function pipelineAction(action) {
         }
         if (data.ok) {
           appendLog(data.message || 'operation started');
+          loadPipelineProgress();
         }
         break;
     }
@@ -1783,8 +1877,122 @@ function renderScan(data) {
   renderTextResult('scan-result', data, 'No input files found. Put videos in the input directory and scan again.');
 }
 
+function statusBadgeClass(status) {
+  if (status === 'completed') return 'badge-ok';
+  if (status === 'failed') return 'badge-err';
+  if (status === 'running') return 'badge-running';
+  if (status === 'stale') return 'badge-warn';
+  return 'badge-pending';
+}
+
+function renderProgressBar(percent) {
+  var safe = Math.max(0, Math.min(100, Number(percent || 0)));
+  return '<div class="progress-track"><div class="progress-fill" style="width:' + safe + '%"></div></div>';
+}
+
+function recoveryActionLabel(action, fallback) {
+  var labels = {
+    none: '无恢复操作',
+    retry_failed: '可重试',
+    skip_completed: '完成后跳过',
+    reuse_outputs: '复用产物',
+    stale_running_warning: '可能中断',
+    not_recoverable: '需检查产物'
+  };
+  return labels[action] || fallback || action || '';
+}
+
+function updateRetryButton(canRetry) {
+  pipelineCanRetryFailed = !!canRetry;
+  var btn = document.getElementById('btn-retry');
+  if (btn) btn.disabled = pipelineLoading.retry || !pipelineCanRetryFailed;
+}
+
+function renderPipelineProgress(progress) {
+  var el = document.getElementById('status-result');
+  if (!el) return;
+  if (!progress || !progress.ok || !progress.total) {
+    updateRetryButton(false);
+    el.innerHTML = '<div class="placeholder">暂无任务状态。先扫描或开始处理 input 目录。</div>';
+    return;
+  }
+
+  var counts = progress.counts || {};
+  updateRetryButton(!!progress.can_retry_failed);
+  var current = progress.current;
+  var html = '<div class="progress-panel">';
+  html += '<div class="progress-header"><span>整体进度</span><span>' + (progress.overall_progress || 0) + '%</span></div>';
+  html += renderProgressBar(progress.overall_progress || 0);
+  html += '<div class="progress-meta">';
+  html += '<span class="badge badge-pending">总计 ' + progress.total + '</span>';
+  html += '<span class="badge badge-ok">完成 ' + (counts.completed || 0) + '</span>';
+  html += '<span class="badge badge-running">运行 ' + (counts.running || 0) + '</span>';
+  html += '<span class="badge badge-err">失败 ' + (counts.failed || 0) + '</span>';
+  html += '<span class="badge badge-warn">可重试 ' + (progress.recoverable_failed_count || 0) + '</span>';
+  if (counts.stale) html += '<span class="badge badge-warn">可能中断 ' + counts.stale + '</span>';
+  html += '</div>';
+  if (current) {
+    html += '<div class="hint">当前：' + escapeHtml(current.file || '-') + ' / ' + escapeHtml(current.stage_label || current.stage || '-') + '</div>';
+  }
+  if (progress.can_retry_failed) {
+    html += '<div class="hint">发现 ' + escapeHtml(String(progress.recoverable_failed_count || 0)) + ' 个失败任务可重试。已完成任务会跳过，已有且有效的中间产物会复用。</div>';
+  } else {
+    html += '<div class="hint">当前没有失败任务可重试。已完成任务无需重复处理。</div>';
+  }
+  if (progress.stale_running_count) {
+    html += '<div class="hint">检测到 ' + escapeHtml(String(progress.stale_running_count)) + ' 个可能中断的运行中任务。本轮不会自动重置，请先确认后台任务是否仍在执行。</div>';
+  }
+  html += '<div class="task-list">';
+  var tasks = progress.tasks || [];
+  for (var i = 0; i < tasks.length; i++) {
+    var t = tasks[i];
+    var badgeClass = statusBadgeClass(t.status);
+    html += '<div class="task-row ' + escapeHtml(t.status || 'pending') + '">';
+    html += '<div>';
+    html += '<div class="task-name" title="' + escapeHtml(t.file || '') + '">' + escapeHtml(t.file || '-') + '</div>';
+    html += '<div class="task-sub">';
+    html += '<span class="badge ' + badgeClass + '">' + escapeHtml(t.status_label || t.status || '-') + '</span>';
+    html += '<span>' + escapeHtml(t.stage_label || t.stage || '-') + '</span>';
+    if (t.retry_count) html += '<span>重试 ' + escapeHtml(String(t.retry_count)) + '/' + escapeHtml(String(t.max_retries || 0)) + '</span>';
+    html += '</div>';
+    if (t.recovery_action && t.recovery_action !== 'none') {
+      html += '<div class="task-sub"><span class="badge badge-warn">' + escapeHtml(recoveryActionLabel(t.recovery_action, t.recovery_label)) + '</span></div>';
+    }
+    if (t.warning) html += '<div class="task-sub"><span class="badge badge-warn">' + escapeHtml(t.warning) + '</span></div>';
+    if (t.error) html += '<div class="task-sub"><span class="badge badge-err">' + escapeHtml(t.error).slice(0, 160) + '</span></div>';
+    html += '</div>';
+    html += '<div class="task-progress"><span>' + (t.progress || 0) + '%</span>' + renderProgressBar(t.progress || 0) + '</div>';
+    html += '</div>';
+  }
+  html += '</div>';
+  html += '</div>';
+  el.innerHTML = html;
+}
+
 function renderStatus(data) {
+  if (data && data.progress) {
+    renderPipelineProgress(data.progress);
+    return;
+  }
   renderTextResult('status-result', data, 'No task state yet.');
+}
+
+async function loadPipelineProgress() {
+  try {
+    var resp = await fetch('/api/pipeline/progress');
+    var data = await resp.json();
+    renderPipelineProgress(data);
+    if (pipelinePollTimer) {
+      clearTimeout(pipelinePollTimer);
+      pipelinePollTimer = null;
+    }
+    if (data && data.task && data.task.running) {
+      pipelinePollTimer = setTimeout(loadPipelineProgress, 3000);
+    }
+  } catch (err) {
+    var el = document.getElementById('status-result');
+    if (el) el.innerHTML = '<div class="placeholder">进度读取失败: ' + escapeHtml(err.message) + '</div>';
+  }
 }
 
 function renderReview(data) {

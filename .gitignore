@@ -23,6 +23,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+pytest-cache-files-*/
 .Python
 .pytest_cache/
 .mypy_cache/
@@ -45,6 +47,9 @@ __pycache__/
 *.review_needed.srt
 
 # Downloaded FFmpeg binaries
+tools/python/
+tools/wheelhouse/
+tools/cuda/
 tools/ffmpeg/
 tools/*.exe
 bin/ffmpeg.exe
@@ -53,8 +58,12 @@ bin/ffplay.exe
 vendor/ffmpeg/
 ffmpeg/bin/
 
-# Acceptance / QA artifacts (do NOT commit)
-acceptance/
+# Acceptance / QA artifacts
+acceptance/*
+!acceptance/
+!acceptance/milestone_*.md
+acceptance/screenshots/
+acceptance/tmp/
 data/
 test_movies.txt
 web_screenshot_*.png

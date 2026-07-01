@@ -1,25 +1,19 @@
 """
-Batch Subtitle Pipeline Worker — 批量字幕生产流水线
+Batch Subtitle Pipeline Worker.
 
-将 cinesub-studio 从单文件工具改造为自动化生产系统：
+Turns input media into source, translated, and bilingual subtitle outputs:
 
-    input/  →  自动发现  →  提取音频  →  Whisper 转写  →  LLM 翻译  →  质检  →  输出
+    input/ -> discover -> extract audio -> Whisper transcribe -> LLM translate -> quality check -> output
 
-用法:
+Example:
     .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --input input --model large-v3 --device cuda
 
-架构:
-    1. 文件扫描层 — 自动发现 input 目录中的新视频
-    2. 转写层 — ffmpeg + faster-whisper + 语言识别保存
-    3. 翻译层 — LLM API + 上下文窗口 + 分批翻译 + 缓存
-    4. 质检层 — SRT 格式检查 + 翻译质量规则检查
-    5. 输出层 — 原文/中文/双语字幕 + 质量报告 + review_needed.srt
-
-特性:
-    - 断点续跑：中断后不从头开始，复用已有中间文件
-    - 失败重试：每个阶段独立重试，失败任务移入 failed/
-    - 语言策略路由：主流语言 vs 小语种使用不同翻译提示词
-    - 完整状态追踪：每个任务 JSON 状态文件记录进度
+Stages:
+    1. Scan input media files.
+    2. Extract audio and transcribe with faster-whisper.
+    3. Translate SRT through the configured LLM provider.
+    4. Run subtitle format and translation quality checks.
+    5. Write subtitles, reports, and task state files.
 """
 
 from __future__ import annotations
@@ -27,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 import time
 import traceback
@@ -35,7 +28,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-# ── 项目根目录 ───────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -46,22 +38,24 @@ for _sub in ("core", "pipeline", "config", "web", "tools"):
     if _subpath not in sys.path:
         sys.path.insert(0, _subpath)
 
+from encoding_utils import read_json, run_text, write_json
 from ffmpeg_locator import find_ffmpeg
+from output_paths import pipeline_output_dirs, plan_pipeline_outputs
+from subtitle_model import (
+    ASS_RESERVED_MESSAGE,
+    DEFAULT_ASS_STYLE_ID,
+    normalize_subtitle_formats,
+)
 
-# ── 目录结构 ─────────────────────────────────────────────────────────────
 
 DIR_INPUT = PROJECT_ROOT / "input"
 DIR_WORK = PROJECT_ROOT / "work"
 DIR_WORK_STATES = PROJECT_ROOT / "work" / "states"
-DIR_OUTPUT_SOURCE = PROJECT_ROOT / "output" / "source"
-DIR_OUTPUT_ZH = PROJECT_ROOT / "output" / "zh"
-DIR_OUTPUT_BILINGUAL = PROJECT_ROOT / "output" / "bilingual"
-DIR_OUTPUT_REPORTS = PROJECT_ROOT / "output" / "reports"
+DIR_OUTPUT = PROJECT_ROOT / "output"
 DIR_ARCHIVE = PROJECT_ROOT / "archive"
 DIR_FAILED = PROJECT_ROOT / "failed"
 DIR_MODELS = PROJECT_ROOT / "models"
 
-# ── 任务状态枚举 ─────────────────────────────────────────────────────────
 
 class TaskStage:
     PENDING = "pending"
@@ -73,30 +67,21 @@ class TaskStage:
     FAILED = "failed"
 
 
-# ── 主流语言 vs 小语种策略 ──────────────────────────────────────────────
 
 MAJOR_LANGUAGES = {"en", "ja", "ko", "zh", "fr", "de", "es", "ru", "pt", "it", "ar", "th", "vi"}
 
-# 主流语言使用常规影视翻译提示词（高效）
 DEFAULT_MAJOR_PROMPT = ""
 
-# 小语种使用更保守的翻译提示词（保留更多原文信息）
 MINOR_LANGUAGE_EXTRA_PROMPT = (
-    "源语言可能是小语种或方言，翻译时请注意：\n"
-    "1. 如遇到不确定的内容，保留原文并标注 [待确认]\n"
-    "2. 专有名词和术语保持原文\n"
-    "3. 不要猜测模糊不清的内容\n"
-    "4. 保持字幕简短，适合屏幕阅读"
+    "The source language may be low-resource, dialectal, or uncertain. "
+    "Preserve uncertain names and terms, and mark unclear content as [needs review]."
 )
 
-# 低置信度语言额外提示词
 LOW_CONFIDENCE_EXTRA_PROMPT = (
-    "源语言识别置信度较低，翻译时请注意：\n"
-    "1. 如字幕内容看起来不是目标源语言，保留原文\n"
-    "2. 不要强行翻译看起来乱码或不完整的内容"
+    "The detected source language has low confidence. "
+    "Do not force a translation for garbled or incomplete source text."
 )
 
-# 语言识别置信度阈值
 LANG_CONFIDENCE_THRESHOLD = 0.7
 
 
@@ -108,41 +93,33 @@ def _is_valid_output_file(path: Path) -> bool:
         return False
 
 
-# ── 任务状态数据结构 ─────────────────────────────────────────────────────
 
 @dataclass
 class TaskState:
-    """单个视频任务的完整状态。"""
-    file: str                    # 输入文件名
-    input_path: str              # 输入文件绝对路径
+    """State for one input media task."""
+    file: str
+    input_path: str
     stage: str = TaskStage.PENDING
     status: str = "pending"      # pending | running | completed | failed
     created_at: float = 0.0
     updated_at: float = 0.0
 
-    # 音频提取
     audio_path: str = ""
 
-    # 语言识别
     language_detection: dict | None = None
 
-    # 转写
     source_srt: str = ""
 
-    # 翻译
-    translated_srt: str = ""      # 译文 SRT（translated 模式）
-    bilingual_srt: str = ""       # 双语 SRT
+    translated_srt: str = ""
+    bilingual_srt: str = ""
 
-    # 质检
-    quality_report: str = ""      # 质量报告 JSON 路径
+    quality_report: str = ""
 
-    # 错误信息
     error: str = ""
     error_stage: str = ""
     retry_count: int = 0
     max_retries: int = 3
 
-    # 输出
     output_dir: str = ""
 
     def to_dict(self) -> dict:
@@ -189,33 +166,48 @@ class TaskState:
         )
 
     def state_path(self) -> Path:
-        """返回该任务的状态文件路径。"""
+        """Return the task state file path."""
         stem = Path(self.file).stem
         return DIR_WORK_STATES / f"{stem}.state.json"
 
     def save(self) -> None:
-        """保存状态到 JSON 文件。"""
+        """Save task state to JSON."""
         self.updated_at = time.time()
         path = self.state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(self.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json(path, self.to_dict())
 
     @classmethod
     def load(cls, state_path: Path) -> Optional["TaskState"]:
-        """从 JSON 文件加载任务状态。"""
+        """Load task state from JSON."""
         if not state_path.exists():
             return None
         try:
-            data = json.loads(state_path.read_text(encoding="utf-8"))
+            data = read_json(state_path)
             return cls.from_dict(data)
         except (OSError, json.JSONDecodeError):
             return None
 
 
-# ── 视频文件发现 ─────────────────────────────────────────────────────────
+
+@dataclass
+class RetryPlan:
+    """Structured result for failed-task retry preparation."""
+    reset_tasks: list[TaskState] = field(default_factory=list)
+    untouched_count: int = 0
+    selected_task_ids: list[str] = field(default_factory=list)
+
+    @property
+    def reset_count(self) -> int:
+        return len(self.reset_tasks)
+
+    def to_dict(self) -> dict:
+        return {
+            "reset_count": self.reset_count,
+            "untouched_count": self.untouched_count,
+            "selected_task_ids": list(self.selected_task_ids),
+        }
+
 
 VIDEO_EXTENSIONS = {
     ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v",
@@ -224,7 +216,7 @@ VIDEO_EXTENSIONS = {
 
 
 def discover_videos(input_dir: Path) -> list[Path]:
-    """扫描 input 目录，返回所有待处理的视频/音频文件列表。"""
+    """Return supported media files under the input directory."""
     if not input_dir.exists():
         return []
 
@@ -233,7 +225,6 @@ def discover_videos(input_dir: Path) -> list[Path]:
         if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS:
             videos.append(path)
         elif path.is_dir():
-            # 递归扫描子目录
             for subpath in sorted(path.rglob("*")):
                 if subpath.is_file() and subpath.suffix.lower() in VIDEO_EXTENSIONS:
                     videos.append(subpath)
@@ -241,26 +232,48 @@ def discover_videos(input_dir: Path) -> list[Path]:
     return videos
 
 
-# ── 批处理配置 ───────────────────────────────────────────────────────────
+
+def prepare_retry_failed_tasks(state_files: list[Path]) -> RetryPlan:
+    """Reset only failed tasks and leave every other state untouched."""
+    plan = RetryPlan()
+
+    for state_file in state_files:
+        task = TaskState.load(state_file)
+        if task is None:
+            continue
+
+        if task.status != "failed":
+            plan.untouched_count += 1
+            continue
+
+        task.status = "pending"
+        task.stage = TaskStage.PENDING
+        task.error = ""
+        task.error_stage = ""
+        task.retry_count = 0
+        task.save()
+        plan.reset_tasks.append(task)
+        plan.selected_task_ids.append(task.file)
+
+    return plan
+
 
 @dataclass
 class BatchConfig:
-    """批处理运行配置。"""
+    """Batch processing configuration."""
     input_dir: Path = DIR_INPUT
     output_dir: Path = PROJECT_ROOT / "output"
     model_dir: Path = DIR_MODELS
     work_dir: Path = DIR_WORK
 
-    # Whisper 配置
     model: str = "large-v3"
-    device: str = "cpu"
+    device: str = "auto"
     compute_type: str | None = None
-    language: str | None = None   # None = 自动检测
+    language: str | None = None
     beam_size: int = 5
     vad_filter: bool = True
     local_files_only: bool = False
 
-    # 翻译配置
     translate: bool = True
     api_provider: str = "openai-compatible"
     api_base: str = ""
@@ -272,30 +285,26 @@ class BatchConfig:
     translation_mode: str = "bilingual"
     context_window: int = 3
     translation_prompt: str = ""
+    subtitle_formats: list[str] = field(default_factory=lambda: ["srt"])
+    ass_style_id: str = DEFAULT_ASS_STYLE_ID
+    subtitle_style: dict | None = None
 
-    # Language Profile 配置
     language_profile_id: str = ""
     language_profile_name: str = ""
     lang_profile_config: dict | None = None
 
-    # 批处理配置
     max_retries: int = 3
-    skip_completed: bool = True    # 跳过已完成的视频
-    move_completed: bool = True    # 完成后移动到 archive/
+    skip_completed: bool = True
+    move_completed: bool = True
 
     def __post_init__(self):
-        # 从环境变量获取 API key
         if not self.api_key:
             self.api_key = os.environ.get("SUBTITLE_LLM_API_KEY", "")
 
 
-# ── 流水线主逻辑 ─────────────────────────────────────────────────────────
 
 class BatchPipeline:
-    """批量字幕生产流水线。
-
-    管理整个处理流程：发现 → 提取 → 转写 → 翻译 → 质检 → 输出。
-    """
+    """Batch subtitle production pipeline."""
 
     def __init__(self, config: BatchConfig):
         self.config = config
@@ -303,15 +312,12 @@ class BatchPipeline:
         self._ensure_directories()
 
     def _ensure_directories(self) -> None:
-        """创建所有必要的目录。"""
+        """Create required runtime directories."""
         for d in [
             self.config.input_dir,
             self.config.work_dir,
             DIR_WORK_STATES,
-            DIR_OUTPUT_SOURCE,
-            DIR_OUTPUT_ZH,
-            DIR_OUTPUT_BILINGUAL,
-            DIR_OUTPUT_REPORTS,
+            *pipeline_output_dirs(self.config.output_dir),
             DIR_ARCHIVE,
             DIR_FAILED,
             self.config.model_dir,
@@ -319,7 +325,7 @@ class BatchPipeline:
             d.mkdir(parents=True, exist_ok=True)
 
     def scan(self) -> list[TaskState]:
-        """扫描 input 目录，返回待处理的任务列表。"""
+        """Scan the input directory and return pending tasks."""
         videos = discover_videos(self.config.input_dir)
         tasks: list[TaskState] = []
 
@@ -327,15 +333,15 @@ class BatchPipeline:
             stem = video_path.stem
             state_path = DIR_WORK_STATES / f"{stem}.state.json"
 
-            # 检查是否已有状态文件
             existing = TaskState.load(state_path)
             if existing and existing.status == "completed" and self.config.skip_completed:
-                print(f"  [跳过] 已完成: {video_path.name}")
-                continue
+                if self.completed_outputs_valid(existing):
+                    print(f"  [skip] already completed with valid outputs: {video_path.name}")
+                    continue
+                print(f"  [warn] completed state has missing or empty final outputs: {video_path.name}")
 
             if existing:
                 task = existing
-                # 更新可能变化的配置
                 task.max_retries = self.config.max_retries
             else:
                 task = TaskState(
@@ -351,64 +357,66 @@ class BatchPipeline:
         return tasks
 
     def run(self) -> dict:
-        """运行完整流水线：扫描 → 逐个处理 → 汇总报告。
-
-        Returns:
-            {"total": int, "completed": int, "failed": int, "skipped": int}
-        """
+        """Run the full batch pipeline and return summary counts."""
         print("=" * 60)
-        print("  CineSub Studio — 批量字幕生产流水线")
+        print("  CineSub Studio - batch subtitle pipeline")
         print("=" * 60)
-        print(f"  模型: {self.config.model}")
-        print(f"  设备: {self.config.device}")
-        print(f"  翻译: {'启用' if self.config.translate else '禁用'}")
+        print(f"  Model: {self.config.model}")
+        print(f"  Device: {self.config.device}")
+        print(f"  Translation: {'enabled' if self.config.translate else 'disabled'}")
         if self.config.translate:
             print(f"  LLM: {self.config.llm_model}")
-            print(f"  目标语言: {self.config.target_language}")
-            print(f"  翻译模式: {self.config.translation_mode}")
-        print(f"  输入目录: {self.config.input_dir}")
-        print(f"  最大重试: {self.config.max_retries}")
+            print(f"  Target language: {self.config.target_language}")
+            print(f"  Translation mode: {self.config.translation_mode}")
+        print(f"  Subtitle formats: {','.join(self.config.subtitle_formats)}")
+        if "ass" in self.config.subtitle_formats:
+            print(f"  ASS: {ASS_RESERVED_MESSAGE}")
+        print(f"  Input directory: {self.config.input_dir}")
+        print(f"  Max retries: {self.config.max_retries}")
         print()
 
-        # 扫描文件
-        print("扫描 input 目录...")
+        print("Scanning input directory...")
         self.tasks = self.scan()
 
         if not self.tasks:
-            print("没有发现待处理的文件。")
+            print("No pending files found.")
             return {"total": 0, "completed": 0, "failed": 0, "skipped": 0}
 
-        print(f"发现 {len(self.tasks)} 个待处理文件\n")
+        print(f"Found {len(self.tasks)} pending file(s)\n")
 
         completed = 0
         failed = 0
         skipped = 0
 
         for i, task in enumerate(self.tasks, start=1):
-            print(f"[{i}/{len(self.tasks)}] 处理: {task.file}")
+            print(f"[{i}/{len(self.tasks)}] Processing: {task.file}")
 
             if task.status == "completed" and self.config.skip_completed:
-                print(f"  已完成，跳过")
-                skipped += 1
-                continue
+                if self.completed_outputs_valid(task):
+                    print("  Already completed with valid outputs, skipping")
+                    skipped += 1
+                    continue
+                print("  Completed state has missing or empty final outputs, rebuilding")
 
             try:
                 self._process_one(task)
                 completed += 1
-                print("  [OK] 完成")
-            except Exception as exc:
+                print("  [OK] completed")
+            except BaseException as exc:
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
                 failed += 1
                 task.status = "failed"
                 task.error = str(exc)
                 task.error_stage = task.stage
                 task.save()
-                print(f"  [FAILED] 失败: {exc}")
+                print(f"  [FAILED] {exc}")
                 traceback.print_exc()
 
         print()
         print("=" * 60)
-        print(f"  流水线完成")
-        print(f"  总计: {len(self.tasks)} | 成功: {completed} | 失败: {failed} | 跳过: {skipped}")
+        print("  Pipeline finished")
+        print(f"  Total: {len(self.tasks)} | completed: {completed} | failed: {failed} | skipped: {skipped}")
         print("=" * 60)
 
         return {
@@ -419,67 +427,67 @@ class BatchPipeline:
         }
 
     def _process_one(self, task: TaskState) -> None:
-        """处理单个任务的完整流水线。"""
+        """Process a single task through all pipeline stages."""
         input_path = Path(task.input_path)
         stem = input_path.stem
         model = self.config.model
+        outputs = plan_pipeline_outputs(
+            output_root=self.config.output_dir,
+            stem=stem,
+            model=model,
+            target_language=self.config.target_language,
+            translation_mode=self.config.translation_mode,
+        )
 
-        # ── 阶段 1: 提取音频 ──
-        if not task.audio_path or not Path(task.audio_path).exists():
+        if not task.audio_path or not _is_valid_output_file(Path(task.audio_path)):
             task.stage = TaskStage.EXTRACTING_AUDIO
             task.status = "running"
             task.save()
-            print(f"  [1/5] 提取音频...")
+            print("  [1/5] Extracting audio...")
             task.audio_path = str(self._extract_audio(input_path))
             task.save()
         else:
-            print(f"  [1/5] 音频已存在，跳过提取")
+            print("  [1/5] Audio already exists, skipping extraction")
 
-        # ── 阶段 2: Whisper 转写 ──
-        source_srt = DIR_OUTPUT_SOURCE / f"{stem}.{model}.srt"
+        source_srt = outputs.source_srt
         if not _is_valid_output_file(source_srt):
             task.stage = TaskStage.TRANSCRIBING
+            task.status = "running"
             task.save()
-            print(f"  [2/5] Whisper 转写...")
+            print("  [2/5] Whisper transcription...")
             lang_info = self._transcribe(Path(task.audio_path), source_srt)
             task.source_srt = str(source_srt.resolve())
             task.language_detection = lang_info
             task.save()
         else:
             task.stage = TaskStage.TRANSCRIBING
+            task.status = "running"
             task.source_srt = str(source_srt.resolve())
-            # 尝试加载已有的语言检测文件
             lang_json = source_srt.with_suffix(".lang.json")
             if lang_json.exists() and task.language_detection is None:
                 try:
-                    task.language_detection = json.loads(lang_json.read_text(encoding="utf-8"))
+                    task.language_detection = read_json(lang_json)
                 except (OSError, json.JSONDecodeError):
                     pass
             task.save()
-            print(f"  [2/5] 原文 SRT 已存在，跳过转写")
+            print("  [2/5] Source SRT already exists, skipping transcription")
 
-        # 显示语言识别结果
         if task.language_detection:
             ld = task.language_detection
-            print(f"      语言: {ld.get('source_language', '?')} "
-                  f"(置信度: {ld.get('language_probability', 'N/A')})")
+            print(f"      language: {ld.get('source_language', '?')} "
+                  f"(confidence: {ld.get('language_probability', 'N/A')})")
 
-        # ── 阶段 3: LLM 翻译 ──
         if self.config.translate:
-            translated_srt = DIR_OUTPUT_ZH / f"{stem}.{model}.translated.{self.config.target_language}.srt"
-            bilingual_srt = DIR_OUTPUT_BILINGUAL / f"{stem}.{model}.bilingual.{self.config.target_language}.srt"
-
-            if self.config.translation_mode == "bilingual":
-                output_translated = bilingual_srt
-            else:
-                output_translated = translated_srt
+            translated_srt = outputs.translated_srt
+            bilingual_srt = outputs.bilingual_srt
+            output_translated = outputs.translation_output
 
             if not _is_valid_output_file(output_translated):
                 task.stage = TaskStage.TRANSLATING
+                task.status = "running"
                 task.save()
-                print(f"  [3/5] LLM 翻译...")
+                print("  [3/5] LLM translation...")
 
-                # 根据语言选择策略
                 effective_prompt = self._build_language_strategy(task.language_detection)
 
                 self._translate(
@@ -495,74 +503,88 @@ class BatchPipeline:
                 if self.config.translation_mode == "bilingual":
                     task.bilingual_srt = str(bilingual_srt.resolve())
                 task.save()
-                print(f"  [3/5] 译文 SRT 已存在，跳过翻译")
+                print("  [3/5] Translated SRT already exists, skipping translation")
 
-            # ── 阶段 4: 质量检查 ──
-            report_path = DIR_OUTPUT_REPORTS / f"{stem}.{model}.quality_report.json"
+            report_path = outputs.quality_report
             if not _is_valid_output_file(report_path):
                 task.stage = TaskStage.QUALITY_CHECKING
+                task.status = "running"
                 task.save()
-                print(f"  [4/5] 质量检查...")
+                print("  [4/5] Quality check...")
                 self._quality_check(source_srt, output_translated, report_path)
                 task.quality_report = str(report_path.resolve())
                 task.save()
             else:
                 task.quality_report = str(report_path.resolve())
                 task.save()
-                print(f"  [4/5] 质检报告已存在，跳过")
+                print("  [4/5] Quality report already exists, skipping")
         else:
-            # 不翻译，跳过翻译和质检
-            print(f"  [3/5] 翻译已禁用，跳过")
-            print(f"  [4/5] 质检已禁用，跳过")
+            print("  [3/5] Translation disabled, skipping")
+            print("  [4/5] Quality check disabled, skipping")
             task.stage = TaskStage.QUALITY_CHECKING
+            task.status = "running"
             task.save()
 
-        # ── 阶段 5: 完成 ──
         task.stage = TaskStage.COMPLETED
         task.status = "completed"
         task.save()
-        print(f"  [5/5] 输出完成")
+        print("  [5/5] Outputs complete")
 
-        # 打印输出文件
-        print(f"      原文: {task.source_srt}")
+        print(f"      source: {task.source_srt}")
         if task.translated_srt:
-            print(f"      译文: {task.translated_srt}")
+            print(f"      translated: {task.translated_srt}")
+        if "ass" in self.config.subtitle_formats:
+            print(f"      ASS: {ASS_RESERVED_MESSAGE}")
         if task.quality_report:
-            # 读取质检摘要
             try:
-                qr = json.loads(Path(task.quality_report).read_text(encoding="utf-8"))
-                print(f"      质检: {qr.get('status', '?')} "
-                      f"({qr.get('summary', {}).get('total_issues', 0)} 个问题)")
+                qr = read_json(task.quality_report)
+                print(f"      quality: {qr.get('status', '?')} "
+                      f"({qr.get('summary', {}).get('total_issues', 0)} issue(s))")
             except (OSError, json.JSONDecodeError):
-                print(f"      质检: {task.quality_report}")
+                print(f"      quality: {task.quality_report}")
 
-        # 移动已完成文件
         if self.config.move_completed:
             self._archive_completed(task)
 
-    # ── 各阶段实现 ─────────────────────────────────────────────────────
+
+    def required_final_outputs(self, task: TaskState) -> list[Path]:
+        """Return final outputs required before a completed task can be skipped."""
+        input_path = Path(task.input_path or task.file)
+        outputs = plan_pipeline_outputs(
+            output_root=self.config.output_dir,
+            stem=input_path.stem,
+            model=self.config.model,
+            target_language=self.config.target_language,
+            translation_mode=self.config.translation_mode,
+        )
+        required = [outputs.source_srt]
+        if self.config.translate:
+            required.extend([outputs.translation_output, outputs.quality_report])
+        return required
+
+    def completed_outputs_valid(self, task: TaskState) -> bool:
+        """Return True only when completed status and configured final outputs agree."""
+        if task.status != "completed":
+            return False
+        return all(_is_valid_output_file(path) for path in self.required_final_outputs(task))
+
 
     def _extract_audio(self, input_path: Path) -> Path:
-        """提取音频为 16kHz mono WAV。"""
+        """Extract audio to a 16 kHz mono WAV file."""
         audio_path = self.config.work_dir / f"{input_path.stem}.16k.wav"
 
-        # 如果已存在有效的音频文件，复用
         if audio_path.exists() and audio_path.stat().st_size > 0:
             return audio_path
 
         suffix = input_path.suffix.lower()
         if suffix == ".wav":
-            # 仍需确保格式正确
             pass
 
         ffmpeg = find_ffmpeg(PROJECT_ROOT)
         if ffmpeg is None:
             raise RuntimeError(
-                "ffmpeg 未找到。\n"
-                "1. 将项目内置 ffmpeg.exe 放在 tools/ffmpeg/bin/ 目录下\n"
-                "2. 运行: py src/tools/download_ffmpeg.py (自动下载到 tools/ffmpeg/bin/)\n"
-                "3. 设置 CINESUB_FFMPEG 指向项目内 ffmpeg 路径\n"
-                "4. 仅在兜底场景下使用系统安装的 ffmpeg"
+                "ffmpeg was not found. Put ffmpeg.exe in tools/ffmpeg/bin/, "
+                "run src/tools/download_ffmpeg.py, or set CINESUB_FFMPEG."
             )
 
         command = [
@@ -571,20 +593,19 @@ class BatchPipeline:
             "-ar", "16000", "-ac", "1",
             str(audio_path),
         ]
-        result = subprocess.run(command, capture_output=True, text=True)
+        result = run_text(command, capture_output=True)
         if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg 提取音频失败: {result.stderr[:500]}")
+            raise RuntimeError(f"ffmpeg audio extraction failed: {result.stderr[:500]}")
 
         if not audio_path.exists() or audio_path.stat().st_size == 0:
-            raise RuntimeError("音频提取失败：输出文件为空")
+            raise RuntimeError("Audio extraction failed: output file is empty.")
 
         return audio_path
 
     def _transcribe(self, audio_path: Path, srt_path: Path) -> dict | None:
-        """运行 Whisper 转写，返回语言检测信息。"""
+        """Run Whisper transcription and return language detection details."""
         from transcribe import transcribe_to_srt
 
-        # 获取当前 language profile 信息
         lp_id = self.config.language_profile_id if hasattr(self.config, 'language_profile_id') else ""
         lp_name = self.config.language_profile_name if hasattr(self.config, 'language_profile_name') else ""
         lp_cond = True
@@ -616,7 +637,7 @@ class BatchPipeline:
         output_path: Path,
         effective_prompt: str,
     ) -> None:
-        """运行 LLM 翻译。"""
+        """Run LLM subtitle translation."""
         from subtitle_translate import translate_srt
 
         translate_srt(
@@ -640,10 +661,9 @@ class BatchPipeline:
         translated_srt: Path,
         report_path: Path,
     ) -> None:
-        """运行质量检查（使用 Language Profile 阈值）。"""
+        """Run quality checks using the active language profile thresholds."""
         from quality_checker import run_quality_check
 
-        # 获取 quality thresholds
         thresholds = {}
         if self.config.lang_profile_config:
             thresholds = self.config.lang_profile_config.get("quality_thresholds", {})
@@ -654,12 +674,12 @@ class BatchPipeline:
             source_srt=source_srt,
             translated_srt=translated_srt,
             target_language=self.config.target_language,
-            output_dir=DIR_OUTPUT_REPORTS,
+            output_dir=report_path.parent,
             quality_thresholds=thresholds,
         )
 
     def _build_language_strategy(self, lang_detection: dict | None) -> str:
-        """根据语言识别结果构建翻译策略提示词。"""
+        """Build the translation strategy prompt from language detection."""
         if not lang_detection:
             return self.config.translation_prompt
 
@@ -668,15 +688,12 @@ class BatchPipeline:
 
         extra_parts: list[str] = []
 
-        # 用户自定义提示词
         if self.config.translation_prompt.strip():
             extra_parts.append(self.config.translation_prompt.strip())
 
-        # 小语种策略
         if lang and lang not in MAJOR_LANGUAGES:
             extra_parts.append(MINOR_LANGUAGE_EXTRA_PROMPT)
 
-        # 低置信度策略
         if prob is not None and prob < LANG_CONFIDENCE_THRESHOLD:
             extra_parts.append(LOW_CONFIDENCE_EXTRA_PROMPT)
 
@@ -686,115 +703,79 @@ class BatchPipeline:
         return ""
 
     def _archive_completed(self, task: TaskState) -> None:
-        """将已完成的输入文件移动到 archive 目录。"""
+        """Move a completed input file to the archive directory."""
         input_path = Path(task.input_path)
         if not input_path.exists():
             return
 
         dest = DIR_ARCHIVE / input_path.name
-        # 如果目标已存在，添加时间戳
         if dest.exists():
             dest = DIR_ARCHIVE / f"{input_path.stem}_{int(time.time())}{input_path.suffix}"
 
         try:
             shutil.move(str(input_path), str(dest))
-            print(f"      已归档: {dest.name}")
+            print(f"      archived: {dest.name}")
         except OSError as exc:
-            print(f"      归档失败: {exc}")
+            print(f"      archive failed: {exc}")
 
 
-# ── CLI ─────────────────────────────────────────────────────────────────
 
 def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="CineSub Studio — 批量字幕生产流水线",
+        description="CineSub Studio batch subtitle pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --input input --model large-v3 --device cuda
-  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --input input --model small --no-translate
-  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --input input --model large-v3 --api-base https://api.openai.com/v1 --api-key sk-xxx --llm-model gpt-4o
-  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --scan                 # 仅扫描，不处理
-  .\\.venv\\Scripts\\python.exe -B src\\pipeline\\batch_worker.py --status               # 查看所有任务状态
+        epilog=r"""
+Examples:
+  .\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --input input --model large-v3 --device cuda
+  .\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --input input --model small --no-translate
+  .\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --scan
+  .\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --status
         """.strip(),
     )
 
-    # 基础配置
-    parser.add_argument("--input", default="input", help="输入视频目录 (默认: input/)")
-    parser.add_argument("--output-dir", default="output", help="输出根目录 (默认: output/)")
-    parser.add_argument("--model-dir", default="models", help="模型目录 (默认: models/)")
-    parser.add_argument("--work-dir", default="work", help="临时工作目录 (默认: work/)")
+    parser.add_argument("--input", default="input", help="Input media directory (default: input/)")
+    parser.add_argument("--output-dir", default="output", help="Output root directory (default: output/)")
+    parser.add_argument("--model-dir", default="models", help="Model directory (default: models/)")
+    parser.add_argument("--work-dir", default="work", help="Work directory (default: work/)")
 
-    # Whisper 配置
-    parser.add_argument("--model", default="large-v3",
-                        help="Whisper 模型名 (默认: large-v3)")
-    parser.add_argument("--device", default="cpu",
-                        choices=["cpu", "cuda", "auto"], help="运行设备")
-    parser.add_argument("--compute-type", default=None,
-                        help="计算精度 (CPU: int8, CUDA: float16)")
-    parser.add_argument("--language", default=None,
-                        help="源语言代码 (省略则自动检测)")
+    parser.add_argument("--model", default="large-v3", help="Whisper model name (default: large-v3)")
+    parser.add_argument("--device", default="auto", choices=["cpu", "cuda", "auto"], help="Compute device")
+    parser.add_argument("--compute-type", default=None, help="Compute type, e.g. int8 or float16")
+    parser.add_argument("--language", default=None, help="Source language code; omit to auto-detect")
     parser.add_argument("--beam-size", type=int, default=5, help="Beam size")
-    parser.add_argument("--no-vad", action="store_true", help="禁用 VAD")
-    parser.add_argument("--local-files-only", action="store_true",
-                        help="仅使用本地模型文件")
+    parser.add_argument("--no-vad", action="store_true", help="Disable VAD")
+    parser.add_argument("--local-files-only", action="store_true", help="Use local model files only")
 
-    # 翻译配置
-    parser.add_argument("--no-translate", action="store_true",
-                        help="禁用翻译（仅转写）")
-    parser.add_argument("--provider", default=None,
-                        help="Provider ID，从 config/providers.local.json 读取配置")
-    parser.add_argument("--language-profile", default=None,
-                        help="Language Profile ID，从 config/language_profiles.local.json 读取配置")
-    parser.add_argument("--api-provider", default=None,
-                        choices=["openai-compatible", "anthropic"],
-                        help="LLM API 类型（显式传入时覆盖 Provider 配置）")
-    parser.add_argument("--api-base", default=None, help="LLM API 地址（显式传入时覆盖 Provider 配置）")
-    parser.add_argument("--api-key", default=None, help="LLM API 密钥（显式传入时覆盖 Provider 配置）")
-    parser.add_argument("--llm-model", default=None, help="LLM 模型名（显式传入时覆盖 Provider 配置）")
-    parser.add_argument("--target-language", default="zh-CN",
-                        help="翻译目标语言 (默认: zh-CN)")
-    parser.add_argument("--translation-batch-size", type=int, default=20,
-                        help="翻译批次大小")
-    parser.add_argument("--translation-temperature", type=float, default=0.2,
-                        help="翻译温度")
-    parser.add_argument("--translation-mode", default="bilingual",
-                        choices=["bilingual", "translated"],
-                        help="翻译输出模式")
-    parser.add_argument("--context-window", type=int, default=3,
-                        help="翻译上下文窗口大小")
-    parser.add_argument("--translation-prompt", default="",
-                        help="自定义翻译提示词")
+    parser.add_argument("--no-translate", action="store_true", help="Disable translation")
+    parser.add_argument("--provider", default=None, help="Provider ID from config/providers.local.json")
+    parser.add_argument("--language-profile", default=None, help="Language Profile ID")
+    parser.add_argument("--api-provider", default=None, choices=["openai-compatible", "anthropic"], help="LLM API provider")
+    parser.add_argument("--api-base", default=None, help="LLM API base URL")
+    parser.add_argument("--api-key", default=None, help="LLM API key")
+    parser.add_argument("--llm-model", default=None, help="LLM model name")
+    parser.add_argument("--target-language", default="zh-CN", help="Translation target language")
+    parser.add_argument("--translation-batch-size", type=int, default=20, help="Translation batch size")
+    parser.add_argument("--translation-temperature", type=float, default=0.2, help="Translation temperature")
+    parser.add_argument("--translation-mode", default="bilingual", choices=["bilingual", "translated"], help="Translation output mode")
+    parser.add_argument("--context-window", type=int, default=3, help="Translation context window")
+    parser.add_argument("--translation-prompt", default="", help="Custom translation prompt")
+    parser.add_argument("--subtitle-formats", default=None, help="Subtitle output formats. ASS is reserved, e.g. srt,ass.")
+    parser.add_argument("--ass-style-id", default=None, help="Reserved ASS style id. No .ass file is generated.")
 
-    # 批处理配置
-    parser.add_argument("--max-retries", type=int, default=3,
-                        help="最大重试次数 (默认: 3)")
-    parser.add_argument("--no-skip-completed", action="store_true",
-                        help="不跳过已完成的视频（重新处理）")
-    parser.add_argument("--no-move-completed", action="store_true",
-                        help="完成后不移动到 archive/")
+    parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries")
+    parser.add_argument("--no-skip-completed", action="store_true", help="Reprocess completed tasks")
+    parser.add_argument("--no-move-completed", action="store_true", help="Do not move completed inputs to archive/")
 
-    # 信息查询
-    parser.add_argument("--scan", action="store_true",
-                        help="仅扫描并显示待处理文件，不处理")
-    parser.add_argument("--status", action="store_true",
-                        help="显示所有任务状态")
-
-    # 重试失败任务
-    parser.add_argument("--retry-failed", action="store_true",
-                        help="重新处理所有失败的任务")
-
-    # 复核异常片段
-    parser.add_argument("--review", action="store_true",
-                        help="显示所有待复核的异常片段摘要")
-    parser.add_argument("--review-file", default=None,
-                        help="查看指定质量报告的详细异常列表")
+    parser.add_argument("--scan", action="store_true", help="Scan pending files without processing")
+    parser.add_argument("--status", action="store_true", help="Show task status")
+    parser.add_argument("--retry-failed", action="store_true", help="Retry failed tasks")
+    parser.add_argument("--review", action="store_true", help="Show review summary from quality reports")
+    parser.add_argument("--review-file", default=None, help="Show details for one quality report")
 
     args = parser.parse_args()
 
-    # 设置环境变量
     os.environ.setdefault("HF_HOME", str(PROJECT_ROOT / ".cache" / "huggingface"))
     os.environ.setdefault("HF_HUB_CACHE", str(PROJECT_ROOT / ".cache" / "huggingface" / "hub"))
 
@@ -803,44 +784,41 @@ def main() -> int:
     def _explicit(*flags: str) -> bool:
         return any(flag in raw_argv for flag in flags)
 
-    # ── Provider 配置加载 ──
-    # 优先级：CLI 显式参数 > Provider 配置 > 默认值
     provider_config: dict = {}
     if args.provider is not None or not args.no_translate:
         try:
             from provider_store import resolve_provider_config
             provider_config = resolve_provider_config(args.provider)
             if provider_config:
-                print(f"  [Provider] 使用配置: {args.provider or '(active)'}")
+                print(f"  [Provider] using config: {args.provider or '(active)'}")
         except Exception as exc:
-            print(f"  [Provider] 加载失败: {exc}")
+            print(f"  [Provider] load failed: {exc}")
 
-    # ── Language Profile 配置加载 ──
     lang_profile_config: dict = {}
     profile_id = args.language_profile or None
     try:
         from language_profile_store import resolve_language_profile_config
         lang_profile_config = resolve_language_profile_config(profile_id)
         if lang_profile_config:
-            print(f"  [LangProfile] 使用配置: {lang_profile_config.get('profile_id', '?')} ({lang_profile_config.get('profile_name', '?')})")
+            print(
+                f"  [LangProfile] using config: "
+                f"{lang_profile_config.get('profile_id', '?')} ({lang_profile_config.get('profile_name', '?')})"
+            )
     except Exception as exc:
-        print(f"  [LangProfile] 加载失败: {exc}")
+        print(f"  [LangProfile] load failed: {exc}")
 
-    # 合并 Provider 和 Language Profile 配置到 CLI 参数
     def _first(*values):
-        """返回第一个非 None 非空字符串的值。"""
+        """Return the first non-empty value."""
         for v in values:
             if v is not None and v != "":
                 return v
         return ""
 
-    # API 配置：CLI > Provider > 默认值
     effective_api_provider = _first(args.api_provider, provider_config.get("api_provider"), "openai-compatible")
     effective_api_base = _first(args.api_base, provider_config.get("api_base"), "")
     effective_api_key = _first(args.api_key, provider_config.get("api_key"), "")
     effective_llm_model = _first(args.llm_model, provider_config.get("llm_model"), "")
 
-    # ASR 配置：CLI > Language Profile > 默认值（Provider 不再包含 ASR 字段）
     lp_asr = lang_profile_config.get("asr", {})
     effective_model = _first(
         args.model if _explicit("--model") else None,
@@ -850,7 +828,7 @@ def main() -> int:
     effective_device = _first(
         args.device if _explicit("--device") else None,
         lp_asr.get("whisper_device"),
-        "cpu"
+        "auto"
     )
     effective_compute_type = _first(
         args.compute_type if _explicit("--compute-type") else None,
@@ -863,21 +841,29 @@ def main() -> int:
     effective_vad = False if _explicit("--no-vad") else lp_asr.get("vad_filter", True)
     effective_beam_size = args.beam_size if _explicit("--beam-size") else lp_asr.get("beam_size", 5)
 
-    # 翻译配置：Language Profile 提供 translation_style 和 target_language
     effective_target_lang = _first(
         args.target_language if _explicit("--target-language") else None,
         lang_profile_config.get("target_language"),
         "zh-CN"
     )
     effective_translation_prompt = args.translation_prompt or lang_profile_config.get("translation_style", "")
+    lp_subtitle_style = lang_profile_config.get("subtitle_style", {})
+    effective_subtitle_formats = normalize_subtitle_formats(
+        args.subtitle_formats if _explicit("--subtitle-formats") else lp_subtitle_style.get("formats", ["srt"])
+    )
+    effective_ass_style_id = _first(
+        args.ass_style_id if _explicit("--ass-style-id") else None,
+        lp_subtitle_style.get("ass_style_id"),
+        DEFAULT_ASS_STYLE_ID,
+    )
 
-    # 存储 language profile 信息供后续使用
     lang_profile_info = {
         "profile_id": lang_profile_config.get("profile_id", ""),
         "profile_name": lang_profile_config.get("profile_name", ""),
         "source_language": lang_profile_config.get("source_language", "auto"),
         "quality_thresholds": lang_profile_config.get("quality", {}),
         "translation_style": lang_profile_config.get("translation_style", ""),
+        "subtitle_style": lang_profile_config.get("subtitle_style", {}),
         "llm_stages": lang_profile_config.get("llm_stages", {}),
     }
 
@@ -909,6 +895,9 @@ def main() -> int:
         translation_temperature=args.translation_temperature,
         translation_mode=args.translation_mode,
         context_window=args.context_window,
+        subtitle_formats=effective_subtitle_formats,
+        ass_style_id=effective_ass_style_id,
+        subtitle_style=lp_subtitle_style,
         language_profile_id=lang_profile_info.get("profile_id", ""),
         language_profile_name=lang_profile_info.get("profile_name", ""),
         lang_profile_config=lang_profile_info,
@@ -919,44 +908,33 @@ def main() -> int:
 
     pipeline = BatchPipeline(config)
 
-    # --scan: 仅扫描
     if args.scan:
         tasks = pipeline.scan()
         if not tasks:
-            print("没有发现待处理的文件。")
+            print("No pending files found.")
             return 0
-        print(f"\n待处理文件 ({len(tasks)}):")
+        print(f"\nPending files ({len(tasks)}):")
         for t in tasks:
             status_mark = {"completed": "[OK]", "failed": "[FAILED]", "pending": "[ ]"}.get(t.status, "[?]")
-            print(f"  {status_mark} {t.file} — {t.stage}")
+            print(f"  {status_mark} {t.file} - {t.stage}")
         return 0
 
-    # --status: 显示所有任务状态
     if args.status:
         return _show_status()
 
-    # --retry-failed: 重置失败任务
     if args.retry_failed:
         return _retry_failed(pipeline)
 
-    # --review: 显示异常片段复核摘要
     if args.review:
-        return _show_review()
+        return _show_review(config.output_dir)
 
-    # --review-file: 查看指定质量报告详情
     if args.review_file:
         return _show_review_detail(Path(args.review_file))
 
-    # 运行流水线
     api_key = effective_api_key or os.environ.get("SUBTITLE_LLM_API_KEY", "")
     if config.translate and not api_key:
-        print("警告: 翻译功能已启用，但未设置 API Key。")
-        print("请通过以下方式之一设置：")
-        print("  1. Web 控制台 > 模型接口 > 新增 Provider（推荐）")
-        print("  2. --provider <id> 命令行参数")
-        print("  3. --api-key 命令行参数")
-        print("  4. SUBTITLE_LLM_API_KEY 环境变量")
-        print("如果不需要翻译，请添加 --no-translate 参数。")
+        print("Warning: translation is enabled but no API key is configured.")
+        print("Set a provider, pass --api-key, set SUBTITLE_LLM_API_KEY, or use --no-translate.")
         return 1
 
     result = pipeline.run()
@@ -964,242 +942,199 @@ def main() -> int:
 
 
 def _show_status() -> int:
-    """显示所有任务状态。"""
+    """Show all task states."""
     if not DIR_WORK_STATES.exists():
-        print("暂无任务记录。")
+        print("No task records found.")
         return 0
 
     state_files = sorted(DIR_WORK_STATES.glob("*.state.json"))
     if not state_files:
-        print("暂无任务记录。")
+        print("No task records found.")
         return 0
 
-    print(f"\n任务状态 ({len(state_files)}):\n")
-    print(f"  {'文件':<40} {'状态':<12} {'阶段':<20} {'重试'}")
-    print(f"  {'-'*40} {'-'*12} {'-'*20} {'-'*6}")
+    print(f"\nTask status ({len(state_files)}):\n")
+    print(f"  {'file':<40} {'status':<12} {'stage':<20} {'retry'}")
+    print(f"  {'-' * 40} {'-' * 12} {'-' * 20} {'-' * 6}")
 
-    for sf in state_files:
-        task = TaskState.load(sf)
+    for state_file in state_files:
+        task = TaskState.load(state_file)
         if task is None:
             continue
-        status_labels = {
-            "pending": "等待中",
-            "running": "处理中",
-            "completed": "已完成",
-            "failed": "失败",
-        }
-        stage_labels = {
-            TaskStage.PENDING: "等待开始",
-            TaskStage.EXTRACTING_AUDIO: "提取音频",
-            TaskStage.TRANSCRIBING: "转写",
-            TaskStage.TRANSLATING: "翻译",
-            TaskStage.QUALITY_CHECKING: "质检",
-            TaskStage.COMPLETED: "完成",
-            TaskStage.FAILED: f"失败({task.error_stage})",
-        }
-        status = status_labels.get(task.status, task.status)
-        stage = stage_labels.get(task.stage, task.stage)
         retry = f"{task.retry_count}/{task.max_retries}" if task.retry_count > 0 else "-"
-        print(f"  {task.file:<40} {status:<12} {stage:<20} {retry}")
-
+        print(f"  {task.file:<40} {task.status:<12} {task.stage:<20} {retry}")
         if task.error:
-            print(f"    └ 错误: {task.error[:100]}")
+            print(f"    error: {task.error[:100]}")
 
     print()
     return 0
 
 
 def _retry_failed(pipeline: BatchPipeline) -> int:
-    """仅重试之前失败的任务，不扫描 input 目录中的新文件。
-
-    与 pipeline.run() 的区别：
-    - run() 会 scan() 扫描 input/ 中所有文件并处理
-    - retry_failed() 只重置状态为 failed 的任务，仅处理这些任务
-    """
+    """Retry only tasks currently marked as failed."""
     if not DIR_WORK_STATES.exists():
-        print("暂无任务记录。")
+        print("No task records found.")
         return 0
 
     state_files = sorted(DIR_WORK_STATES.glob("*.state.json"))
-    reset_tasks: list[TaskState] = []
+    retry_plan = prepare_retry_failed_tasks(state_files)
+    for task in retry_plan.reset_tasks:
+        print(f"  reset: {task.file}")
 
-    for sf in state_files:
-        task = TaskState.load(sf)
-        if task is None:
-            continue
-        if task.status == "failed":
-            task.status = "pending"
-            task.stage = TaskStage.PENDING
-            task.error = ""
-            task.error_stage = ""
-            task.retry_count = 0
-            task.save()
-            print(f"  已重置: {task.file}")
-            reset_tasks.append(task)
-
-    if not reset_tasks:
-        print("没有失败的任务需要重试。")
+    if not retry_plan.reset_tasks:
+        print("No failed tasks need retry.")
         return 0
 
-    print(f"\n已重置 {len(reset_tasks)} 个失败任务，开始重新处理（仅处理这些任务，不扫描新文件）...\n")
+    print(
+        f"\nReset {retry_plan.reset_count} failed task(s); "
+        f"left {retry_plan.untouched_count} non-failed task(s) untouched; "
+        "retrying without scanning new files.\n"
+    )
 
-    # 只处理重置的任务，不调用 scan()
     completed = 0
     failed = 0
-    for i, task in enumerate(reset_tasks, start=1):
-        print(f"[{i}/{len(reset_tasks)}] 重试: {task.file}")
+    for i, task in enumerate(retry_plan.reset_tasks, start=1):
+        print(f"[{i}/{retry_plan.reset_count}] Retrying: {task.file}")
         try:
             pipeline._process_one(task)
             completed += 1
-            print("  [OK] 完成")
-        except Exception as exc:
+            print("  [OK] completed")
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             failed += 1
             task.status = "failed"
             task.error = str(exc)
             task.error_stage = task.stage
             task.save()
-            print(f"  [FAILED] 失败: {exc}")
+            print(f"  [FAILED] {exc}")
             traceback.print_exc()
 
-    print(f"\n重试完成: 成功 {completed}, 失败 {failed}")
+    print(f"\nRetry finished: completed {completed}, failed {failed}")
     return 0 if failed == 0 else 1
 
 
-def _show_review() -> int:
-    """显示所有质量报告中需要人工复核的异常片段摘要。
-
-    扫描 output/reports/ 目录中的所有质量报告，汇总问题，
-    按严重程度排序，让人类快速了解需要关注什么。
-    """
-    if not DIR_OUTPUT_REPORTS.exists():
-        print("暂无质检报告。")
+def _show_review(output_root: Path = DIR_OUTPUT) -> int:
+    """Show a summary of quality reports that need manual review."""
+    reports_dir = plan_pipeline_outputs(output_root, "", "", "", "bilingual").reports_dir
+    if not reports_dir.exists():
+        print("No quality reports found.")
         return 0
 
-    report_files = sorted(DIR_OUTPUT_REPORTS.glob("*.quality_report.json"))
+    report_files = sorted(reports_dir.glob("*.quality_report.json"))
     if not report_files:
-        print("暂无质检报告。")
+        print("No quality reports found.")
         return 0
 
-    print(f"\n{'='*70}")
-    print(f"  异常片段复核摘要 — {len(report_files)} 个报告")
-    print(f"{'='*70}\n")
+    print(f"\n{'=' * 70}")
+    print(f"  Review summary - {len(report_files)} report(s)")
+    print(f"{'=' * 70}\n")
 
     total_issues = 0
     total_errors = 0
     total_warnings = 0
-    all_issues: list[tuple[str, dict]] = []
 
-    for rf in report_files:
+    for report_file in report_files:
         try:
-            data = json.loads(rf.read_text(encoding="utf-8"))
+            data = read_json(report_file)
         except (OSError, json.JSONDecodeError):
             continue
 
         status = data.get("status", "?")
         summary = data.get("summary", {})
         issues = data.get("issues", [])
-
         if not issues:
             continue
 
         status_icon = {"pass": "OK", "warning": "WARN", "fail": "FAIL"}.get(status, "?")
-
-        # 提取视频名
-        video_name = rf.stem.replace(".quality_report", "")
-
+        video_name = report_file.stem.replace(".quality_report", "")
         print(f"  {status_icon} {video_name}")
-        print(f"    状态: {status} | 问题: {summary.get('total_issues', 0)} "
-              f"(错误: {summary.get('errors', 0)}, 警告: {summary.get('warnings', 0)})")
+        print(
+            f"    status: {status} | issues: {summary.get('total_issues', 0)} "
+            f"(errors: {summary.get('errors', 0)}, warnings: {summary.get('warnings', 0)})"
+        )
 
-        # 按严重度排序：error > warning > info
         severity_order = {"error": 0, "warning": 1, "info": 2}
-        sorted_issues = sorted(issues, key=lambda i: severity_order.get(i.get("severity", "info"), 99))
-
-        for issue in sorted_issues[:10]:  # 每个视频最多显示 10 个问题
+        sorted_issues = sorted(issues, key=lambda item: severity_order.get(item.get("severity", "info"), 99))
+        for issue in sorted_issues[:10]:
             icon = {"error": "ERROR", "warning": "WARN", "info": "INFO"}.get(issue.get("severity"), "?")
             idx = issue.get("index", 0)
-            idx_str = f"#{idx}" if idx > 0 else "全局"
+            idx_str = f"#{idx}" if idx > 0 else "global"
             snippet = issue.get("snippet", "")[:60]
             print(f"    {icon} {idx_str} [{issue.get('type', '?')}] {issue.get('text', '')[:80]}")
-            if snippet and snippet != "(空)":
-                print(f"       内容: {snippet}")
+            if snippet and snippet != "(empty)":
+                print(f"       content: {snippet}")
 
         if len(sorted_issues) > 10:
-            print(f"    ... 还有 {len(sorted_issues) - 10} 个问题，使用 --review-file 查看详情")
+            print(f"    ... {len(sorted_issues) - 10} more issue(s); use --review-file for details")
 
         total_issues += summary.get("total_issues", 0)
         total_errors += summary.get("errors", 0)
         total_warnings += summary.get("warnings", 0)
         print()
 
-    print(f"{'='*70}")
-    print(f"  汇总: {total_issues} 个问题 ({total_errors} 错误, {total_warnings} 警告)")
-    print(f"  报告目录: {DIR_OUTPUT_REPORTS}")
-    print(f"  复核字幕: output/reports/*.review_needed.srt")
-    print(f"{'='*70}")
-    print(f"\n提示: 使用 --review-file <报告路径> 查看完整详情")
-    print(f"      直接打开 output/reports/*.review_needed.srt 逐条复核\n")
+    print(f"{'=' * 70}")
+    print(f"  Total: {total_issues} issue(s) ({total_errors} errors, {total_warnings} warnings)")
+    print(f"  Reports: {reports_dir}")
+    print(f"  Review subtitles: {reports_dir}/*.review_needed.srt")
+    print(f"{'=' * 70}")
+    print("\nTip: use --review-file <report path> for full details.\n")
 
     return 0 if total_errors == 0 else 1
 
-
 def _show_review_detail(report_path: Path) -> int:
-    """显示单个质量报告的完整问题列表。"""
+    """Show details for one quality report."""
     if not report_path.exists():
-        print(f"报告不存在: {report_path}")
+        print(f"Report not found: {report_path}")
         return 1
 
     try:
-        data = json.loads(report_path.read_text(encoding="utf-8"))
+        data = read_json(report_path)
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"无法读取报告: {exc}")
+        print(f"Could not read report: {exc}")
         return 1
 
     status = data.get("status", "?")
     summary = data.get("summary", {})
     issues = data.get("issues", [])
 
-    print(f"\n{'='*70}")
-    print(f"  质量报告详情: {report_path.name}")
-    print(f"{'='*70}")
-    print(f"  状态: {status}")
-    print(f"  总条目: {data.get('total_entries', 0)}")
-    print(f"  原文: {data.get('source_srt', '')}")
-    print(f"  译文: {data.get('translated_srt', '')}")
-    print(f"  问题: {summary.get('total_issues', 0)} "
-          f"(错误: {summary.get('errors', 0)}, "
-          f"警告: {summary.get('warnings', 0)}, "
-          f"提示: {summary.get('info', 0)})")
+    print(f"\n{'=' * 70}")
+    print(f"  Quality report: {report_path.name}")
+    print(f"{'=' * 70}")
+    print(f"  status: {status}")
+    print(f"  total entries: {data.get('total_entries', 0)}")
+    print(f"  source: {data.get('source_srt', '')}")
+    print(f"  translated: {data.get('translated_srt', '')}")
+    print(
+        f"  issues: {summary.get('total_issues', 0)} "
+        f"(errors: {summary.get('errors', 0)}, "
+        f"warnings: {summary.get('warnings', 0)}, "
+        f"info: {summary.get('info', 0)})"
+    )
 
     issue_types = summary.get("issue_types", {})
     if issue_types:
-        print(f"\n  问题分布:")
-        for itype, count in sorted(issue_types.items(), key=lambda x: -x[1]):
-            print(f"    - {itype}: {count}")
+        print("\n  issue types:")
+        for issue_type, count in sorted(issue_types.items(), key=lambda item: -item[1]):
+            print(f"    - {issue_type}: {count}")
 
     if not issues:
-        print("\n  [OK] 没有问题")
+        print("\n  [OK] no issues")
     else:
-        print(f"\n  全部问题 ({len(issues)}):")
+        print(f"\n  all issues ({len(issues)}):")
         severity_order = {"error": 0, "warning": 1, "info": 2}
-        sorted_issues = sorted(issues, key=lambda i: severity_order.get(i.get("severity", "info"), 99))
-
+        sorted_issues = sorted(issues, key=lambda item: severity_order.get(item.get("severity", "info"), 99))
         for issue in sorted_issues:
             icon = {"error": "ERROR", "warning": "WARN", "info": "INFO"}.get(issue.get("severity"), "?")
             idx = issue.get("index", 0)
-            idx_str = f"#{idx}" if idx > 0 else "全局"
+            idx_str = f"#{idx}" if idx > 0 else "global"
             print(f"\n    {icon} {idx_str} [{issue.get('type', '?')}]")
-            print(f"       描述: {issue.get('text', '')}")
+            print(f"       description: {issue.get('text', '')}")
             snippet = issue.get("snippet", "")
-            if snippet and snippet != "(空)":
-                print(f"       内容: {snippet}")
-            suggestion = issue.get("suggestion", "")
-            if suggestion:
-                print(f"       建议: {suggestion}")
+            if snippet and snippet != "(empty)":
+                print(f"       content: {snippet}")
 
-    print(f"\n{'='*70}\n")
-    return 0
-
+    print()
+    return 0 if status != "fail" else 1
 
 if __name__ == "__main__":
     raise SystemExit(main())
