@@ -4,13 +4,27 @@ param(
 
     [string]$Model = "small",
     [ValidateSet("cpu", "cuda", "auto")]
-    [string]$Device = "cpu",
+    [string]$Device = "auto",
     [string]$ComputeType = "",
     [string]$Language = "",
-    [string]$OutputDir = "output"
+    [string]$OutputDir = "output",
+    [string]$SubtitleFormats = "srt",
+    [string]$AssStyleId = "clean-cn"
 )
 
 $ErrorActionPreference = "Stop"
+
+try {
+    chcp 65001 > $null
+    $Utf8NoBom = [System.Text.UTF8Encoding]::new()
+    [Console]::InputEncoding = $Utf8NoBom
+    [Console]::OutputEncoding = $Utf8NoBom
+    $OutputEncoding = $Utf8NoBom
+} catch {
+    # Best effort for older PowerShell hosts.
+}
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
@@ -32,7 +46,9 @@ $argsList = @(
     "--device", $Device,
     "--output-dir", $OutputDir,
     "--model-dir", "models",
-    "--work-dir", "work"
+    "--work-dir", "work",
+    "--subtitle-formats", $SubtitleFormats,
+    "--ass-style-id", $AssStyleId
 )
 
 if ($ComputeType -ne "") {
@@ -44,4 +60,3 @@ if ($Language -ne "") {
 }
 
 & ".\.venv\Scripts\python.exe" @argsList
-

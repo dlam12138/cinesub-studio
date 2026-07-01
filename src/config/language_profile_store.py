@@ -18,8 +18,16 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
+from encoding_utils import read_json
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "language_profiles.local.json"
+DEFAULT_SUBTITLE_STYLE: dict = {
+    "formats": ["srt"],
+    "ass_style_id": "clean-cn",
+    "enabled": False,
+    "note": "ASS output is reserved for a future version.",
+}
 
 _cache: dict | None = None
 _cache_lock = threading.Lock()
@@ -178,8 +186,7 @@ def _load_raw() -> dict:
             _cache_mtime = 0.0
             return _cache
         try:
-            raw = CONFIG_PATH.read_text(encoding="utf-8")
-            data = json.loads(raw)
+            data = read_json(CONFIG_PATH)
             data.setdefault("version", 1)
             data.setdefault("active", "auto-detect")
             data.setdefault("profiles", [])
@@ -227,15 +234,33 @@ def _merge_with_defaults(local_profiles: list[dict]) -> list[dict]:
     """合并内置默认和本地配置。本地优先（相同 id 则覆盖内置）。"""
     merged: dict[str, dict] = {}
     for bp in BUILTIN_PROFILES:
-        merged[bp["id"]] = deepcopy(bp)
+        merged[bp["id"]] = _with_subtitle_style(deepcopy(bp))
     for lp in local_profiles:
         pid = lp.get("id", "")
         if not pid:
             continue
         copy = deepcopy(lp)
         copy["builtin"] = merged[pid]["builtin"] if pid in merged else False
-        merged[pid] = copy
+        merged[pid] = _with_subtitle_style(copy)
     return sorted(merged.values(), key=lambda p: (not p.get("builtin", False), p.get("id", "")))
+
+
+def _with_subtitle_style(profile: dict) -> dict:
+    style = deepcopy(DEFAULT_SUBTITLE_STYLE)
+    incoming = profile.get("subtitle_style")
+    if isinstance(incoming, dict):
+        style.update(incoming)
+    formats = style.get("formats")
+    if isinstance(formats, str):
+        formats = [item.strip() for item in formats.split(",") if item.strip()]
+    if not isinstance(formats, list) or not formats:
+        formats = ["srt"]
+    if "srt" not in formats:
+        formats.insert(0, "srt")
+    style["formats"] = formats
+    style["enabled"] = False
+    profile["subtitle_style"] = style
+    return profile
 
 
 def list_language_profiles() -> list[dict]:
@@ -250,10 +275,10 @@ def get_language_profile(profile_id: str) -> dict | None:
     data = _load_raw()
     for p in data.get("profiles", []):
         if p.get("id") == profile_id:
-            return deepcopy(p)
+            return _with_subtitle_style(deepcopy(p))
     for bp in BUILTIN_PROFILES:
         if bp["id"] == profile_id:
-            return deepcopy(bp)
+            return _with_subtitle_style(deepcopy(bp))
     return None
 
 
@@ -316,6 +341,7 @@ def upsert_language_profile(profile_data: dict) -> dict:
             "polish_translation": profile_data.get("llm_stages", {}).get("polish_translation", False) is True,
         },
         "translation_style": (profile_data.get("translation_style") or "").strip(),
+        "subtitle_style": _with_subtitle_style({"subtitle_style": profile_data.get("subtitle_style", {})})["subtitle_style"],
     }
 
     # 如果 source_language 不是 auto，同步设置 asr.language
@@ -422,6 +448,7 @@ def resolve_language_profile_config(profile_id: str | None = None) -> dict:
         "asr": profile.get("asr", {}),
         "quality": profile.get("quality", {}),
         "translation_style": profile.get("translation_style", ""),
+        "subtitle_style": _with_subtitle_style(deepcopy(profile)).get("subtitle_style", deepcopy(DEFAULT_SUBTITLE_STYLE)),
         "llm_stages": profile.get("llm_stages", {}),
         "profile_id": profile.get("id", "auto-detect"),
         "profile_name": profile.get("name", "自动识别语言"),

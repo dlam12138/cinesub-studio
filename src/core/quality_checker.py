@@ -18,6 +18,11 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from encoding_utils import read_json, read_text as read_utf8_text, write_json
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 # ── 问题类型定义 ─────────────────────────────────────────────────────────
 
@@ -111,7 +116,7 @@ class SrtEntry:
 
 def parse_srt(path: Path) -> list[SrtEntry]:
     """解析 SRT 文件，返回带时间戳浮点数的条目列表。"""
-    raw = path.read_text(encoding="utf-8").strip()
+    raw = read_utf8_text(path, user_input=True).strip()
     entries: list[SrtEntry] = []
     blocks = re.split(r"\n\s*\n", raw)
 
@@ -168,7 +173,7 @@ def check_source_srt(
     """
     if quality_thresholds is None:
         quality_thresholds = {}
-    raw_text = srt_path.read_text(encoding="utf-8")
+    raw_text = read_utf8_text(srt_path, user_input=True)
     entries = parse_srt(srt_path)
     report = QualityReport(
         source_srt=str(srt_path),
@@ -300,8 +305,7 @@ def check_translation_quality(
         lang_json_path = source_srt.with_suffix(".lang.json")
         if lang_json_path.exists():
             try:
-                import json as _json2
-                lang_data = _json2.loads(lang_json_path.read_text(encoding="utf-8"))
+                lang_data = read_json(lang_json_path)
                 prob = lang_data.get("language_probability")
                 forced = lang_data.get("forced_language")
                 if prob is not None:
@@ -720,10 +724,7 @@ def _finalize_report(report: QualityReport) -> None:
 def save_quality_report(report: QualityReport, output_path: Path) -> None:
     """保存质量报告为 JSON 文件。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    write_json(output_path, report.to_dict())
 
 
 def generate_review_srt(
@@ -839,7 +840,7 @@ def run_quality_check(
     lang_json_path = source_srt.with_suffix(".lang.json")
     if lang_json_path.exists():
         try:
-            lang_json = json.loads(lang_json_path.read_text(encoding="utf-8"))
+            lang_json = read_json(lang_json_path)
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -910,10 +911,12 @@ def _cli() -> int:
 
 def _self_test() -> int:
     """自测：用已知有问题的 SRT 数据验证检测规则。"""
-    import tempfile
-
     errors: list[str] = []
-    temp_dir = Path(tempfile.mkdtemp(prefix="qc_test_"))
+    temp_dir = PROJECT_ROOT / ".tmp" / "quality_checker_self_test"
+    if temp_dir.exists():
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         # 构造包含多种问题的测试 SRT
@@ -1053,7 +1056,7 @@ UNESCO
         if not report_path.exists():
             errors.append("质量报告 JSON 未成功保存")
 
-        loaded = json.loads(report_path.read_text(encoding="utf-8"))
+        loaded = read_json(report_path)
         if loaded.get("status") != "fail":
             errors.append(f"JSON 报告状态不正确: {loaded.get('status')}")
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
-import http.client
 import hashlib
+import http.client
+import json
 import re
 import shutil
 import sys
@@ -11,6 +11,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
+
+from encoding_utils import read_json, read_text as read_utf8_text, write_json
 
 
 @dataclass
@@ -23,7 +25,7 @@ class SubtitleItem:
 
 def read_srt(path: Path) -> list[SubtitleItem]:
     """Parse an SRT file into a list of SubtitleItem objects."""
-    raw = path.read_text(encoding="utf-8").strip()
+    raw = read_utf8_text(path, user_input=True).strip()
     items: list[SubtitleItem] = []
     blocks = re.split(r"\n\s*\n", raw)
 
@@ -92,7 +94,7 @@ def _load_translation_cache(path: Path) -> dict[int, str]:
     if not path.exists():
         return {}
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = read_json(path)
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(raw, dict):
@@ -110,7 +112,7 @@ def _save_translation_cache(path: Path, translations: dict[int, str]) -> None:
     payload = {
         "translations": {str(key): value for key, value in sorted(translations.items())}
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(path, payload)
 
 
 def translate_srt(

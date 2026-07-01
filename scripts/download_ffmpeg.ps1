@@ -5,13 +5,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Ensure UTF-8 output on Windows PowerShell / PowerShell Core.
 try {
-    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    $OutputEncoding = [System.Text.Encoding]::UTF8
+    chcp 65001 > $null
+    $Utf8NoBom = [System.Text.UTF8Encoding]::new()
+    [Console]::InputEncoding = $Utf8NoBom
+    [Console]::OutputEncoding = $Utf8NoBom
+    $OutputEncoding = $Utf8NoBom
 } catch {
-    # Best effort only.
+    # Best effort for older PowerShell hosts.
 }
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 
 function Write-Step {
     param([string]$Message)

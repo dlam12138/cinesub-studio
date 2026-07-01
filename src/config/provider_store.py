@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+from encoding_utils import read_json, read_text as read_utf8_text, write_json, write_text
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_DIR = PROJECT_ROOT / "config"
 CONFIG_PATH = CONFIG_DIR / "providers.local.json"
@@ -70,8 +72,7 @@ def _load_raw() -> dict:
             _cache_mtime = 0.0
             return _cache
         try:
-            raw = CONFIG_PATH.read_text(encoding="utf-8")
-            data = json.loads(raw)
+            data = read_json(CONFIG_PATH)
             data.setdefault("version", 2)
             data.setdefault("active", "")
             data.setdefault("providers", [])
@@ -91,10 +92,7 @@ def _save_raw(data: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not CONFIG_PATH.exists():
         try:
-            CONFIG_PATH.write_text(
-                json.dumps(DEFAULT_EMPTY_CONFIG, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            write_json(CONFIG_PATH, DEFAULT_EMPTY_CONFIG)
         except FileExistsError:
             pass
     # 保存前清理旧字段
@@ -115,12 +113,12 @@ def _save_raw(data: dict) -> None:
             # target was not updated, fall back to a direct write so the local
             # UI remains usable.
             try:
-                if CONFIG_PATH.exists() and CONFIG_PATH.read_text(encoding="utf-8") == payload:
+                if CONFIG_PATH.exists() and read_utf8_text(CONFIG_PATH) == payload:
                     replaced = True
             except OSError:
                 pass
             if not replaced:
-                CONFIG_PATH.write_text(payload, encoding="utf-8")
+                write_text(CONFIG_PATH, payload)
     except Exception:
         _scrub_temp_file(tmp)
         try: os.unlink(tmp)
@@ -138,10 +136,7 @@ def _save_raw(data: dict) -> None:
 def _scrub_temp_file(path: str) -> None:
     try:
         if os.path.exists(path):
-            Path(path).write_text(
-                json.dumps(DEFAULT_EMPTY_CONFIG, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            write_json(path, DEFAULT_EMPTY_CONFIG)
     except OSError:
         pass
 

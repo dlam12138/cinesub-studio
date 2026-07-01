@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 import zipfile
 from pathlib import Path
 from urllib.request import urlopen
 
+from encoding_utils import run_text
 from ffmpeg_locator import find_ffmpeg
 
 
@@ -75,10 +75,9 @@ def _extract_binaries(zip_path: Path) -> None:
 
 
 def _verify_binary(path: Path) -> str:
-    result = subprocess.run(
+    result = run_text(
         [str(path), "-version"],
         capture_output=True,
-        text=True,
         check=True,
     )
     return result.stdout.splitlines()[0] if result.stdout else str(path)

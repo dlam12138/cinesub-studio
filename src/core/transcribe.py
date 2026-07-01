@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -16,7 +15,14 @@ for _sub in ("core", "pipeline", "config", "web", "tools"):
     if _subpath not in sys.path:
         sys.path.insert(0, _subpath)
 
+from encoding_utils import run_text, write_json
 from ffmpeg_locator import find_ffmpeg
+from runtime_env import add_project_cuda_to_process, choose_device, default_compute_type
+from subtitle_model import (
+    ASS_RESERVED_MESSAGE,
+    DEFAULT_ASS_STYLE_ID,
+    normalize_subtitle_formats,
+)
 
 
 VIDEO_EXTENSIONS = {
@@ -45,6 +51,9 @@ AUDIO_EXTENSIONS = {
 def main() -> int:
     args = parse_args()
     project_root = Path(__file__).resolve().parent.parent.parent
+    subtitle_formats = normalize_subtitle_formats(args.subtitle_formats)
+    args.subtitle_formats = ",".join(subtitle_formats)
+    args.ass_style_id = args.ass_style_id or DEFAULT_ASS_STYLE_ID
 
     input_path = Path(args.input).expanduser().resolve()
     if not input_path.exists():
@@ -87,6 +96,9 @@ def main() -> int:
         mode_tag = "bilingual" if args.translation_mode == "bilingual" else "translated"
         translated_path = output_dir / f"{input_path.stem}.{args.model}.{mode_tag}.{args.target_language}.srt"
         print(f"Done: {translated_path}")
+
+    if "ass" in subtitle_formats:
+        print(f"ASS: {ASS_RESERVED_MESSAGE}")
 
     return 0
 
@@ -135,7 +147,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("input", help="Input video or audio file.")
     parser.add_argument("--model", default="small", help="Whisper model name. Example: tiny, base, small, medium, large-v3.")
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "auto"], help="Run device.")
+    parser.add_argument("--device", default="auto", choices=["cpu", "cuda", "auto"], help="Run device. auto prefers CUDA and falls back to CPU.")
     parser.add_argument(
         "--compute-type",
         default=None,
@@ -167,6 +179,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-window", type=int, default=3, help="Context window size for translation.")
     parser.add_argument("--translation-prompt", default="", help="Custom translation system prompt.")
     parser.add_argument("--language-profile", default="", help="Language Profile ID for ASR and translation settings.")
+    parser.add_argument("--subtitle-formats", default=None, help="Subtitle output formats. SRT is always enabled; ASS is reserved.")
+    parser.add_argument("--ass-style-id", default=None, help="Reserved ASS style id. No .ass file is generated in this version.")
 
     args = parser.parse_args()
 
@@ -199,6 +213,13 @@ def parse_args() -> argparse.Namespace:
                     args.translation_prompt = profile["translation_style"]
                 if not _explicit("--target-language") and profile.get("target_language"):
                     args.target_language = profile["target_language"]
+                subtitle_style = profile.get("subtitle_style", {})
+                if isinstance(subtitle_style, dict):
+                    if not _explicit("--subtitle-formats") and subtitle_style.get("formats"):
+                        formats = subtitle_style.get("formats")
+                        args.subtitle_formats = ",".join(formats) if isinstance(formats, list) else str(formats)
+                    if not _explicit("--ass-style-id") and subtitle_style.get("ass_style_id"):
+                        args.ass_style_id = subtitle_style["ass_style_id"]
             else:
                 print(f"Warning: Language Profile '{profile_id}' not found, using CLI args", file=sys.stderr)
         except Exception as exc:
@@ -251,7 +272,7 @@ def convert_to_whisper_wav(input_path: Path, audio_path: Path) -> None:
     ]
 
     print(f"Extracting audio: {audio_path}")
-    result = subprocess.run(command, capture_output=True, text=True)
+    result = run_text(command, capture_output=True)
     if result.returncode != 0:
         print(result.stderr, file=sys.stderr)
         raise SystemExit("ffmpeg failed to extract audio.")
@@ -279,12 +300,22 @@ def transcribe_to_srt(
         {"source_language": "ja", "language_probability": 0.94, "model": "large-v3"}
     """
     try:
+        add_project_cuda_to_process()
         from faster_whisper import WhisperModel
     except ImportError as exc:
         raise SystemExit("faster-whisper is not installed. Run .\\install.ps1 first.") from exc
 
-    if compute_type is None:
-        compute_type = "float16" if device == "cuda" else "int8"
+    try:
+        device, device_warnings = choose_device(device)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
+    for warning in device_warnings:
+        print(f"Warning: {warning}")
+    compute_type = default_compute_type(device, compute_type)
+    if language is not None:
+        language = language.strip() or None
+        if language == "auto":
+            language = None
 
     print(f"Loading model: {model_name}")
     print(f"Model dir: {model_dir}")
@@ -358,11 +389,7 @@ def transcribe_to_srt(
     if lang_info is not None:
         lang_json_path = srt_path.with_suffix(".lang.json")
         tmp_lang_json_path = lang_json_path.with_name(f"{lang_json_path.name}.tmp")
-        import json as _json
-        tmp_lang_json_path.write_text(
-            _json.dumps(lang_info, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json(tmp_lang_json_path, lang_info)
         _replace_output_file(tmp_lang_json_path, lang_json_path)
         print(f"Language detection saved: {lang_json_path}")
 
