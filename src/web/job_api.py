@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import threading
@@ -9,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 
-from runtime_env import add_project_cuda_to_env
+from process_env import build_child_process_env, redact_project_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -429,33 +428,8 @@ def mask_secret(value: str) -> str:
 
 
 def clean_log_line(line: str) -> str:
-    project = str(PROJECT_ROOT)
-    project_alt = project.replace("\\", "/")
-    return line.replace(project, ".").replace(project_alt, ".")
+    return redact_project_path(line, PROJECT_ROOT)
 
 
 def _job_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
-    env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
-    src = PROJECT_ROOT / "src"
-    env["PYTHONPATH"] = ";".join(str(src / sub) for sub in ["core", "pipeline", "config", "web", "tools"])
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
-    _clear_proxy_env(env)
-    add_project_cuda_to_env(env)
-    return env
-
-
-def _clear_proxy_env(env: dict[str, str]) -> None:
-    for key in (
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "ALL_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "all_proxy",
-        "GIT_HTTP_PROXY",
-        "GIT_HTTPS_PROXY",
-    ):
-        env.pop(key, None)
+    return build_child_process_env(PROJECT_ROOT)

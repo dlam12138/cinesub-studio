@@ -64,6 +64,7 @@ acceptance/*
 !acceptance/milestone_*.md
 !acceptance/m5_5_e2e_feasibility.md
 !acceptance/m6_0_delivery_readiness.md
+!acceptance/m6_1_maintainability_release_hygiene.md
 acceptance/screenshots/
 acceptance/tmp/
 data/
