@@ -69,16 +69,18 @@ EXCLUDED_FILE_SUFFIXES = {
     ".vtt",
 }
 
-FORBIDDEN_SNIPPETS = [
-    "\ufffd",
-    "妯″瀷",
-    "鎺ュ",
-    "鈹€",
-    "鈺愨",
-    "鏃犳硶",
-    "瑙ｆ瀽",
-    "璺緞",
+FORBIDDEN_CODEPOINTS = [
+    (0xFFFD,),
+    (0x59AF, 0x2033, 0x7037),
+    (0x93BA, 0x30E5),
+    (0x9239, 0x20AC),
+    (0x923A, 0x6128),
+    (0x93C3, 0x72B3, 0x7876),
+    (0x7459, 0xFF46, 0x703D),
+    (0x74BA, 0xE21A, 0x7DDE),
 ]
+
+FORBIDDEN_SNIPPETS = ["".join(chr(codepoint) for codepoint in item) for item in FORBIDDEN_CODEPOINTS]
 
 
 def _is_under_excluded_dir(path: Path) -> bool:
