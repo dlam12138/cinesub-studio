@@ -745,7 +745,7 @@ def _inspect_input_file(body: dict) -> dict:
     except OSError as exc:
         return {
             "ok": False,
-            "error": f"璺緞鏃犳硶瑙ｆ瀽: {exc}",
+            "error": f"路径无法解析: {exc}",
             "path": path_text,
             "exists": False,
             "supported": False,
