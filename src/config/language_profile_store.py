@@ -28,6 +28,18 @@ DEFAULT_SUBTITLE_STYLE: dict = {
     "enabled": False,
     "note": "ASS output is reserved for a future version.",
 }
+SECRET_FIELD_MARKERS = (
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "client_secret",
+    "authorization",
+    "password",
+    "bearer",
+)
 
 _cache: dict | None = None
 _cache_lock = threading.Lock()
@@ -226,6 +238,48 @@ def _clear_cache() -> None:
         _cache_mtime = 0.0
 
 
+def _is_secret_field(key: object) -> bool:
+    lowered = str(key).lower()
+    return any(marker in lowered for marker in SECRET_FIELD_MARKERS)
+
+
+def remove_secret_fields(value):
+    """Return a copy with provider/API secret-looking fields removed."""
+    if isinstance(value, dict):
+        clean = {}
+        for key, item in value.items():
+            if _is_secret_field(key):
+                continue
+            clean[key] = remove_secret_fields(item)
+        return clean
+    if isinstance(value, list):
+        return [remove_secret_fields(item) for item in value]
+    return value
+
+
+def normalize_glossary(raw) -> list[dict]:
+    """Normalize profile glossary rows and drop incomplete entries."""
+    if not isinstance(raw, list):
+        return []
+
+    result: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        source = str(entry.get("source") or "").strip()
+        target = str(entry.get("target") or "").strip()
+        note = str(entry.get("note") or "").strip()
+        if not source or not target:
+            continue
+        key = (source, target)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"source": source, "target": target, "note": note})
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 查询 API
 # ═══════════════════════════════════════════════════════════════════════════
@@ -234,14 +288,14 @@ def _merge_with_defaults(local_profiles: list[dict]) -> list[dict]:
     """合并内置默认和本地配置。本地优先（相同 id 则覆盖内置）。"""
     merged: dict[str, dict] = {}
     for bp in BUILTIN_PROFILES:
-        merged[bp["id"]] = _with_subtitle_style(deepcopy(bp))
+        merged[bp["id"]] = _with_profile_defaults(deepcopy(bp))
     for lp in local_profiles:
         pid = lp.get("id", "")
         if not pid:
             continue
-        copy = deepcopy(lp)
+        copy = remove_secret_fields(deepcopy(lp))
         copy["builtin"] = merged[pid]["builtin"] if pid in merged else False
-        merged[pid] = _with_subtitle_style(copy)
+        merged[pid] = _with_profile_defaults(copy)
     return sorted(merged.values(), key=lambda p: (not p.get("builtin", False), p.get("id", "")))
 
 
@@ -263,6 +317,13 @@ def _with_subtitle_style(profile: dict) -> dict:
     return profile
 
 
+def _with_profile_defaults(profile: dict) -> dict:
+    profile = remove_secret_fields(profile)
+    profile = _with_subtitle_style(profile)
+    profile["glossary"] = normalize_glossary(profile.get("glossary", []))
+    return profile
+
+
 def list_language_profiles() -> list[dict]:
     """返回所有 language profiles（合并默认 + 本地）。"""
     data = _load_raw()
@@ -275,10 +336,10 @@ def get_language_profile(profile_id: str) -> dict | None:
     data = _load_raw()
     for p in data.get("profiles", []):
         if p.get("id") == profile_id:
-            return _with_subtitle_style(deepcopy(p))
+            return _with_profile_defaults(deepcopy(p))
     for bp in BUILTIN_PROFILES:
         if bp["id"] == profile_id:
-            return _with_subtitle_style(deepcopy(bp))
+            return _with_profile_defaults(deepcopy(bp))
     return None
 
 
@@ -287,7 +348,7 @@ def get_active_language_profile() -> dict:
     data = _load_raw()
     active_id = data.get("active", "auto-detect") or "auto-detect"
     profile = get_language_profile(active_id)
-    return profile if profile else deepcopy(BUILTIN_PROFILES[0])
+    return profile if profile else _with_profile_defaults(deepcopy(BUILTIN_PROFILES[0]))
 
 
 def set_active_language_profile(profile_id: str) -> None:
@@ -306,6 +367,7 @@ def set_active_language_profile(profile_id: str) -> None:
 
 def upsert_language_profile(profile_data: dict) -> dict:
     """新增或更新本地 language profile。"""
+    profile_data = remove_secret_fields(profile_data)
     pid = (profile_data.get("id") or "").strip()
     if not pid:
         raise ValueError("Profile ID 不能为空")
@@ -342,6 +404,7 @@ def upsert_language_profile(profile_data: dict) -> dict:
         },
         "translation_style": (profile_data.get("translation_style") or "").strip(),
         "subtitle_style": _with_subtitle_style({"subtitle_style": profile_data.get("subtitle_style", {})})["subtitle_style"],
+        "glossary": normalize_glossary(profile_data.get("glossary", [])),
     }
 
     # 如果 source_language 不是 auto，同步设置 asr.language
@@ -357,11 +420,11 @@ def upsert_language_profile(profile_data: dict) -> dict:
     found = False
     for i, p in enumerate(profiles):
         if p.get("id") == pid:
-            profiles[i] = new_p
+            profiles[i] = remove_secret_fields(new_p)
             found = True
             break
     if not found:
-        profiles.append(new_p)
+        profiles.append(remove_secret_fields(new_p))
         if len(profiles) == 1 and not data.get("active"):
             data["active"] = pid
     data["profiles"] = profiles
@@ -440,7 +503,7 @@ def resolve_language_profile_config(profile_id: str | None = None) -> dict:
         profile = get_active_language_profile()
 
     if not profile:
-        profile = deepcopy(BUILTIN_PROFILES[0])
+        profile = _with_profile_defaults(deepcopy(BUILTIN_PROFILES[0]))
 
     return {
         "source_language": profile.get("source_language", "auto"),
@@ -449,6 +512,7 @@ def resolve_language_profile_config(profile_id: str | None = None) -> dict:
         "quality": profile.get("quality", {}),
         "translation_style": profile.get("translation_style", ""),
         "subtitle_style": _with_subtitle_style(deepcopy(profile)).get("subtitle_style", deepcopy(DEFAULT_SUBTITLE_STYLE)),
+        "glossary": normalize_glossary(profile.get("glossary", [])),
         "llm_stages": profile.get("llm_stages", {}),
         "profile_id": profile.get("id", "auto-detect"),
         "profile_name": profile.get("name", "自动识别语言"),

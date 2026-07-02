@@ -846,7 +846,13 @@ Examples:
         lang_profile_config.get("target_language"),
         "zh-CN"
     )
-    effective_translation_prompt = args.translation_prompt or lang_profile_config.get("translation_style", "")
+    from subtitle_translate import build_effective_translation_prompt
+
+    effective_translation_prompt = build_effective_translation_prompt(
+        style_prompt=lang_profile_config.get("translation_style", ""),
+        custom_prompt=args.translation_prompt,
+        glossary=lang_profile_config.get("glossary", []),
+    )
     lp_subtitle_style = lang_profile_config.get("subtitle_style", {})
     effective_subtitle_formats = normalize_subtitle_formats(
         args.subtitle_formats if _explicit("--subtitle-formats") else lp_subtitle_style.get("formats", ["srt"])
@@ -863,6 +869,7 @@ Examples:
         "source_language": lang_profile_config.get("source_language", "auto"),
         "quality_thresholds": lang_profile_config.get("quality", {}),
         "translation_style": lang_profile_config.get("translation_style", ""),
+        "glossary": lang_profile_config.get("glossary", []),
         "subtitle_style": lang_profile_config.get("subtitle_style", {}),
         "llm_stages": lang_profile_config.get("llm_stages", {}),
     }

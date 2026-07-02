@@ -123,7 +123,13 @@ def _run_translation(args: argparse.Namespace, srt_path: Path, output_dir: Path)
     mode_tag = "bilingual" if args.translation_mode == "bilingual" else "translated"
     translated_path = output_dir / f"{Path(args.input).stem}.{args.model}.{mode_tag}.{args.target_language}.srt"
 
-    from subtitle_translate import translate_srt
+    from subtitle_translate import build_effective_translation_prompt, translate_srt
+
+    effective_prompt = build_effective_translation_prompt(
+        style_prompt=getattr(args, "profile_translation_style", ""),
+        custom_prompt=args.translation_prompt,
+        glossary=getattr(args, "profile_glossary", []),
+    )
 
     translate_srt(
         input_path=srt_path,
@@ -136,7 +142,7 @@ def _run_translation(args: argparse.Namespace, srt_path: Path, output_dir: Path)
         batch_size=args.translation_batch_size,
         temperature=args.translation_temperature,
         translation_mode=args.translation_mode,
-        system_prompt=args.translation_prompt,
+        system_prompt=effective_prompt,
         context_window=args.context_window,
     )
 
@@ -183,6 +189,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ass-style-id", default=None, help="Reserved ASS style id. No .ass file is generated in this version.")
 
     args = parser.parse_args()
+    args.profile_translation_style = ""
+    args.profile_glossary = []
 
     # Determine which CLI args were explicitly set (by checking sys.argv)
     raw_argv = [a.split("=")[0] for a in sys.argv[1:]]
@@ -209,8 +217,8 @@ def parse_args() -> argparse.Namespace:
                     args.beam_size = asr["beam_size"]
                 if not _explicit("--no-vad") and asr.get("vad_filter") is False:
                     args.no_vad = True
-                if not _explicit("--translation-prompt") and profile.get("translation_style"):
-                    args.translation_prompt = profile["translation_style"]
+                args.profile_translation_style = profile.get("translation_style", "")
+                args.profile_glossary = profile.get("glossary", [])
                 if not _explicit("--target-language") and profile.get("target_language"):
                     args.target_language = profile["target_language"]
                 subtitle_style = profile.get("subtitle_style", {})

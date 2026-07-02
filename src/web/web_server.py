@@ -52,6 +52,23 @@ def redact_secret(value: str) -> str:
     return value[:3] + "***" + value[-4:]
 
 
+def _is_secret_like_key(key: object) -> bool:
+    lowered = str(key).lower()
+    markers = (
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "token",
+        "secret",
+        "client_secret",
+        "authorization",
+        "password",
+        "bearer",
+    )
+    return any(marker in lowered for marker in markers)
+
+
 def main() -> int:
     host = "127.0.0.1"
     port = int(os.environ.get("SUBTITLE_WEB_PORT", "7860"))
@@ -171,6 +188,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/storage/status":
             self.send_json(_storage_status())
+            return
+
+        if parsed.path == "/api/translation/effective-config":
+            query = parse_qs(parsed.query)
+            self.send_json(_effective_translation_config(query))
             return
 
         # Provider API
@@ -495,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
             redacted = {}
             for key, value in obj.items():
                 lowered = str(key).lower()
-                if "api_key" in lowered or lowered in {"key", "token", "secret"}:
+                if _is_secret_like_key(lowered):
                     redacted[key] = redact_secret(str(value or ""))
                 else:
                     redacted[key] = self._redact_payload(value)
@@ -598,6 +620,112 @@ def _runtime_diagnostics() -> dict:
     from runtime_api import get_runtime_diagnostics
 
     return get_runtime_diagnostics()
+
+
+def _first_query_value(query: dict, key: str) -> str:
+    values = query.get(key) or [""]
+    return str(values[0] or "").strip()
+
+
+def _effective_translation_config(query: dict | None = None) -> dict:
+    """Resolve selected translation config without writing any local state."""
+    query = query or {}
+    provider_id = _first_query_value(query, "provider_id") or _first_query_value(query, "provider")
+    profile_id = _first_query_value(query, "language_profile_id") or _first_query_value(query, "language_profile")
+    warnings: list[str] = []
+
+    provider_summary = {
+        "id": "",
+        "name": "",
+        "protocol": "",
+        "model": "",
+        "api_key_present": False,
+        "api_key_masked": "",
+        "status": "not_configured",
+    }
+    try:
+        from provider_store import get_active_provider, get_provider, mask_api_key
+
+        provider = get_provider(provider_id) if provider_id else get_active_provider()
+        if provider:
+            api_key = str(provider.get("api_key") or "")
+            provider_summary = {
+                "id": str(provider.get("id") or ""),
+                "name": str(provider.get("name") or provider.get("id") or ""),
+                "protocol": str(provider.get("protocol") or "openai-compatible"),
+                "model": str(provider.get("translation_model") or ""),
+                "api_key_present": bool(api_key),
+                "api_key_masked": mask_api_key(api_key) if api_key else "",
+                "status": "ok" if provider.get("enabled", True) else "disabled",
+            }
+            if not provider_summary["model"]:
+                warnings.append("Selected Provider has no translation model.")
+            if not api_key:
+                warnings.append("Selected Provider has no API key.")
+        else:
+            warnings.append("No Provider is configured for translation.")
+    except Exception as exc:
+        provider_summary["status"] = "error"
+        warnings.append(f"Provider preview failed: {exc}")
+
+    profile_summary = {
+        "id": "",
+        "name": "",
+        "type": "default",
+        "source_language": "auto",
+        "target_language": "zh-CN",
+        "style_present": False,
+        "glossary_count": 0,
+        "quality": {},
+        "quality_source": "default",
+        "status": "not_configured",
+    }
+    try:
+        from language_profile_store import (
+            get_active_language_profile,
+            get_language_profile,
+            list_language_profiles,
+            normalize_glossary,
+        )
+
+        profile = get_language_profile(profile_id) if profile_id else get_active_language_profile()
+        listed = {p.get("id"): p for p in list_language_profiles()}
+        if profile:
+            listed_profile = listed.get(profile.get("id"), profile)
+            glossary = normalize_glossary(profile.get("glossary", []))
+            is_builtin = bool(listed_profile.get("builtin", False))
+            profile_summary = {
+                "id": str(profile.get("id") or ""),
+                "name": str(profile.get("name") or profile.get("id") or ""),
+                "type": "builtin" if is_builtin else "local",
+                "source_language": str(profile.get("source_language") or "auto"),
+                "target_language": str(profile.get("target_language") or "zh-CN"),
+                "style_present": bool(str(profile.get("translation_style") or "").strip()),
+                "glossary_count": len(glossary),
+                "quality": profile.get("quality", {}) if isinstance(profile.get("quality"), dict) else {},
+                "quality_source": "builtin" if is_builtin else "local",
+                "status": "ok",
+            }
+        else:
+            warnings.append("No Language Profile is configured.")
+    except Exception as exc:
+        profile_summary["status"] = "error"
+        warnings.append(f"Language Profile preview failed: {exc}")
+
+    return {
+        "ok": True,
+        "provider": provider_summary,
+        "language_profile": profile_summary,
+        "prompt_behavior": {
+            "custom_prompt_overrides_profile_style": True,
+            "glossary_always_appended": True,
+        },
+        "cache_behavior": {
+            "key_includes_effective_prompt": True,
+            "note": "Translation cache entries vary by effective prompt; style or glossary changes create separate cache entries.",
+        },
+        "warnings": warnings,
+    }
 
 
 def _runtime_download_plan(components: list[str] | None = None) -> dict:

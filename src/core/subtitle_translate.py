@@ -115,6 +115,44 @@ def _save_translation_cache(path: Path, translations: dict[int, str]) -> None:
     write_json(path, payload)
 
 
+def build_effective_translation_prompt(
+    style_prompt: str = "",
+    custom_prompt: str = "",
+    glossary: list[dict] | None = None,
+) -> str:
+    """Build the profile/custom supplemental prompt used for translation.
+
+    A custom prompt replaces the profile style text, but glossary terms are
+    always appended so profile terminology still applies.
+    """
+    base = (custom_prompt or "").strip() or (style_prompt or "").strip()
+    parts: list[str] = []
+    if base:
+        parts.append(base)
+
+    glossary_lines: list[str] = []
+    for entry in glossary or []:
+        if not isinstance(entry, dict):
+            continue
+        source = str(entry.get("source") or "").strip()
+        target = str(entry.get("target") or "").strip()
+        note = str(entry.get("note") or "").strip()
+        if not source or not target:
+            continue
+        line = f"- {source} => {target}"
+        if note:
+            line += f" ({note})"
+        glossary_lines.append(line)
+
+    if glossary_lines:
+        parts.append(
+            "Glossary terms. Use these translations consistently:\n"
+            + "\n".join(glossary_lines)
+        )
+
+    return "\n\n".join(parts)
+
+
 def translate_srt(
     input_path: Path,
     output_path: Path,
