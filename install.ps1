@@ -1,3 +1,14 @@
+<#
+.SYNOPSIS
+Create or update the project-local Python virtual environment for CineSub Studio.
+
+.DESCRIPTION
+This script installs dependencies into .venv under the project directory. It does
+not modify system PATH, PowerShell profile, global Python, or global pip cache.
+
+Use -Offline with a wheelhouse when installing without internet access. Use
+-Recreate only when you intentionally want to rebuild the existing .venv.
+#>
 param(
     [string]$Python = "python",
     [string[]]$PythonArgs = @(),
@@ -25,11 +36,22 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
 Write-Host "Project: $ProjectRoot"
+Write-Host "Install mode: $(if ($Offline) { 'offline wheelhouse' } else { 'online pip index' })"
+Write-Host "Virtual environment: .venv"
+Write-Host "No system PATH or PowerShell profile changes will be made."
+if ($Recreate) {
+    Write-Warning "Recreate requested: existing .venv will be removed after a project-path safety check."
+} else {
+    Write-Host "Existing .venv will be reused if present. Use -Recreate only when rebuilding is intentional."
+}
 
 $PortablePython = Join-Path $ProjectRoot "tools\python\python.exe"
 if ($Python -eq "python" -and $PythonArgs.Count -eq 0 -and (Test-Path $PortablePython)) {
     $Python = $PortablePython
     Write-Host "Using bundled Python: $Python"
+} else {
+    Write-Host "Python launcher: $Python $($PythonArgs -join ' ')"
+    Write-Host "Portable Python support is a future delivery option; start_web.ps1 will still use .venv."
 }
 
 $WheelhousePath = Join-Path $ProjectRoot $Wheelhouse
@@ -66,13 +88,15 @@ Write-Host "FFmpeg runtime check is handled by Python ffmpeg_locator.py."
 Write-Host "To install the bundled Windows FFmpeg, run: .\scripts\download_ffmpeg.ps1"
 if ($Offline) {
     Write-Host "Offline mode: pip will only use wheelhouse: $WheelhousePath"
+} else {
+    Write-Host "Online mode: pip index is $IndexUrl"
 }
 
 $env:PIP_CACHE_DIR = Join-Path $ProjectRoot ".cache\pip"
 $env:HF_HOME = Join-Path $ProjectRoot ".cache\huggingface"
 $env:HF_HUB_CACHE = Join-Path $ProjectRoot ".cache\huggingface\hub"
 
-New-Item -ItemType Directory -Force -Path $env:PIP_CACHE_DIR, $env:HF_HOME, $env:HF_HUB_CACHE, (Join-Path $ProjectRoot "models"), (Join-Path $ProjectRoot "output"), (Join-Path $ProjectRoot "work") | Out-Null
+New-Item -ItemType Directory -Force -Path $env:PIP_CACHE_DIR, $env:HF_HOME, $env:HF_HUB_CACHE, (Join-Path $ProjectRoot "models"), (Join-Path $ProjectRoot "output"), (Join-Path $ProjectRoot "work"), (Join-Path $ProjectRoot "logs") | Out-Null
 
 if ($Recreate -and (Test-Path ".venv")) {
     $venvPath = Resolve-Path -LiteralPath ".venv"
@@ -124,5 +148,13 @@ if ($Offline) {
 }
 
 Write-Host ""
-Write-Host "Installed. Run example:"
-Write-Host '.\run_transcribe.ps1 -InputFile "D:\Movies\movie.mp4" -Model small -Device auto'
+Write-Host "Installed."
+Write-Host ""
+Write-Host "Next steps:"
+Write-Host "  1. Start the Web UI: .\start_web.ps1"
+Write-Host "  2. Open: http://127.0.0.1:7860"
+Write-Host "  3. Check Web diagnostics at the top of the page."
+Write-Host "  4. If FFmpeg is missing, run: .\scripts\download_ffmpeg.ps1"
+Write-Host ""
+Write-Host "Single-file CLI example:"
+Write-Host '  .\run_transcribe.ps1 -InputFile "D:\Movies\movie.mp4" -Model small -Device auto'

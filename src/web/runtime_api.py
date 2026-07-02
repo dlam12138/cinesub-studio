@@ -78,8 +78,8 @@ def _provider_diagnostic_item() -> dict:
             "Provider 配置",
             "not_configured",
             "未配置 active provider",
-            "当前未配置可用翻译 Provider；转写和本地质检仍可使用。",
-            "如果需要翻译，请在模型接口中配置 API Key 并设为默认。",
+            "Provider 未配置不会阻止 Web UI 启动；转写和本地质检仍可使用，但翻译任务会失败。",
+            "如果需要翻译，请在模型接口中配置 API Key、翻译模型，并设为默认 Provider。",
             False,
         )
 
@@ -93,7 +93,7 @@ def _provider_diagnostic_item() -> dict:
             "Provider 配置",
             "not_configured",
             f"{name} | API Key 未设置",
-            "已找到 active Provider，但尚未配置 API Key；需要翻译时会失败。",
+            "已找到 active Provider，但尚未配置 API Key；Web UI 可启动，实际翻译任务会失败。",
             "请在模型接口中编辑 Provider，并填写 API Key。",
             False,
         )
@@ -103,7 +103,7 @@ def _provider_diagnostic_item() -> dict:
             "Provider 配置",
             "warning",
             f"{name} | Key {masked} | 模型未设置",
-            "API Key 已保存，但翻译模型未设置；翻译任务可能失败。",
+            "API Key 已保存，但翻译模型未设置；Web UI 可启动，实际翻译任务会失败。",
             "请在模型接口中选择或填写翻译模型。",
             False,
         )

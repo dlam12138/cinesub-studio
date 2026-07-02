@@ -35,6 +35,8 @@ def _patch_runtime(monkeypatch, tmp_path, *, python_minor=13):
     monkeypatch.setattr(runtime_env, "CACHE_DIR", project_root / ".cache")
     monkeypatch.setattr(runtime_env, "TMP_DIR", project_root / ".tmp")
     monkeypatch.setattr(runtime_env, "OUTPUT_DIR", project_root / "output")
+    monkeypatch.setattr(runtime_env, "WORK_DIR", project_root / "work")
+    monkeypatch.setattr(runtime_env, "LOGS_DIR", project_root / "logs")
     monkeypatch.setattr(runtime_env.sys, "executable", str(venv_python))
     monkeypatch.setattr(runtime_env.sys, "prefix", str(project_root / ".venv"))
     monkeypatch.setattr(runtime_env.sys, "base_prefix", str(project_root / f"Python3{python_minor}"))
@@ -86,6 +88,10 @@ def test_runtime_diagnostics_preserves_old_fields_and_adds_user_readable_items(m
     assert python_item["status"] == "warning"
     assert python_item["blocking"] is False
 
+    assert _item(payload, "output_dir")["status"] == "ok"
+    assert _item(payload, "work_dir")["status"] == "ok"
+    assert _item(payload, "logs_dir")["status"] == "ok"
+
 
 def test_runtime_diagnostics_missing_model_cache_is_not_error(monkeypatch, tmp_path):
     _patch_runtime(monkeypatch, tmp_path, python_minor=12)
@@ -95,6 +101,54 @@ def test_runtime_diagnostics_missing_model_cache_is_not_error(monkeypatch, tmp_p
     model_item = _item(payload, "model_cache")
     assert model_item["status"] == "not_configured"
     assert model_item["blocking"] is False
+
+
+def test_runtime_directory_diagnostics_probe_existing_dirs_and_delete_temp_files(
+    monkeypatch,
+    tmp_path,
+):
+    _patch_runtime(monkeypatch, tmp_path, python_minor=12)
+    for path in (runtime_env.OUTPUT_DIR, runtime_env.WORK_DIR, runtime_env.LOGS_DIR):
+        path.mkdir(parents=True)
+
+    payload = runtime_env.runtime_diagnostics()
+
+    assert _item(payload, "output_dir")["status"] == "ok"
+    assert _item(payload, "work_dir")["status"] == "ok"
+    assert _item(payload, "logs_dir")["status"] == "ok"
+    for path in (runtime_env.OUTPUT_DIR, runtime_env.WORK_DIR, runtime_env.LOGS_DIR):
+        assert list(path.glob(".diagnostic_write_test.*.tmp")) == []
+
+
+def test_runtime_directory_diagnostics_report_non_directory_as_error(monkeypatch, tmp_path):
+    _patch_runtime(monkeypatch, tmp_path, python_minor=12)
+    runtime_env.LOGS_DIR.write_text("not a directory", encoding="utf-8")
+
+    payload = runtime_env.runtime_diagnostics()
+
+    logs_item = _item(payload, "logs_dir")
+    assert logs_item["status"] == "error"
+    assert logs_item["blocking"] is False
+
+
+def test_runtime_directory_diagnostics_report_not_writable(monkeypatch, tmp_path):
+    _patch_runtime(monkeypatch, tmp_path, python_minor=12)
+    runtime_env.WORK_DIR.mkdir()
+
+    original_can_write = runtime_env._can_write_in
+
+    def fake_can_write(path):
+        if path == runtime_env.WORK_DIR:
+            return False
+        return original_can_write(path)
+
+    monkeypatch.setattr(runtime_env, "_can_write_in", fake_can_write)
+
+    payload = runtime_env.runtime_diagnostics()
+
+    work_item = _item(payload, "work_dir")
+    assert work_item["status"] == "error"
+    assert work_item["blocking"] is True
 
 
 def test_runtime_api_provider_not_configured_is_not_global_error(monkeypatch):
@@ -117,6 +171,8 @@ def test_runtime_api_provider_not_configured_is_not_global_error(monkeypatch):
     provider_item = _item(payload, "provider")
     assert provider_item["status"] == "not_configured"
     assert provider_item["blocking"] is False
+    assert "Web UI 启动" in provider_item["explanation"]
+    assert "翻译任务会失败" in provider_item["explanation"]
     assert payload["diagnostic_summary"]["status"] == "not_configured"
 
 

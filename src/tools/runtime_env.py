@@ -24,6 +24,8 @@ MODEL_DIR = PROJECT_ROOT / "models"
 CACHE_DIR = PROJECT_ROOT / ".cache"
 TMP_DIR = PROJECT_ROOT / ".tmp"
 OUTPUT_DIR = PROJECT_ROOT / "output"
+WORK_DIR = PROJECT_ROOT / "work"
+LOGS_DIR = PROJECT_ROOT / "logs"
 
 ALLOWED_OFFLINE_ROOTS = (
     Path("tools/python"),
@@ -243,6 +245,8 @@ def runtime_diagnostics() -> dict[str, Any]:
         "known_models": known_models,
         "hf_home": str(CACHE_DIR / "huggingface"),
         "output_dir": str(OUTPUT_DIR),
+        "work_dir": str(WORK_DIR),
+        "logs_dir": str(LOGS_DIR),
         "wheelhouse_dir": str(WHEELHOUSE_DIR),
         "wheelhouse_ok": WHEELHOUSE_DIR.exists() and any(WHEELHOUSE_DIR.glob("*.whl")),
         "cuda_runtime_dir": str(CUDA_DIR),
@@ -343,6 +347,24 @@ def _runtime_diagnostic_items(
             missing_explanation="output/ 尚不存在，但项目目录可写时会在运行时创建。",
             missing_suggestion="无需操作；如果写入失败，请检查项目目录权限。",
             blocking=True,
+        ),
+        _directory_item(
+            "work_dir",
+            "工作目录",
+            WORK_DIR,
+            missing_status="ok",
+            missing_explanation="work/ 尚不存在，但项目目录可写时会在运行时创建。",
+            missing_suggestion="无需操作；如果写入失败，请检查项目目录权限。",
+            blocking=True,
+        ),
+        _directory_item(
+            "logs_dir",
+            "日志目录",
+            LOGS_DIR,
+            missing_status="ok",
+            missing_explanation="logs/ 尚不存在，但项目目录可写时会在运行时创建。",
+            missing_suggestion="无需操作；如果写入失败，请检查项目目录权限。",
+            blocking=False,
         ),
         _model_cache_item(known_models),
         _diagnostic_item(
@@ -508,11 +530,25 @@ def _can_create_missing_path(path: Path) -> bool:
 
 
 def _can_write_in(path: Path) -> bool:
+    probe_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(prefix=".cinesub-write-test-", dir=path, delete=True):
-            return True
+        with tempfile.NamedTemporaryFile(
+            prefix=".diagnostic_write_test.",
+            suffix=".tmp",
+            dir=path,
+            delete=False,
+        ) as probe:
+            probe.write(b"ok")
+            probe_path = Path(probe.name)
+        return True
     except OSError:
         return False
+    finally:
+        if probe_path is not None:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _cuda_suggestion(cuda_messages: list[str]) -> str:

@@ -45,6 +45,25 @@ function Invoke-Step {
     }
 }
 
+function Invoke-ReviewStep {
+    Write-Host "`n== pipeline review =="
+    $output = & $Python -B "src\pipeline\batch_worker.py" --review 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = ($output | Out-String)
+    Write-Host $text
+    $hasValidSummary = $text.Contains("Review summary") -and (
+        $text.Contains("Reports:") -or $text.Contains("Review subtitles:")
+    )
+    if ($exitCode -eq 0) {
+        return
+    }
+    if ($exitCode -eq 1 -and $hasValidSummary) {
+        Write-Host "pipeline review found quality issues; treating returncode=1 as issues_found."
+        return
+    }
+    throw "pipeline review failed with exit code $exitCode"
+}
+
 function Get-HttpStatusCode {
     param(
         [Parameter(Mandatory = $true)][string]$Uri,
@@ -93,9 +112,7 @@ Invoke-Step "pipeline status" {
     & $Python -B "src\pipeline\batch_worker.py" --status
 }
 
-Invoke-Step "pipeline review" {
-    & $Python -B "src\pipeline\batch_worker.py" --review
-}
+Invoke-ReviewStep
 
 Write-Host "`n== web smoke =="
 $OutLog = Join-Path $SmokeDir "web.out.log"
