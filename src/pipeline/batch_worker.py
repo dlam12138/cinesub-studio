@@ -1020,21 +1020,30 @@ def _retry_failed(pipeline: BatchPipeline) -> int:
     return 0 if failed == 0 else 1
 
 
+def _safe_console_print(text: str = "") -> None:
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        safe = str(text).encode(encoding, errors="replace").decode(encoding, errors="replace")
+        print(safe)
+
+
 def _show_review(output_root: Path = DIR_OUTPUT) -> int:
     """Show a summary of quality reports that need manual review."""
     reports_dir = plan_pipeline_outputs(output_root, "", "", "", "bilingual").reports_dir
     if not reports_dir.exists():
-        print("No quality reports found.")
+        _safe_console_print("No quality reports found.")
         return 0
 
     report_files = sorted(reports_dir.glob("*.quality_report.json"))
     if not report_files:
-        print("No quality reports found.")
+        _safe_console_print("No quality reports found.")
         return 0
 
-    print(f"\n{'=' * 70}")
-    print(f"  Review summary - {len(report_files)} report(s)")
-    print(f"{'=' * 70}\n")
+    _safe_console_print(f"\n{'=' * 70}")
+    _safe_console_print(f"  Review summary - {len(report_files)} report(s)")
+    _safe_console_print(f"{'=' * 70}\n")
 
     total_issues = 0
     total_errors = 0
@@ -1054,8 +1063,8 @@ def _show_review(output_root: Path = DIR_OUTPUT) -> int:
 
         status_icon = {"pass": "OK", "warning": "WARN", "fail": "FAIL"}.get(status, "?")
         video_name = report_file.stem.replace(".quality_report", "")
-        print(f"  {status_icon} {video_name}")
-        print(
+        _safe_console_print(f"  {status_icon} {video_name}")
+        _safe_console_print(
             f"    status: {status} | issues: {summary.get('total_issues', 0)} "
             f"(errors: {summary.get('errors', 0)}, warnings: {summary.get('warnings', 0)})"
         )
@@ -1067,51 +1076,51 @@ def _show_review(output_root: Path = DIR_OUTPUT) -> int:
             idx = issue.get("index", 0)
             idx_str = f"#{idx}" if idx > 0 else "global"
             snippet = issue.get("snippet", "")[:60]
-            print(f"    {icon} {idx_str} [{issue.get('type', '?')}] {issue.get('text', '')[:80]}")
+            _safe_console_print(f"    {icon} {idx_str} [{issue.get('type', '?')}] {issue.get('text', '')[:80]}")
             if snippet and snippet != "(empty)":
-                print(f"       content: {snippet}")
+                _safe_console_print(f"       content: {snippet}")
 
         if len(sorted_issues) > 10:
-            print(f"    ... {len(sorted_issues) - 10} more issue(s); use --review-file for details")
+            _safe_console_print(f"    ... {len(sorted_issues) - 10} more issue(s); use --review-file for details")
 
         total_issues += summary.get("total_issues", 0)
         total_errors += summary.get("errors", 0)
         total_warnings += summary.get("warnings", 0)
-        print()
+        _safe_console_print()
 
-    print(f"{'=' * 70}")
-    print(f"  Total: {total_issues} issue(s) ({total_errors} errors, {total_warnings} warnings)")
-    print(f"  Reports: {reports_dir}")
-    print(f"  Review subtitles: {reports_dir}/*.review_needed.srt")
-    print(f"{'=' * 70}")
-    print("\nTip: use --review-file <report path> for full details.\n")
+    _safe_console_print(f"{'=' * 70}")
+    _safe_console_print(f"  Total: {total_issues} issue(s) ({total_errors} errors, {total_warnings} warnings)")
+    _safe_console_print(f"  Reports: {reports_dir}")
+    _safe_console_print(f"  Review subtitles: {reports_dir}/*.review_needed.srt")
+    _safe_console_print(f"{'=' * 70}")
+    _safe_console_print("\nTip: use --review-file <report path> for full details.\n")
 
     return 0 if total_errors == 0 else 1
 
 def _show_review_detail(report_path: Path) -> int:
     """Show details for one quality report."""
     if not report_path.exists():
-        print(f"Report not found: {report_path}")
+        _safe_console_print(f"Report not found: {report_path}")
         return 1
 
     try:
         data = read_json(report_path)
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"Could not read report: {exc}")
+        _safe_console_print(f"Could not read report: {exc}")
         return 1
 
     status = data.get("status", "?")
     summary = data.get("summary", {})
     issues = data.get("issues", [])
 
-    print(f"\n{'=' * 70}")
-    print(f"  Quality report: {report_path.name}")
-    print(f"{'=' * 70}")
-    print(f"  status: {status}")
-    print(f"  total entries: {data.get('total_entries', 0)}")
-    print(f"  source: {data.get('source_srt', '')}")
-    print(f"  translated: {data.get('translated_srt', '')}")
-    print(
+    _safe_console_print(f"\n{'=' * 70}")
+    _safe_console_print(f"  Quality report: {report_path.name}")
+    _safe_console_print(f"{'=' * 70}")
+    _safe_console_print(f"  status: {status}")
+    _safe_console_print(f"  total entries: {data.get('total_entries', 0)}")
+    _safe_console_print(f"  source: {data.get('source_srt', '')}")
+    _safe_console_print(f"  translated: {data.get('translated_srt', '')}")
+    _safe_console_print(
         f"  issues: {summary.get('total_issues', 0)} "
         f"(errors: {summary.get('errors', 0)}, "
         f"warnings: {summary.get('warnings', 0)}, "
@@ -1120,27 +1129,27 @@ def _show_review_detail(report_path: Path) -> int:
 
     issue_types = summary.get("issue_types", {})
     if issue_types:
-        print("\n  issue types:")
+        _safe_console_print("\n  issue types:")
         for issue_type, count in sorted(issue_types.items(), key=lambda item: -item[1]):
-            print(f"    - {issue_type}: {count}")
+            _safe_console_print(f"    - {issue_type}: {count}")
 
     if not issues:
-        print("\n  [OK] no issues")
+        _safe_console_print("\n  [OK] no issues")
     else:
-        print(f"\n  all issues ({len(issues)}):")
+        _safe_console_print(f"\n  all issues ({len(issues)}):")
         severity_order = {"error": 0, "warning": 1, "info": 2}
         sorted_issues = sorted(issues, key=lambda item: severity_order.get(item.get("severity", "info"), 99))
         for issue in sorted_issues:
             icon = {"error": "ERROR", "warning": "WARN", "info": "INFO"}.get(issue.get("severity"), "?")
             idx = issue.get("index", 0)
             idx_str = f"#{idx}" if idx > 0 else "global"
-            print(f"\n    {icon} {idx_str} [{issue.get('type', '?')}]")
-            print(f"       description: {issue.get('text', '')}")
+            _safe_console_print(f"\n    {icon} {idx_str} [{issue.get('type', '?')}]")
+            _safe_console_print(f"       description: {issue.get('text', '')}")
             snippet = issue.get("snippet", "")
             if snippet and snippet != "(empty)":
-                print(f"       content: {snippet}")
+                _safe_console_print(f"       content: {snippet}")
 
-    print()
+    _safe_console_print()
     return 0 if status != "fail" else 1
 
 if __name__ == "__main__":

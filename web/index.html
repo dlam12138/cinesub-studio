@@ -697,6 +697,44 @@
       font-weight: 700;
     }
 
+    .task-artifacts {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 7px;
+    }
+
+    .artifact-chip {
+      display: inline-flex;
+      gap: 5px;
+      align-items: center;
+      max-width: 100%;
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: #334155;
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .artifact-chip a,
+    .artifact-chip button {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--primary);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .artifact-chip.missing {
+      color: #94a3b8;
+      background: #f8fafc;
+    }
+
     .diagnostics-panel {
       display: grid;
       gap: 10px;
@@ -1741,7 +1779,11 @@ async function pipelineAction(action) {
     // Standard GET response
     if (data.ok) {
       var exitMsg = ' (returncode=' + (data.returncode !== undefined ? data.returncode : '?') + ')';
-      appendLog((labelMap[action] || action) + exitMsg + ' OK');
+      if (action === 'review' && data.review_status === 'issues_found') {
+        appendLog('复核完成：发现问题' + exitMsg);
+      } else {
+        appendLog((labelMap[action] || action) + exitMsg + ' OK');
+      }
       // Show stderr if present
       if (data.error && data.error.trim()) {
         appendLog('  [stderr] ' + data.error.trim().split('\n').slice(0, 5).join(' | '));
@@ -2051,6 +2093,78 @@ function recoveryActionLabel(action, fallback) {
   return labels[action] || fallback || action || '';
 }
 
+function artifactLabel(kind) {
+  var labels = {
+    source: '原文',
+    translated: '译文',
+    bilingual: '双语',
+    quality_report: '质检',
+    review_needed: '复核'
+  };
+  return labels[kind] || kind;
+}
+
+function renderTaskArtifactChips(task) {
+  var artifacts = task.artifacts || {};
+  var order = ['bilingual', 'translated', 'source', 'quality_report', 'review_needed'];
+  var html = '';
+  var seenPaths = {};
+  for (var i = 0; i < order.length; i++) {
+    var kind = order[i];
+    var artifact = artifacts[kind];
+    if (!artifact || !artifact.path) continue;
+    if (seenPaths[artifact.path]) continue;
+    seenPaths[artifact.path] = true;
+    var chipClass = artifact.exists ? 'artifact-chip' : 'artifact-chip missing';
+    html += '<span class="' + chipClass + '" title="' + escapeHtml(artifact.path || '') + '">';
+    html += escapeHtml(artifactLabel(kind));
+    if (artifact.display_size) html += ' ' + escapeHtml(artifact.display_size);
+    if (artifact.download_url) {
+      html += ' <a href="' + escapeHtml(artifact.download_url) + '">下载</a>';
+    }
+    html += ' <button type="button" onclick="copyPipelinePath(\'' + escapeJsString(artifact.path || '') + '\')">复制路径</button>';
+    html += '</span>';
+  }
+  return html ? '<div class="task-artifacts">' + html + '</div>' : '';
+}
+
+function renderTaskSignals(task) {
+  var html = '';
+  var ld = task.language_detection || {};
+  var qs = task.quality_summary || {};
+  if (ld.source_language) {
+    var prob = ld.language_probability;
+    var probText = (prob === null || prob === undefined || prob === '') ? '' : ' / ' + Math.round(Number(prob) * 100) + '%';
+    var forced = ld.forced_language ? ' / forced ' + ld.forced_language : ' / auto';
+    html += '<div class="task-sub"><span class="badge badge-pending">源语言 ' + escapeHtml(ld.source_language + probText + forced) + '</span></div>';
+  }
+  if (task.target_language) {
+    html += '<div class="task-sub"><span class="badge badge-ok">目标语言 ' + escapeHtml(task.target_language) + '</span></div>';
+  }
+  if (qs.status) {
+    var issueText = '质检 ' + qs.status + ' / ' + String(qs.total_issues || 0) + ' 个问题';
+    html += '<div class="task-sub"><span class="badge ' + (qs.errors ? 'badge-err' : (qs.warnings ? 'badge-warn' : 'badge-ok')) + '">' + escapeHtml(issueText) + '</span></div>';
+  }
+  var issueTypes = qs.issue_types || {};
+  if (issueTypes.mixed_language || issueTypes.possibly_untranslated) {
+    html += '<div class="task-sub"><span class="badge badge-warn">可能有混合语言或未翻译残留。当前流水线按一个主源语言处理；混合语言素材可尝试更大 Whisper 模型或官方源字幕。</span></div>';
+  }
+  return html;
+}
+
+function escapeJsString(text) {
+  return String(text || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
+}
+
+async function copyPipelinePath(path) {
+  try {
+    await navigator.clipboard.writeText(path);
+    appendLog('已复制路径: ' + path);
+  } catch (err) {
+    appendLog('复制路径失败，请手动复制: ' + path);
+  }
+}
+
 function updateRetryButton(canRetry) {
   pipelineCanRetryFailed = !!canRetry;
   var btn = document.getElementById('btn-retry');
@@ -2141,6 +2255,7 @@ function renderPipelineProgress(progress) {
   if (progress.stale_running_count) {
     html += '<div class="hint">检测到 ' + escapeHtml(String(progress.stale_running_count)) + ' 个可能中断的运行中任务。本轮不会自动重置，请先确认后台任务是否仍在执行。</div>';
   }
+  html += '<div class="hint">语言提示：当前每个任务按一个主源语言处理。单语素材自动识别错误时可手动指定源语言；法英等混合语言素材不建议把一个全局源语言当成完整修复。</div>';
   html += renderTaskFilters(progress, counts);
   html += '<div class="task-list">';
   var tasks = progress.tasks || [];
@@ -2164,6 +2279,8 @@ function renderPipelineProgress(progress) {
     if (t.recovery_action && t.recovery_action !== 'none') {
       html += '<div class="task-sub"><span class="badge badge-warn">' + escapeHtml(recoveryActionLabel(t.recovery_action, t.recovery_label)) + '</span></div>';
     }
+    html += renderTaskSignals(t);
+    html += renderTaskArtifactChips(t);
     if (t.warning) html += '<div class="task-sub"><span class="badge badge-warn">' + escapeHtml(t.warning) + '</span></div>';
     if (t.error) html += '<div class="task-sub"><span class="badge badge-err">' + escapeHtml(t.error).slice(0, 160) + '</span></div>';
     html += '</div>';
@@ -2202,6 +2319,17 @@ async function loadPipelineProgress() {
 }
 
 function renderReview(data) {
+  var el = document.getElementById('review-result');
+  if (!el) return;
+  if (data && data.review_status === 'issues_found') {
+    var output = data.output ? String(data.output).trim() : '';
+    var html = '<div class="summary-bar"><span class="s-warn">复核完成：发现需要人工关注的问题</span></div>';
+    if (output) {
+      html += '<pre class="mini-log" style="max-height:260px">' + escapeHtml(output) + '</pre>';
+    }
+    el.innerHTML = html;
+    return;
+  }
   renderTextResult('review-result', data, 'No quality report yet.');
 }
 

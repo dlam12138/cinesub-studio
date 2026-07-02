@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from runtime_env import add_project_cuda_to_env
 from subtitle_model import ASS_RESERVED_MESSAGE, DEFAULT_ASS_STYLE_ID, normalize_subtitle_formats
@@ -17,6 +19,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORK_DIR = PROJECT_ROOT / "work"
 PIPELINE_STATES_DIR = WORK_DIR / "states"
 PIPELINE_LOG = PROJECT_ROOT / "logs" / "pipeline.log"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+
+ARTIFACT_TYPES = {
+    "source",
+    "translated",
+    "bilingual",
+    "quality_report",
+    "review_needed",
+}
 
 PIPELINE_TASK: dict[str, Any] = {
     "running": False,
@@ -95,6 +106,7 @@ def pipeline_progress() -> dict:
         counts[effective_status] = counts.get(effective_status, 0) + 1
 
         items.append({
+            "task_id": _task_id_for_state(raw),
             "file": raw.get("file", ""),
             "input_path": raw.get("input_path", ""),
             "stage": stage,
@@ -112,6 +124,10 @@ def pipeline_progress() -> dict:
             "recoverable": recovery["recoverable"],
             "recovery_action": recovery["recovery_action"],
             "recovery_label": recovery["recovery_label"],
+            "language_detection": _language_detection_summary(raw.get("language_detection")),
+            "target_language": _target_language_from_state(raw),
+            "quality_summary": _quality_summary(raw),
+            "artifacts": pipeline_artifacts_for_state(raw),
         })
 
     total = len(items)
@@ -164,6 +180,8 @@ def run_pipeline_command(action: str, timeout: int = 30, input_dir: str = "") ->
             "error": result.stderr,
             "returncode": result.returncode,
         }
+        if action == "review":
+            _classify_review_result(payload)
         if action == "status":
             payload["progress"] = pipeline_progress()
         return payload
@@ -337,6 +355,212 @@ def _load_pipeline_state_files() -> list[dict]:
         data["_state_path"] = str(state_path)
         tasks.append(data)
     return tasks
+
+
+def resolve_pipeline_artifact(task_id: str, artifact_type: str) -> tuple[Path | None, str]:
+    """Resolve a downloadable pipeline artifact from state metadata only."""
+    task_id = _clean_task_id(task_id)
+    artifact_type = str(artifact_type or "").strip()
+    if artifact_type not in ARTIFACT_TYPES:
+        return None, "Unknown artifact type"
+    if not task_id:
+        return None, "Invalid task id"
+
+    state_path = PIPELINE_STATES_DIR / f"{task_id}.state.json"
+    try:
+        resolved_state = state_path.resolve()
+        if not resolved_state.is_relative_to(PIPELINE_STATES_DIR.resolve()):
+            return None, "Invalid task id"
+    except OSError:
+        return None, "Invalid task id"
+    if not state_path.is_file():
+        return None, "Task state not found"
+
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, "Task state could not be read"
+    raw["_state_path"] = str(state_path)
+
+    artifact = pipeline_artifacts_for_state(raw).get(artifact_type)
+    if not artifact or not artifact.get("downloadable"):
+        return None, "Artifact is not downloadable"
+
+    path = Path(str(artifact.get("path") or "")).resolve()
+    if not _is_downloadable_output(path) or not _is_valid_file(str(path)):
+        return None, "Artifact not found"
+    return path, ""
+
+
+def pipeline_artifacts_for_state(raw: dict) -> dict:
+    task_id = _task_id_for_state(raw)
+    paths = _artifact_paths(raw)
+    return {
+        kind: _artifact_metadata(task_id, kind, path)
+        for kind, path in paths.items()
+    }
+
+
+def _artifact_paths(raw: dict) -> dict[str, str]:
+    paths = {
+        "source": str(raw.get("source_srt") or ""),
+        "translated": str(raw.get("translated_srt") or ""),
+        "bilingual": str(raw.get("bilingual_srt") or ""),
+        "quality_report": str(raw.get("quality_report") or ""),
+        "review_needed": "",
+    }
+    quality_report = paths["quality_report"]
+    if quality_report:
+        report_path = Path(quality_report)
+        if report_path.name.endswith(".quality_report.json"):
+            paths["review_needed"] = str(
+                report_path.with_name(report_path.name.replace(".quality_report.json", ".review_needed.srt"))
+            )
+    return paths
+
+
+def _artifact_metadata(task_id: str, kind: str, path_text: str) -> dict:
+    metadata = {
+        "type": kind,
+        "label": _artifact_label(kind),
+        "path": path_text,
+        "exists": False,
+        "size": 0,
+        "display_size": "",
+        "downloadable": False,
+        "download_url": "",
+    }
+    if not path_text:
+        return metadata
+
+    try:
+        path = Path(path_text).resolve()
+        exists = path.is_file()
+        size = path.stat().st_size if exists else 0
+    except OSError:
+        return metadata
+
+    downloadable = exists and size > 0 and _is_downloadable_output(path)
+    metadata.update({
+        "path": str(path),
+        "exists": exists,
+        "size": size,
+        "display_size": _format_bytes(size) if exists else "",
+        "downloadable": downloadable,
+        "download_url": _artifact_download_url(task_id, kind) if downloadable else "",
+    })
+    return metadata
+
+
+def _artifact_label(kind: str) -> str:
+    labels = {
+        "source": "Source SRT",
+        "translated": "Translated SRT",
+        "bilingual": "Bilingual SRT",
+        "quality_report": "Quality report",
+        "review_needed": "Review SRT",
+    }
+    return labels.get(kind, kind)
+
+
+def _artifact_download_url(task_id: str, kind: str) -> str:
+    return f"/api/pipeline/artifact?task={quote(task_id)}&artifact={quote(kind)}"
+
+
+def _task_id_for_state(raw: dict) -> str:
+    state_path = str(raw.get("_state_path") or "")
+    if state_path:
+        name = Path(state_path).name
+        if name.endswith(".state.json"):
+            return name[:-len(".state.json")]
+    return Path(str(raw.get("file") or "")).stem
+
+
+def _clean_task_id(task_id: str) -> str:
+    value = str(task_id or "").strip()
+    if not value or value in {".", ".."}:
+        return ""
+    if any(sep in value for sep in ("/", "\\")):
+        return ""
+    if Path(value).name != value:
+        return ""
+    return value
+
+
+def _language_detection_summary(value: Any) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "source_language": value.get("source_language", ""),
+        "language_probability": value.get("language_probability"),
+        "forced_language": value.get("forced_language"),
+        "model": value.get("model", ""),
+        "device": value.get("device", ""),
+        "compute_type": value.get("compute_type", ""),
+        "language_profile": value.get("language_profile", ""),
+        "language_profile_name": value.get("language_profile_name", ""),
+    }
+
+
+def _target_language_from_state(raw: dict) -> str:
+    for key in ("translated_srt", "bilingual_srt"):
+        path_text = str(raw.get(key) or "")
+        match = re.search(r"\.(?:translated|bilingual)\.([A-Za-z]{2}(?:-[A-Za-z0-9]+)?)\.srt$", path_text)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _quality_summary(raw: dict) -> dict:
+    report_path = raw.get("quality_report", "")
+    if not report_path or not _is_valid_file(str(report_path)):
+        return {}
+    try:
+        data = json.loads(Path(report_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    summary = data.get("summary", {}) if isinstance(data.get("summary"), dict) else {}
+    return {
+        "status": data.get("status", ""),
+        "total_issues": summary.get("total_issues", 0),
+        "errors": summary.get("errors", 0),
+        "warnings": summary.get("warnings", 0),
+        "issue_types": summary.get("issue_types", {}),
+    }
+
+
+def _is_downloadable_output(path: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(OUTPUT_DIR.resolve())
+    except OSError:
+        return False
+
+
+def _format_bytes(size: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(max(size, 0))
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size} B"
+
+
+def _classify_review_result(payload: dict) -> None:
+    output = str(payload.get("output") or "")
+    returncode = payload.get("returncode")
+    valid_summary = (
+        returncode == 1
+        and "Review summary" in output
+        and ("Reports:" in output or "Review subtitles:" in output)
+    )
+    if valid_summary:
+        payload["ok"] = True
+        payload["review_status"] = "issues_found"
+    elif returncode == 0:
+        payload["review_status"] = "ok"
+    else:
+        payload["review_status"] = "failed"
 
 
 def _recovery_state(raw: dict, effective_status: str) -> dict:

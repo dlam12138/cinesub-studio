@@ -79,17 +79,15 @@ MAX_REPEAT_COUNT = 5
 
 # LLM 废话关键词（正则）
 LLM_BOILERPLATE_PATTERNS = [
-    r"以下是翻译",
-    r"以下是.*字幕",
-    r"这是.*翻译",
+    r"(?:好的|当然)[，,\s]*(?:以下|下面)(?:是|为)?.*(?:翻译|字幕)",
+    r"(?:以下|下面)(?:是|为)?.*(?:翻译|字幕)",
+    r"这是.*翻译(?:结果|版本|内容)?",
     r"翻译如下",
-    r"好的[，,]",
-    r"当然[，,]",
-    r"Here is the translation",
-    r"Here are the subtitles",
-    r"I've translated",
-    r"Sure[!,\.]",
-    r"Certainly[!,\.]",
+    r"我(?:可以|来)?帮你.*翻译",
+    r"Here (?:is|are).*(?:translation|subtitle)",
+    r"I(?:'ve| have) translated",
+    r"Sure[!,\.\s]+here (?:is|are).*(?:translation|subtitle)",
+    r"Certainly[!,\.\s]+here (?:is|are).*(?:translation|subtitle)",
     r"```",
 ]
 

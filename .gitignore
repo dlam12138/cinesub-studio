@@ -62,6 +62,7 @@ ffmpeg/bin/
 acceptance/*
 !acceptance/
 !acceptance/milestone_*.md
+!acceptance/m5_5_e2e_feasibility.md
 acceptance/screenshots/
 acceptance/tmp/
 data/

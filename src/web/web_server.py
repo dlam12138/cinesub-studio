@@ -13,6 +13,7 @@ from pipeline_api import (
     get_pipeline_task,
     pipeline_progress,
     read_pipeline_log,
+    resolve_pipeline_artifact,
     run_pipeline_command,
     start_pipeline_background,
 )
@@ -160,6 +161,21 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/pipeline/progress":
             self.send_json(pipeline_progress())
+            return
+
+        if parsed.path == "/api/pipeline/artifact":
+            query = parse_qs(parsed.query)
+            task_id = (query.get("task") or [""])[0].strip()
+            artifact_type = (query.get("artifact") or [""])[0].strip()
+            artifact_path, error = resolve_pipeline_artifact(task_id, artifact_type)
+            if artifact_path is None:
+                self.send_error_json(404, error or "Artifact not found")
+                return
+            self.send_file(
+                artifact_path,
+                _content_type_for_artifact(artifact_path),
+                download_name=artifact_path.name,
+            )
             return
 
         if parsed.path == "/api/pipeline/review":
@@ -764,6 +780,12 @@ def _format_bytes(size: int) -> str:
             return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
         value /= 1024
     return f"{size} B"
+
+
+def _content_type_for_artifact(path: Path) -> str:
+    if path.suffix.lower() == ".json":
+        return "application/json; charset=utf-8"
+    return "application/x-subrip; charset=utf-8"
 
 
 def _sum_files(paths: list[Path]) -> tuple[int, int]:
