@@ -555,6 +555,40 @@
       gap: 10px;
     }
 
+    .pipeline-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+      gap: 8px;
+    }
+
+    .pipeline-stat {
+      min-width: 0;
+      padding: 10px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .pipeline-stat strong {
+      display: block;
+      color: var(--ink);
+      font-size: 22px;
+      line-height: 1.1;
+    }
+
+    .pipeline-stat span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .pipeline-stat.failed { border-color: #fecaca; background: #fffafa; }
+    .pipeline-stat.completed { border-color: #bbf7d0; background: #fbfffc; }
+    .pipeline-stat.running { border-color: #bfdbfe; background: #f8fbff; }
+    .pipeline-stat.warning { border-color: #fedf89; background: #fffcf5; }
+
     .progress-header {
       display: flex;
       align-items: center;
@@ -588,6 +622,31 @@
       flex-wrap: wrap;
       color: #64748b;
       font-size: 12px;
+    }
+
+    .task-filter-bar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .task-filter-bar button {
+      min-height: 30px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .task-filter-bar button.active {
+      border-color: var(--primary);
+      background: var(--info-bg);
+      color: var(--primary);
     }
 
     .task-list {
@@ -636,6 +695,81 @@
       color: #475569;
       font-size: 12px;
       font-weight: 700;
+    }
+
+    .diagnostics-panel {
+      display: grid;
+      gap: 10px;
+    }
+
+    .diagnostics-summary {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .diagnostics-summary.ok { border-color: #a3e4bc; background: #f6fef9; }
+    .diagnostics-summary.warning,
+    .diagnostics-summary.not_configured { border-color: #fedf89; background: #fffcf5; }
+    .diagnostics-summary.error { border-color: #f3b7b0; background: #fff7f6; }
+
+    .diagnostics-summary strong {
+      display: block;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .diagnostics-summary span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .diagnostics-summary strong .badge {
+      display: inline-flex;
+      margin: 0 4px 0 0;
+      vertical-align: middle;
+    }
+
+    .diagnostics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px;
+    }
+
+    .diagnostic-row {
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .diagnostic-row strong {
+      display: block;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 13px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .diagnostic-row span {
+      display: block;
+      margin-top: 4px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .diagnostic-row strong .badge {
+      display: inline-flex;
+      margin: 0 4px 0 0;
+      vertical-align: middle;
     }
 
     /* ── Issue list ── */
@@ -1027,6 +1161,11 @@
       <div class="card">
         <h2>⚠️ 异常复核摘要</h2>
         <div id="review-result" class="placeholder">点击"异常复核"查看需要人工关注的片段</div>
+      </div>
+
+      <div class="card full-width">
+        <h2>运行环境诊断</h2>
+        <div id="diagnostics-result" class="placeholder">正在读取 Python、FFmpeg、Provider 和模型缓存状态...</div>
       </div>
 
       <div class="card">
@@ -1493,6 +1632,8 @@
 var pipelineLoading = {};
 var pipelinePollTimer = null;
 var pipelineCanRetryFailed = false;
+var pipelineCurrentFilter = 'all';
+var pipelineLastProgress = null;
 
 function setLoading(action, state) {
   pipelineLoading[action] = state;
@@ -1908,12 +2049,55 @@ function updateRetryButton(canRetry) {
   if (btn) btn.disabled = pipelineLoading.retry || !pipelineCanRetryFailed;
 }
 
+function setPipelineFilter(filter) {
+  pipelineCurrentFilter = filter || 'all';
+  if (pipelineLastProgress) renderPipelineProgress(pipelineLastProgress);
+}
+
+function pipelineFilterLabel(filter) {
+  var labels = {
+    all: '全部',
+    failed: '失败',
+    completed: '完成',
+    pending: '等待',
+    running: '运行'
+  };
+  return labels[filter] || filter;
+}
+
+function renderPipelineStat(label, value, className) {
+  return '<div class="pipeline-stat ' + (className || '') + '"><strong>' + escapeHtml(String(value || 0)) + '</strong><span>' + escapeHtml(label) + '</span></div>';
+}
+
+function renderTaskFilters(progress, counts) {
+  var filters = ['all', 'failed', 'completed', 'pending', 'running'];
+  var values = {
+    all: progress.total || 0,
+    failed: counts.failed || 0,
+    completed: counts.completed || 0,
+    pending: counts.pending || 0,
+    running: counts.running || 0
+  };
+  if (filters.indexOf(pipelineCurrentFilter) < 0) pipelineCurrentFilter = 'all';
+  var html = '<div class="task-filter-bar" aria-label="任务状态筛选">';
+  for (var i = 0; i < filters.length; i++) {
+    var filter = filters[i];
+    var active = pipelineCurrentFilter === filter ? ' active' : '';
+    html += '<button type="button" class="' + active + '" onclick="setPipelineFilter(\'' + filter + '\')">';
+    html += escapeHtml(pipelineFilterLabel(filter)) + ' ' + escapeHtml(String(values[filter] || 0));
+    html += '</button>';
+  }
+  html += '</div>';
+  return html;
+}
+
 function renderPipelineProgress(progress) {
+  pipelineLastProgress = progress || null;
   var el = document.getElementById('status-result');
   if (!el) return;
-  if (!progress || !progress.ok || !progress.total) {
+  if (!progress || !progress.ok) {
     updateRetryButton(false);
-    el.innerHTML = '<div class="placeholder">暂无任务状态。先扫描或开始处理 input 目录。</div>';
+    el.innerHTML = '<div class="placeholder">任务状态读取失败。请查看操作日志或稍后重试。</div>';
     return;
   }
 
@@ -1923,16 +2107,23 @@ function renderPipelineProgress(progress) {
   var html = '<div class="progress-panel">';
   html += '<div class="progress-header"><span>整体进度</span><span>' + (progress.overall_progress || 0) + '%</span></div>';
   html += renderProgressBar(progress.overall_progress || 0);
-  html += '<div class="progress-meta">';
-  html += '<span class="badge badge-pending">总计 ' + progress.total + '</span>';
-  html += '<span class="badge badge-ok">完成 ' + (counts.completed || 0) + '</span>';
-  html += '<span class="badge badge-running">运行 ' + (counts.running || 0) + '</span>';
-  html += '<span class="badge badge-err">失败 ' + (counts.failed || 0) + '</span>';
-  html += '<span class="badge badge-warn">可重试 ' + (progress.recoverable_failed_count || 0) + '</span>';
-  if (counts.stale) html += '<span class="badge badge-warn">可能中断 ' + counts.stale + '</span>';
+  html += '<div class="pipeline-stats">';
+  html += renderPipelineStat('总任务', progress.total || 0, '');
+  html += renderPipelineStat('等待', counts.pending || 0, '');
+  html += renderPipelineStat('运行中', counts.running || 0, 'running');
+  html += renderPipelineStat('失败', counts.failed || 0, 'failed');
+  html += renderPipelineStat('已完成', counts.completed || 0, 'completed');
+  if (counts.stale) html += renderPipelineStat('可能中断', counts.stale || 0, 'warning');
+  if (progress.recoverable_failed_count) html += renderPipelineStat('可重试失败', progress.recoverable_failed_count || 0, 'warning');
   html += '</div>';
   if (current) {
     html += '<div class="hint">当前：' + escapeHtml(current.file || '-') + ' / ' + escapeHtml(current.stage_label || current.stage || '-') + '</div>';
+  }
+  if (!progress.total) {
+    html += '<div class="placeholder">暂无任务状态。先扫描或开始处理 input 目录。</div>';
+    html += '</div>';
+    el.innerHTML = html;
+    return;
   }
   if (progress.can_retry_failed) {
     html += '<div class="hint">发现 ' + escapeHtml(String(progress.recoverable_failed_count || 0)) + ' 个失败任务可重试。已完成任务会跳过，已有且有效的中间产物会复用。</div>';
@@ -1942,10 +2133,17 @@ function renderPipelineProgress(progress) {
   if (progress.stale_running_count) {
     html += '<div class="hint">检测到 ' + escapeHtml(String(progress.stale_running_count)) + ' 个可能中断的运行中任务。本轮不会自动重置，请先确认后台任务是否仍在执行。</div>';
   }
+  html += renderTaskFilters(progress, counts);
   html += '<div class="task-list">';
   var tasks = progress.tasks || [];
-  for (var i = 0; i < tasks.length; i++) {
-    var t = tasks[i];
+  var visibleTasks = tasks.filter(function(task) {
+    return pipelineCurrentFilter === 'all' || task.status === pipelineCurrentFilter;
+  });
+  if (!visibleTasks.length) {
+    html += '<div class="placeholder">当前没有“' + escapeHtml(pipelineFilterLabel(pipelineCurrentFilter)) + '”状态的任务。</div>';
+  }
+  for (var i = 0; i < visibleTasks.length; i++) {
+    var t = visibleTasks[i];
     var badgeClass = statusBadgeClass(t.status);
     html += '<div class="task-row ' + escapeHtml(t.status || 'pending') + '">';
     html += '<div>';
@@ -2043,6 +2241,119 @@ async function loadTopStatus() {
     setStatusText('statusProfile', 'auto-detect');
   }
   loadStorageStatus();
+  loadRuntimeDiagnostics();
+}
+
+function diagnosticBadgeClass(status) {
+  if (status === 'ok') return 'badge-ok';
+  if (status === 'error') return 'badge-err';
+  if (status === 'warning' || status === 'not_configured') return 'badge-warn';
+  return 'badge-pending';
+}
+
+function findDiagnosticItem(items, id) {
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].id === id) return items[i];
+  }
+  return null;
+}
+
+function renderDiagnosticRow(label, status, value, detail) {
+  var html = '<div class="diagnostic-row">';
+  html += '<strong>' + escapeHtml(label) + ' <span class="badge ' + diagnosticBadgeClass(status) + '">' + escapeHtml(status || 'unknown') + '</span></strong>';
+  html += '<span>' + escapeHtml(value || '-');
+  if (detail) html += '<br>' + escapeHtml(detail);
+  html += '</span></div>';
+  return html;
+}
+
+function renderRuntimeDiagnostics(data) {
+  var el = document.getElementById('diagnostics-result');
+  if (!el) return;
+  if (!data || data.ok === false) {
+    el.innerHTML = '<div class="placeholder">运行环境诊断读取失败。</div>';
+    return;
+  }
+
+  var items = data.diagnostic_items || [];
+  var summary = data.diagnostic_summary || {};
+  var pythonItem = findDiagnosticItem(items, 'python');
+  var ffmpegItem = findDiagnosticItem(items, 'ffmpeg');
+  var providerItem = findDiagnosticItem(items, 'provider');
+  var modelItem = findDiagnosticItem(items, 'model_cache');
+  var cudaItem = findDiagnosticItem(items, 'cuda');
+
+  var html = '<div class="diagnostics-panel">';
+  html += '<div class="diagnostics-summary ' + escapeHtml(summary.status || 'ok') + '">';
+  html += '<strong><span class="badge ' + diagnosticBadgeClass(summary.status) + '">' + escapeHtml(summary.status || 'ok') + '</span> ' + escapeHtml(summary.title || '运行环境诊断') + '</strong>';
+  html += '<span>' + escapeHtml(summary.message || '当前 diagnostics API 已响应。') + '</span>';
+  html += '</div>';
+  html += '<div class="diagnostics-grid">';
+  html += renderDiagnosticRow(
+    'Python',
+    pythonItem ? pythonItem.status : (data.python_supported ? 'ok' : 'warning'),
+    (data.python_version || '-') + ' | ' + (data.python_source || '-'),
+    pythonItem ? pythonItem.suggestion : data.python
+  );
+  html += renderDiagnosticRow(
+    'FFmpeg',
+    ffmpegItem ? ffmpegItem.status : (data.ffmpeg_ok ? 'ok' : 'error'),
+    (data.ffmpeg_source_label || data.ffmpeg_source || '-') + (data.ffmpeg_path ? ' | ' + data.ffmpeg_path : ''),
+    ffmpegItem ? ffmpegItem.suggestion : ''
+  );
+  html += renderDiagnosticRow(
+    'Provider / 模型接口',
+    providerItem ? providerItem.status : 'not_configured',
+    providerItem ? providerItem.value : '未配置 active provider',
+    providerItem ? providerItem.suggestion : '如需翻译，请在模型接口中配置 Provider。'
+  );
+  html += renderDiagnosticRow(
+    'Workspace',
+    'ok',
+    data.project_root || '-',
+    '运行产物保持在项目内 output / work / models / .cache / tools。'
+  );
+  html += renderDiagnosticRow(
+    '模型缓存',
+    modelItem ? modelItem.status : ((data.known_models || []).length ? 'ok' : 'not_configured'),
+    data.model_dir || '-',
+    modelItem ? modelItem.suggestion : ('已发现模型数：' + String((data.known_models || []).length))
+  );
+  html += renderDiagnosticRow(
+    'CUDA / 推荐设备',
+    cudaItem ? cudaItem.status : (data.cuda_ready ? 'ok' : 'warning'),
+    (data.recommended_device || '-') + ' / ' + (data.recommended_compute_type || '-'),
+    cudaItem ? cudaItem.suggestion : ((data.cuda_messages || []).join('；') || 'auto 会在 CUDA 不可用时回退 CPU。')
+  );
+  html += '</div>';
+
+  var attention = items.filter(function(item) {
+    return item && item.status && item.status !== 'ok';
+  });
+  if (attention.length) {
+    html += '<div class="task-sub">';
+    for (var i = 0; i < attention.length; i++) {
+      var item = attention[i];
+      var label = (item.label || item.id || 'diagnostic') + ': ' + item.status;
+      if (item.blocking) label += ' / blocking';
+      html += '<span class="badge ' + diagnosticBadgeClass(item.status) + '" title="' + escapeHtml(item.suggestion || item.explanation || '') + '">' + escapeHtml(label) + '</span>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+async function loadRuntimeDiagnostics() {
+  var el = document.getElementById('diagnostics-result');
+  if (!el) return;
+  try {
+    var resp = await fetch('/api/runtime/diagnostics');
+    var data = await resp.json();
+    renderRuntimeDiagnostics(data);
+  } catch (err) {
+    el.innerHTML = '<div class="placeholder">运行环境诊断读取失败: ' + escapeHtml(err.message) + '</div>';
+  }
 }
 
 function renderStorageStatus(data) {

@@ -78,6 +78,9 @@ def test_runtime_diagnostics_preserves_old_fields_and_adds_user_readable_items(m
     assert payload["ffmpeg_source"] == "bundled"
     assert payload["diagnostic_summary"]["status"] == "warning"
     assert isinstance(payload["diagnostic_items"], list)
+    assert set(payload["diagnostic_summary"]) >= {"status", "title", "message"}
+    assert all("status" in item for item in payload["diagnostic_items"])
+    assert all("blocking" in item for item in payload["diagnostic_items"])
 
     python_item = _item(payload, "python")
     assert python_item["status"] == "warning"

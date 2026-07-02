@@ -52,6 +52,12 @@ def test_pipeline_progress_reports_recovery_fields(monkeypatch, tmp_path):
     progress = pipeline_api.pipeline_progress()
     actions = {task["file"]: task["recovery_action"] for task in progress["tasks"]}
 
+    assert progress["total"] == 4
+    assert set(progress["counts"]) >= {"pending", "running", "completed", "failed", "stale"}
+    assert progress["counts"]["pending"] == 1
+    assert progress["counts"]["completed"] == 1
+    assert progress["counts"]["failed"] == 1
+    assert progress["counts"]["stale"] == 1
     assert progress["recoverable_failed_count"] == 1
     assert progress["can_retry_failed"] is True
     assert progress["stale_running_count"] == 1

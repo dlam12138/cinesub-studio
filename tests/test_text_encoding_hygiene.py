@@ -165,3 +165,12 @@ def test_text_files_do_not_contain_mojibake_or_private_use_chars() -> None:
                     )
 
     assert not failures, "Encoding hygiene violations found:\n" + "\n".join(failures)
+
+
+def test_web_index_has_no_milestone4_mojibake_markers() -> None:
+    text = (PROJECT_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    marker_codepoints = [0x59AF, 0x93BA, 0x935A, 0x6D93, 0x7037, 0xFFFD]
+
+    counts = {f"U+{codepoint:04X}": text.count(chr(codepoint)) for codepoint in marker_codepoints}
+
+    assert all(count == 0 for count in counts.values()), counts
