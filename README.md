@@ -40,6 +40,8 @@ models/
 
 `m6.7-rc1` 不包含 Whisper 模型、wheelhouse 或 CUDA 离线包。需要转写模型时按 Web 运行环境页面提示下载或导入；需要翻译时再配置 Provider。
 
+外部试用前请先阅读 [TRIAL.md](TRIAL.md)，其中包含普通测试者的启动步骤、已知限制、反馈模板和 API key 安全提醒。
+
 ### 方式 B：源码开发版
 
 适用于从 Git checkout 直接运行源码。建议使用 Windows 10/11、PowerShell，以及 Python 3.10-3.12。首次运行前确认项目目录可写，尤其是：
