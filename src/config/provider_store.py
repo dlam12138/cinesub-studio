@@ -22,10 +22,17 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from encoding_utils import read_json, read_text as read_utf8_text, write_json, write_text
+from runtime_paths import resolve_runtime_paths
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CONFIG_DIR = PROJECT_ROOT / "config"
-CONFIG_PATH = CONFIG_DIR / "providers.local.json"
+
+def _resolve_provider_config_paths(anchor: Path | str | None = None) -> tuple[Path, Path, Path]:
+    paths = resolve_runtime_paths(anchor or Path(__file__).resolve())
+    project_root = paths.project_root
+    config_dir = project_root / "config"
+    return project_root, config_dir, config_dir / "providers.local.json"
+
+
+PROJECT_ROOT, CONFIG_DIR, CONFIG_PATH = _resolve_provider_config_paths()
 
 _cache: dict | None = None
 _cache_lock = threading.Lock()

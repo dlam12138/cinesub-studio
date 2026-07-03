@@ -1,6 +1,7 @@
 .venv/
 .cache/
 .tmp/
+dist/
 .claude/
 .agents/
 prompt.md

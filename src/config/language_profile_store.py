@@ -19,9 +19,16 @@ from pathlib import Path
 from typing import Optional
 
 from encoding_utils import read_json
+from runtime_paths import resolve_runtime_paths
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config" / "language_profiles.local.json"
+
+def _resolve_language_profile_config_path(anchor: Path | str | None = None) -> tuple[Path, Path]:
+    paths = resolve_runtime_paths(anchor or Path(__file__).resolve())
+    project_root = paths.project_root
+    return project_root, project_root / "config" / "language_profiles.local.json"
+
+
+PROJECT_ROOT, CONFIG_PATH = _resolve_language_profile_config_path()
 DEFAULT_SUBTITLE_STYLE: dict = {
     "formats": ["srt"],
     "ass_style_id": "clean-cn",
