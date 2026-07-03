@@ -166,6 +166,25 @@ def test_builder_rejects_secret_looking_values_in_copied_content(tmp_path):
         )
 
 
+def test_builder_skips_content_scan_inside_copied_python_runtime(tmp_path):
+    builder = _load_builder()
+    repo = _make_repo(tmp_path / "repo")
+    package_dir = repo / "tools" / "python" / "Lib" / "site-packages" / "third_party"
+    package_dir.mkdir(parents=True)
+    (package_dir / "constants.py").write_text(
+        'EXAMPLE = {"access_token": "abcdefghijklmnopqrstuvwxyz"}\n',
+        encoding="utf-8",
+    )
+
+    out = builder.build_portable_release(
+        repo_root=repo,
+        output=repo / "dist" / "cinesub-portable",
+        python_runtime=repo / "tools" / "python",
+    ).output_dir
+
+    assert (out / "runtime" / "python" / "Lib" / "site-packages" / "third_party" / "constants.py").is_file()
+
+
 def test_builder_rejects_runtime_payload_if_it_appears_in_release_root(tmp_path):
     builder = _load_builder()
     repo = _make_repo(tmp_path / "repo")

@@ -457,6 +457,8 @@ def _scan_release_for_leaks(output_dir: Path) -> list[str]:
         if _is_rejected_release_file(path, parts):
             issues.append(f"rejected file: {relative}")
             continue
+        if not _should_scan_release_file_content(parts):
+            continue
         issues.extend(f"{relative}: {issue}" for issue in _scan_file_content(path))
     return issues
 
@@ -492,6 +494,12 @@ def _is_rejected_release_file(path: Path, parts: tuple[str, ...]) -> bool:
     if _is_excluded_file(path):
         return True
     return False
+
+
+def _should_scan_release_file_content(parts: tuple[str, ...]) -> bool:
+    if len(parts) >= 2 and parts[0] == "runtime" and parts[1] == "python":
+        return False
+    return True
 
 
 def _scan_file_content(path: Path) -> list[str]:
