@@ -28,19 +28,23 @@ from pathlib import Path
 from tkinter import Button, Label, Tk
 from urllib.request import urlopen
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-PYTHON_EXE = Path(sys.executable)
-LOG_PATH = PROJECT_ROOT / "logs" / "web_server.log"
-
-# Build PYTHONPATH that includes all src subdirectories for cross-module imports
-_SRC = PROJECT_ROOT / "src"
-_PYTHONPATH = ";".join(str(_SRC / sub) for sub in ["core", "pipeline", "config", "web", "tools"])
+_BOOTSTRAP_APP_ROOT = Path(__file__).resolve().parent
+_SRC = _BOOTSTRAP_APP_ROOT / "src"
 for _sub in ["core", "pipeline", "config", "web", "tools"]:
     _subpath = str(_SRC / _sub)
     if _subpath not in sys.path:
         sys.path.insert(0, _subpath)
 
+from runtime_paths import resolve_runtime_paths
 from ffmpeg_locator import find_ffmpeg
+
+PATHS = resolve_runtime_paths(Path(__file__).resolve())
+PROJECT_ROOT = PATHS.project_root
+APP_ROOT = PATHS.app_root
+SRC_ROOT = PATHS.src_root
+PYTHON_EXE = Path(sys.executable)
+LOG_PATH = PROJECT_ROOT / "logs" / "web_server.log"
+_PYTHONPATH = PATHS.pythonpath()
 
 PORT = 7860
 POLL_INTERVAL = 0.5
@@ -120,7 +124,7 @@ def main() -> int:
                 "如果不下载，可以手动安装 ffmpeg 并添加到 PATH。"
             )
             if result:
-                download_script = PROJECT_ROOT / "src" / "tools" / "download_ffmpeg.py"
+                download_script = SRC_ROOT / "tools" / "download_ffmpeg.py"
                 if download_script.exists():
                     import subprocess
                     subprocess.run([sys.executable, "-B", str(download_script)])
@@ -178,7 +182,7 @@ def _run_gui() -> None:
 
     # 尝试设置图标（如果有的话）
     try:
-        root.iconbitmap(str(PROJECT_ROOT / "web" / "favicon.ico"))
+        root.iconbitmap(str(APP_ROOT / "web" / "favicon.ico"))
     except Exception:
         pass
 

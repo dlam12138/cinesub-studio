@@ -85,11 +85,11 @@ function Get-HttpStatusCode {
 }
 
 Invoke-Step "syntax" {
-    & $Python -B -c "from pathlib import Path; files=['src/core/transcribe.py','src/core/subtitle_translate.py','src/core/quality_checker.py','src/pipeline/batch_worker.py','src/pipeline/output_paths.py','src/web/web_server.py','src/web/job_api.py','src/web/pipeline_api.py','src/web/process_env.py','src/web/runtime_api.py','src/tools/runtime_env.py']; [compile(Path(p).read_text(encoding='utf-8-sig'), p, 'exec') for p in files]; print('syntax ok')"
+    & $Python -B -c "from pathlib import Path; files=['src/core/transcribe.py','src/core/subtitle_translate.py','src/core/quality_checker.py','src/pipeline/batch_worker.py','src/pipeline/output_paths.py','src/web/web_server.py','src/web/job_api.py','src/web/pipeline_api.py','src/web/process_env.py','src/web/runtime_api.py','src/tools/runtime_env.py','src/tools/runtime_paths.py']; [compile(Path(p).read_text(encoding='utf-8-sig'), p, 'exec') for p in files]; print('syntax ok')"
 }
 
 Invoke-Step "imports" {
-    & $Python -B -c "import transcribe, subtitle_translate, quality_checker, batch_worker, output_paths, web_server, job_api, download_model_file, runtime_env, subtitle_model, runtime_api, pipeline_api, process_env; print('imports ok')"
+    & $Python -B -c "import transcribe, subtitle_translate, quality_checker, batch_worker, output_paths, web_server, job_api, download_model_file, runtime_env, runtime_paths, subtitle_model, runtime_api, pipeline_api, process_env; print('imports ok')"
 }
 
 Invoke-Step "subtitle translate self-test" {

@@ -64,6 +64,33 @@ http://127.0.0.1:7860
 logs/web_server.log
 ```
 
+### Portable runtime readiness
+
+M6.2 only prepares path detection for a future portable release. The current
+supported startup path is still source layout plus `.venv`.
+
+Future release layout is reserved as:
+
+```text
+release/
+  app/
+    src/
+    web/
+  runtime/
+    python/
+  tools/
+    ffmpeg/
+  input/
+  output/
+  work/
+  logs/
+```
+
+This version does not ship `runtime/python/`, a release zip, PyInstaller
+artifacts, wheelhouse, models, CUDA DLLs, or FFmpeg binaries. A future launcher
+may look for Python in this order: `runtime/python/python.exe`,
+`.venv/Scripts/python.exe`, then a clear setup error.
+
 ## 4. 配置 Provider
 
 在 Web 的“模型接口”区域配置翻译 Provider：

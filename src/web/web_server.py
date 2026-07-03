@@ -17,10 +17,14 @@ from pipeline_api import (
     run_pipeline_command,
     start_pipeline_background,
 )
+from runtime_paths import resolve_runtime_paths
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-WEB_ROOT = PROJECT_ROOT / "web"
+PATHS = resolve_runtime_paths()
+PROJECT_ROOT = PATHS.project_root
+APP_ROOT = PATHS.app_root
+SRC_ROOT = PATHS.src_root
+WEB_ROOT = APP_ROOT / "web"
 UPLOAD_DIR = PROJECT_ROOT / "uploads"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 MODEL_DIR = PROJECT_ROOT / "models"

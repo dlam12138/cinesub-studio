@@ -17,6 +17,7 @@
 - `src/web/runtime_api.py`：运行环境 Web API 的薄模块，转调 `runtime_env.py`。
 - `src/web/pipeline_api.py`：Pipeline Web API 辅助模块，负责只读状态、日志、后台任务启动和子进程环境。
 - `src/tools/ffmpeg_locator.py`：唯一 FFmpeg 查找入口。
+- `src/tools/runtime_paths.py`：源码布局 / 未来 release 布局的运行根、应用根、源码根、runtime 根解析入口；导入不得有副作用。
 - `src/tools/runtime_env.py`：统一运行环境管理，检测 Python、FFmpeg、CUDA、wheelhouse、模型，处理离线包导入和环境下载计划。
 - `src/tools/download_ffmpeg.py`：FFmpeg 下载兜底工具，写入 `tools/ffmpeg/bin/`。
 
@@ -158,7 +159,7 @@ CLI 优先级：
 
 ```powershell
 $env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
-.\.venv\Scripts\python.exe -B -c "import transcribe, subtitle_translate, quality_checker, batch_worker, web_server, download_model_file, runtime_env, subtitle_model, runtime_api, pipeline_api; print('imports ok')"
+.\.venv\Scripts\python.exe -B -c "import transcribe, subtitle_translate, quality_checker, batch_worker, web_server, download_model_file, runtime_env, runtime_paths, subtitle_model, runtime_api, pipeline_api; print('imports ok')"
 ```
 
 自测：

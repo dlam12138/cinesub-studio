@@ -5,6 +5,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from runtime_paths import resolve_runtime_paths
+
 FFMPEG_SOURCE_LABELS = {
     "env": "环境变量",
     "bundled": "项目内置",
@@ -25,7 +27,7 @@ def find_ffmpeg(project_root: Path | str | None = None) -> str | None:
 
 def find_ffmpeg_info(project_root: Path | str | None = None) -> dict:
     """Return the ffmpeg path plus its source without changing lookup order."""
-    root = Path(project_root).resolve() if project_root else Path(__file__).resolve().parents[2]
+    root = Path(project_root).resolve() if project_root else resolve_runtime_paths().project_root
     exe_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
 
     for env_name in ("CINESUB_FFMPEG", "FFMPEG_PATH"):

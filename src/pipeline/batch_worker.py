@@ -29,10 +29,8 @@ from pathlib import Path
 from typing import Optional
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
 # Ensure src subdirectories are on sys.path for cross-module imports when run directly
-_src = PROJECT_ROOT / "src"
+_src = Path(__file__).resolve().parents[1]
 for _sub in ("core", "pipeline", "config", "web", "tools"):
     _subpath = str(_src / _sub)
     if _subpath not in sys.path:
@@ -41,11 +39,16 @@ for _sub in ("core", "pipeline", "config", "web", "tools"):
 from encoding_utils import read_json, run_text, write_json
 from ffmpeg_locator import find_ffmpeg
 from output_paths import pipeline_output_dirs, plan_pipeline_outputs
+from runtime_paths import resolve_runtime_paths
 from subtitle_model import (
     ASS_RESERVED_MESSAGE,
     DEFAULT_ASS_STYLE_ID,
     normalize_subtitle_formats,
 )
+
+PATHS = resolve_runtime_paths(Path(__file__).resolve())
+PROJECT_ROOT = PATHS.project_root
+SRC_ROOT = PATHS.src_root
 
 
 DIR_INPUT = PROJECT_ROOT / "input"

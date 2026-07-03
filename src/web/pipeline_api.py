@@ -11,10 +11,14 @@ from typing import Any
 from urllib.parse import quote
 
 from process_env import build_child_process_env, redact_project_path
+from runtime_paths import resolve_runtime_paths
 from subtitle_model import ASS_RESERVED_MESSAGE, DEFAULT_ASS_STYLE_ID, normalize_subtitle_formats
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PATHS = resolve_runtime_paths()
+PROJECT_ROOT = PATHS.project_root
+APP_ROOT = PATHS.app_root
+SRC_ROOT = PATHS.src_root
 WORK_DIR = PROJECT_ROOT / "work"
 PIPELINE_STATES_DIR = WORK_DIR / "states"
 PIPELINE_LOG = PROJECT_ROOT / "logs" / "pipeline.log"
@@ -154,7 +158,7 @@ def run_pipeline_command(action: str, timeout: int = 30, input_dir: str = "") ->
     command = [
         sys.executable,
         "-B",
-        str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
+        str(SRC_ROOT / "pipeline" / "batch_worker.py"),
         f"--{action}",
     ]
     if input_dir:
@@ -647,7 +651,7 @@ def _build_background_command(
         command = [
             sys.executable,
             "-B",
-            str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
+            str(SRC_ROOT / "pipeline" / "batch_worker.py"),
             "--input",
             input_dir if input_dir else str(PROJECT_ROOT / "input"),
         ]
@@ -655,7 +659,7 @@ def _build_background_command(
         command = [
             sys.executable,
             "-B",
-            str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
+            str(SRC_ROOT / "pipeline" / "batch_worker.py"),
             f"--{action}",
         ]
 
@@ -685,7 +689,7 @@ def _build_background_command(
 
 
 def _pipeline_env() -> dict[str, str]:
-    return build_child_process_env(PROJECT_ROOT)
+    return build_child_process_env(PROJECT_ROOT, PATHS)
 
 
 def _append_pipeline_log_header(

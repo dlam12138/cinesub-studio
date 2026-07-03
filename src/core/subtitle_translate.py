@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from encoding_utils import read_json, read_text as read_utf8_text, write_json
+from runtime_paths import resolve_runtime_paths
 
 
 @dataclass
@@ -87,7 +88,8 @@ def _translation_cache_path(
         sort_keys=True,
     )
     digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:24]
-    return Path(__file__).resolve().parent.parent.parent / "work" / "translation-cache" / f"{digest}.json"
+    project_root = resolve_runtime_paths(Path(__file__).resolve()).project_root
+    return project_root / "work" / "translation-cache" / f"{digest}.json"
 
 
 def _load_translation_cache(path: Path) -> dict[int, str]:

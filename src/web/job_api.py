@@ -9,9 +9,13 @@ import uuid
 from pathlib import Path
 
 from process_env import build_child_process_env, redact_project_path
+from runtime_paths import resolve_runtime_paths
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PATHS = resolve_runtime_paths()
+PROJECT_ROOT = PATHS.project_root
+APP_ROOT = PATHS.app_root
+SRC_ROOT = PATHS.src_root
 UPLOAD_DIR = PROJECT_ROOT / "uploads"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 MODEL_DIR = PROJECT_ROOT / "models"
@@ -192,7 +196,7 @@ def run_job(job_id: str) -> None:
     options = raw_job["options"]
     command = [
         sys.executable,
-        str(PROJECT_ROOT / "src" / "core" / "transcribe.py"),
+        str(SRC_ROOT / "core" / "transcribe.py"),
         raw_job["input"],
         "--model",
         options["model"],
@@ -432,4 +436,4 @@ def clean_log_line(line: str) -> str:
 
 
 def _job_env() -> dict[str, str]:
-    return build_child_process_env(PROJECT_ROOT)
+    return build_child_process_env(PROJECT_ROOT, PATHS)

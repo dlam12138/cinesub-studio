@@ -6,10 +6,8 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
 # Ensure src subdirectories are on sys.path for cross-module imports when run directly
-_src = PROJECT_ROOT / "src"
+_src = Path(__file__).resolve().parents[1]
 for _sub in ("core", "pipeline", "config", "web", "tools"):
     _subpath = str(_src / _sub)
     if _subpath not in sys.path:
@@ -18,11 +16,16 @@ for _sub in ("core", "pipeline", "config", "web", "tools"):
 from encoding_utils import run_text, write_json
 from ffmpeg_locator import find_ffmpeg
 from runtime_env import add_project_cuda_to_process, choose_device, default_compute_type
+from runtime_paths import resolve_runtime_paths
 from subtitle_model import (
     ASS_RESERVED_MESSAGE,
     DEFAULT_ASS_STYLE_ID,
     normalize_subtitle_formats,
 )
+
+PATHS = resolve_runtime_paths(Path(__file__).resolve())
+PROJECT_ROOT = PATHS.project_root
+SRC_ROOT = PATHS.src_root
 
 
 VIDEO_EXTENSIONS = {
@@ -50,7 +53,7 @@ AUDIO_EXTENSIONS = {
 
 def main() -> int:
     args = parse_args()
-    project_root = Path(__file__).resolve().parent.parent.parent
+    project_root = PROJECT_ROOT
     subtitle_formats = normalize_subtitle_formats(args.subtitle_formats)
     args.subtitle_formats = ",".join(subtitle_formats)
     args.ass_style_id = args.ass_style_id or DEFAULT_ASS_STYLE_ID

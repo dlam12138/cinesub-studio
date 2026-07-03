@@ -19,9 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from encoding_utils import read_json, read_text as read_utf8_text, write_json
+from runtime_paths import resolve_runtime_paths
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PATHS = resolve_runtime_paths(Path(__file__).resolve())
+PROJECT_ROOT = PATHS.project_root
 
 
 # ── 问题类型定义 ─────────────────────────────────────────────────────────

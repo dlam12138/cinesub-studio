@@ -13,12 +13,17 @@ from pathlib import Path
 from typing import Any
 
 from ffmpeg_locator import find_ffmpeg_info
+from runtime_paths import resolve_runtime_paths
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOOLS_DIR = PROJECT_ROOT / "tools"
+PATHS = resolve_runtime_paths()
+PROJECT_ROOT = PATHS.project_root
+APP_ROOT = PATHS.app_root
+SRC_ROOT = PATHS.src_root
+RUNTIME_ROOT = PATHS.runtime_root
+TOOLS_DIR = PATHS.tools_dir
 CUDA_DIR = TOOLS_DIR / "cuda"
-PYTHON_DIR = TOOLS_DIR / "python"
+PYTHON_DIR = PATHS.python_runtime_dir
 WHEELHOUSE_DIR = TOOLS_DIR / "wheelhouse"
 MODEL_DIR = PROJECT_ROOT / "models"
 CACHE_DIR = PROJECT_ROOT / ".cache"
@@ -220,7 +225,11 @@ def runtime_diagnostics() -> dict[str, Any]:
 
     return {
         "ok": True,
+        "runtime_layout": PATHS.layout,
         "project_root": str(PROJECT_ROOT),
+        "app_root": str(APP_ROOT),
+        "src_root": str(SRC_ROOT),
+        "runtime_root": str(RUNTIME_ROOT),
         "python": str(executable),
         "python_version": sys.version.split()[0],
         "python_supported": python_supported,
