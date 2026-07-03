@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_NAME = "cinesub-portable"
+DEFAULT_VERSION = "m6.7-rc1"
 RELEASE_MARKER = ".portable-layout"
 MANIFEST_NAME = "release_manifest.json"
 REPORT_NAME = "release_report.md"
-BUILDER_MILESTONE = "m6.4-release-slimming"
+CHECKSUMS_NAME = "release_checksums.sha256"
+BUILDER_MILESTONE = "m6.7-release-candidate-packaging"
 LARGE_FILE_THRESHOLD_BYTES = 5 * 1024 * 1024
 LARGE_FILE_LIMIT = 20
 RUNTIME_DIRS = (
@@ -26,7 +30,6 @@ RUNTIME_DIRS = (
     "uploads",
     "models",
     ".cache",
-    ".tmp",
 )
 APP_DIRS = ("src", "web", "scripts")
 APP_FILES = (
@@ -117,6 +120,9 @@ class BuildResult:
     ffmpeg_copied: bool
     manifest_path: Path
     report_path: Path
+    checksums_path: Path
+    zip_path: Path | None
+    zip_sha256_path: Path | None
     copied_file_count: int
     total_bytes: int
 
@@ -126,6 +132,8 @@ def build_portable_release(
     repo_root: Path | str | None = None,
     output: Path | str | None = None,
     python_runtime: Path | str | None = None,
+    version: str = DEFAULT_VERSION,
+    make_zip: bool = False,
     force: bool = False,
 ) -> BuildResult:
     root = Path(repo_root).resolve() if repo_root is not None else REPO_ROOT
@@ -171,17 +179,26 @@ def build_portable_release(
 
     manifest_path = output_dir / MANIFEST_NAME
     report_path = output_dir / REPORT_NAME
+    checksums_path = output_dir / CHECKSUMS_NAME
     manifest = _build_manifest(
+        version=version,
         summary=summary,
         excluded_summary=excluded_summary,
         ffmpeg_copied=ffmpeg_copied,
     )
     _write_manifest(manifest_path, manifest)
     _write_report(report_path, manifest)
+    checksum_summary = _write_checksums(checksums_path, output_dir)
+    _update_checksum_summary(manifest_path, report_path, checksum_summary)
 
     final_scan = _scan_release_for_leaks(output_dir)
     if final_scan:
         raise BuildError("Release leak scan failed:\n" + "\n".join(f"- {issue}" for issue in final_scan))
+
+    zip_path = None
+    zip_sha256_path = None
+    if make_zip:
+        zip_path, zip_sha256_path = _write_zip_package(output_dir, version)
 
     return BuildResult(
         output_dir=output_dir,
@@ -190,6 +207,9 @@ def build_portable_release(
         ffmpeg_copied=ffmpeg_copied,
         manifest_path=manifest_path,
         report_path=report_path,
+        checksums_path=checksums_path,
+        zip_path=zip_path,
+        zip_sha256_path=zip_sha256_path,
         copied_file_count=summary["file_count"],
         total_bytes=summary["total_bytes"],
     )
@@ -264,7 +284,7 @@ def _collect_release_summary(output_dir: Path) -> dict[str, object]:
     file_entries: list[dict[str, object]] = []
     total_bytes = 0
     top_level: dict[str, int] = {}
-    generated = {MANIFEST_NAME, REPORT_NAME}
+    generated = {MANIFEST_NAME, REPORT_NAME, CHECKSUMS_NAME}
     for path in sorted(output_dir.rglob("*")):
         if not path.is_file() or path.name in generated:
             continue
@@ -333,23 +353,28 @@ def _excluded_file_category(path: Path) -> str:
 
 def _build_manifest(
     *,
+    version: str,
     summary: dict[str, object],
     excluded_summary: dict[str, object],
     ffmpeg_copied: bool,
 ) -> dict[str, object]:
     return {
         "builder": BUILDER_MILESTONE,
+        "version": version,
         "paths": {
             "output_root": ".",
             "app_root": "app",
             "runtime_python_root": "runtime/python",
+            "checksums": CHECKSUMS_NAME,
         },
         "copied_file_count": summary["file_count"],
+        "payload_file_count": summary["file_count"],
         "total_bytes": summary["total_bytes"],
+        "payload_total_bytes": summary["total_bytes"],
         "largest_files": summary["largest_files"],
         "top_level_file_counts": summary["top_level_file_counts"],
         "excluded_summary": excluded_summary,
-        "generated_files": [MANIFEST_NAME, REPORT_NAME],
+        "generated_files": [MANIFEST_NAME, REPORT_NAME, CHECKSUMS_NAME],
         "ffmpeg_copied": ffmpeg_copied,
         "leak_scan": {
             "status": "passed",
@@ -359,9 +384,14 @@ def _build_manifest(
                 "release-relative report paths",
             ],
         },
+        "checksums": {
+            "path": CHECKSUMS_NAME,
+            "covers": "release payload files, excluding generated release metadata",
+        },
         "notes": [
             "Generated from a local source checkout; absolute source paths are intentionally omitted.",
-            "This prototype does not include tests, sample media, subtitles, models, wheelhouse, CUDA, or a release zip.",
+            "Zip package byte size and SHA256 are written outside the zip to avoid checksum cycles.",
+            "This release candidate does not include tests, sample media, subtitles, models, wheelhouse, or CUDA.",
         ],
     }
 
@@ -378,18 +408,22 @@ def _write_report(path: Path, manifest: dict[str, object]) -> None:
         "# CineSub Portable Release Report",
         "",
         f"- Builder: `{manifest['builder']}`",
-        f"- Copied files: `{manifest['copied_file_count']}`",
-        f"- Total size: `{_format_bytes(int(manifest['total_bytes']))}`",
+        f"- Version: `{manifest['version']}`",
+        f"- Payload files: `{manifest['payload_file_count']}`",
+        f"- Payload size: `{_format_bytes(int(manifest['payload_total_bytes']))}`",
         f"- FFmpeg copied: `{'yes' if manifest['ffmpeg_copied'] else 'no'}`",
         f"- Leak scan: `{manifest['leak_scan']['status']}`",
+        f"- Checksums: `{CHECKSUMS_NAME}`",
         "",
         "Generated from a local source checkout; absolute source paths are intentionally omitted.",
+        "Zip package byte size and SHA256 are written outside the zip to avoid checksum cycles.",
         "",
         "## Release Paths",
         "",
         "- Output root: `.`",
         "- App root: `app`",
         "- Runtime Python root: `runtime/python`",
+        f"- Checksums: `{CHECKSUMS_NAME}`",
         "",
         "## Top-Level File Counts",
         "",
@@ -477,7 +511,7 @@ def _is_rejected_release_file(path: Path, parts: tuple[str, ...]) -> bool:
     if not parts:
         return False
     name = path.name
-    if name in {MANIFEST_NAME, REPORT_NAME, RELEASE_MARKER, "start_app.bat"}:
+    if name in {MANIFEST_NAME, REPORT_NAME, CHECKSUMS_NAME, RELEASE_MARKER, "start_app.bat"}:
         return False
     if name in LOCAL_CONFIG_FILENAMES or name in REPO_CONTROL_FILENAMES:
         return True
@@ -548,6 +582,65 @@ def _release_relative(path: Path, output_dir: Path) -> str:
     return path.relative_to(output_dir).as_posix()
 
 
+def _write_checksums(path: Path, output_dir: Path) -> dict[str, object]:
+    entries: list[str] = []
+    total_bytes = 0
+    for file_path in sorted(output_dir.rglob("*")):
+        if not file_path.is_file() or file_path == path:
+            continue
+        if file_path.name in {MANIFEST_NAME, REPORT_NAME, CHECKSUMS_NAME}:
+            continue
+        relative = _release_relative(file_path, output_dir)
+        digest = _sha256_file(file_path)
+        total_bytes += file_path.stat().st_size
+        entries.append(f"{digest}  {relative}")
+    path.write_text("\n".join(entries) + ("\n" if entries else ""), encoding="utf-8", newline="\n")
+    return {
+        "path": CHECKSUMS_NAME,
+        "covered_file_count": len(entries),
+        "covered_total_bytes": total_bytes,
+    }
+
+
+def _update_checksum_summary(
+    manifest_path: Path,
+    report_path: Path,
+    checksum_summary: dict[str, object],
+) -> None:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["checksums"].update(checksum_summary)
+    _write_manifest(manifest_path, manifest)
+    _write_report(report_path, manifest)
+
+
+def _write_zip_package(output_dir: Path, version: str) -> tuple[Path, Path]:
+    dist_root = output_dir.parent
+    zip_path = dist_root / f"{output_dir.name}-{version}.zip"
+    zip_sha256_path = zip_path.with_suffix(zip_path.suffix + ".sha256")
+    if zip_path.exists():
+        zip_path.unlink()
+    if zip_sha256_path.exists():
+        zip_sha256_path.unlink()
+
+    archive_root = output_dir.name
+    with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as archive:
+        for path in sorted(output_dir.rglob("*")):
+            archive_name = Path(archive_root) / path.relative_to(output_dir)
+            archive.write(path, archive_name.as_posix())
+
+    digest = _sha256_file(zip_path)
+    zip_sha256_path.write_text(f"{digest}  {zip_path.name}\n", encoding="utf-8", newline="\n")
+    return zip_path, zip_sha256_path
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _write_start_bat(path: Path) -> None:
     path.write_text(
         "\n".join(
@@ -577,6 +670,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the CineSub portable release prototype.")
     parser.add_argument("--output", default=str(Path("dist") / DEFAULT_OUTPUT_NAME))
     parser.add_argument("--python-runtime", default=str(Path("tools") / "python"))
+    parser.add_argument("--version", default=DEFAULT_VERSION)
+    parser.add_argument("--zip", action="store_true", dest="make_zip")
     parser.add_argument("--force", action="store_true")
     return parser.parse_args(argv)
 
@@ -587,6 +682,8 @@ def main(argv: list[str] | None = None) -> int:
         result = build_portable_release(
             output=args.output,
             python_runtime=args.python_runtime,
+            version=args.version,
+            make_zip=args.make_zip,
             force=args.force,
         )
     except BuildError as exc:
@@ -599,6 +696,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"FFmpeg copied: {'yes' if result.ffmpeg_copied else 'no'}")
     print(f"Release manifest: {result.manifest_path}")
     print(f"Release report: {result.report_path}")
+    print(f"Release checksums: {result.checksums_path}")
+    if result.zip_path and result.zip_sha256_path:
+        print(f"Release zip: {result.zip_path}")
+        print(f"Release zip SHA256: {result.zip_sha256_path}")
     print(f"Copied files: {result.copied_file_count}")
     print(f"Total bytes: {result.total_bytes}")
     return 0

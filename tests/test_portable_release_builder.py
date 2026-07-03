@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import sys
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -82,7 +84,8 @@ def test_builder_creates_portable_layout_with_fake_runtime_without_executing_it(
     assert (out / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe").is_file()
     assert (out / "release_manifest.json").is_file()
     assert (out / "release_report.md").is_file()
-    for dirname in ("config", "input", "output", "work", "logs", "uploads", "models", ".cache", ".tmp"):
+    assert (out / "release_checksums.sha256").is_file()
+    for dirname in ("config", "input", "output", "work", "logs", "uploads", "models", ".cache"):
         assert (out / dirname).is_dir()
     assert list((out / "config").iterdir()) == []
     assert list((out / "output").iterdir()) == []
@@ -119,15 +122,19 @@ def test_builder_manifest_and_report_use_release_relative_paths(tmp_path):
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     report = result.report_path.read_text(encoding="utf-8")
 
-    assert manifest["builder"] == "m6.4-release-slimming"
+    assert manifest["builder"] == "m6.7-release-candidate-packaging"
+    assert manifest["version"] == "m6.7-rc1"
     assert manifest["paths"] == {
         "output_root": ".",
         "app_root": "app",
         "runtime_python_root": "runtime/python",
+        "checksums": "release_checksums.sha256",
     }
     assert manifest["copied_file_count"] == result.copied_file_count
     assert manifest["total_bytes"] == result.total_bytes
     assert manifest["largest_files"]
+    assert manifest["checksums"]["path"] == "release_checksums.sha256"
+    assert manifest["checksums"]["covered_file_count"] > 0
     assert manifest["excluded_summary"]["top_level"]["tests"] == "not included in portable app"
     assert manifest["leak_scan"]["status"] == "passed"
     assert str(repo) not in result.manifest_path.read_text(encoding="utf-8")
@@ -183,6 +190,81 @@ def test_builder_skips_content_scan_inside_copied_python_runtime(tmp_path):
     ).output_dir
 
     assert (out / "runtime" / "python" / "Lib" / "site-packages" / "third_party" / "constants.py").is_file()
+
+
+def test_builder_checksums_cover_payload_with_release_relative_paths(tmp_path):
+    builder = _load_builder()
+    repo = _make_repo(tmp_path / "repo")
+
+    result = builder.build_portable_release(
+        repo_root=repo,
+        output=repo / "dist" / "cinesub-portable",
+        python_runtime=repo / "tools" / "python",
+    )
+
+    text = result.checksums_path.read_text(encoding="utf-8")
+    assert "release_checksums.sha256" not in text
+    assert "release_manifest.json" not in text
+    assert "release_report.md" not in text
+    assert str(repo) not in text
+    assert "app/src/app.py" in text
+    assert "runtime/python/python.exe" in text
+    for line in text.splitlines():
+        digest, relative = line.split("  ", 1)
+        assert len(digest) == 64
+        assert "\\" not in relative
+        assert not Path(relative).is_absolute()
+
+
+def test_builder_creates_zip_with_single_top_level_dir_and_sidecar_sha256(tmp_path):
+    builder = _load_builder()
+    repo = _make_repo(tmp_path / "repo")
+
+    result = builder.build_portable_release(
+        repo_root=repo,
+        output=repo / "dist" / "cinesub-portable",
+        python_runtime=repo / "tools" / "python",
+        version="m6.7-rc1",
+        make_zip=True,
+    )
+
+    assert result.zip_path == repo / "dist" / "cinesub-portable-m6.7-rc1.zip"
+    assert result.zip_sha256_path == repo / "dist" / "cinesub-portable-m6.7-rc1.zip.sha256"
+    assert result.zip_path.is_file()
+    assert result.zip_sha256_path.is_file()
+
+    expected_digest = hashlib.sha256(result.zip_path.read_bytes()).hexdigest()
+    assert result.zip_sha256_path.read_text(encoding="utf-8") == (
+        f"{expected_digest}  cinesub-portable-m6.7-rc1.zip\n"
+    )
+
+    with ZipFile(result.zip_path) as archive:
+        names = archive.namelist()
+    assert names
+    assert {name.split("/", 1)[0] for name in names} == {"cinesub-portable"}
+    assert "cinesub-portable/release_manifest.json" in names
+    assert "cinesub-portable/release_report.md" in names
+    assert "cinesub-portable/release_checksums.sha256" in names
+    forbidden_fragments = (
+        "/.git/",
+        "/.venv/",
+        "/dist/",
+        "/tools/python/",
+        "/.tmp/",
+        "/uploads/movie.mp4",
+        "/output/movie.zh.srt",
+        "/output/movie.quality_report.json",
+        "/output/movie.review_needed.srt",
+        "/config/providers.local.json",
+    )
+    for name in names:
+        assert not any(fragment in f"/{name}" for fragment in forbidden_fragments)
+
+    manifest_text = result.manifest_path.read_text(encoding="utf-8")
+    report_text = result.report_path.read_text(encoding="utf-8")
+    assert result.zip_path.name not in manifest_text
+    assert "zip_sha256" not in manifest_text.lower()
+    assert result.zip_path.name not in report_text
 
 
 def test_builder_rejects_runtime_payload_if_it_appears_in_release_root(tmp_path):
