@@ -91,6 +91,18 @@ artifacts, wheelhouse, models, CUDA DLLs, or FFmpeg binaries. A future launcher
 may look for Python in this order: `runtime/python/python.exe`,
 `.venv/Scripts/python.exe`, then a clear setup error.
 
+M6.4 adds release prototype visibility only. The portable builder writes a
+`release_manifest.json` and `release_report.md` inside the generated `dist/`
+prototype so maintainers can review copied file counts, total size, largest
+files, excluded categories, and leak-scan status. These generated reports use
+release-relative paths and intentionally omit local absolute source paths,
+Provider configs, secrets, and large command-output dumps.
+
+The release prototype remains an application package skeleton. It does not
+include tests, sample media/subtitles, model caches, wheelhouse, CUDA, a release
+zip, or PyInstaller output, and it does not delete local `output/`, `work/`, or
+`logs/` data.
+
 ## 4. 配置 Provider
 
 在 Web 的“模型接口”区域配置翻译 Provider：

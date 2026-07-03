@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -21,8 +22,25 @@ def _make_repo(root: Path) -> Path:
     for dirname in ("src", "web", "scripts"):
         (root / dirname).mkdir(parents=True, exist_ok=True)
     (root / "src" / "app.py").write_text("print('app')\n", encoding="utf-8")
+    (root / "src" / "provider_fields.py").write_text(
+        "\n".join(
+            [
+                "api_key = None",
+                "access_token = None",
+                "refresh_token = None",
+                "provider.get('api_key')",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     (root / "web" / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
     (root / "scripts" / "helper.ps1").write_text("Write-Host safe\n", encoding="utf-8")
+    (root / "tests").mkdir(parents=True, exist_ok=True)
+    (root / "tests" / "test_secret_sentinel.py").write_text(
+        "SENTINEL = 'sk-test-M5-SECRET-SHOULD-NOT-LEAK'\n",
+        encoding="utf-8",
+    )
     (root / "README.md").write_text("readme\n", encoding="utf-8")
     (root / "AGENTS.md").write_text("agents\n", encoding="utf-8")
     (root / "requirements.txt").write_text("pytest\n", encoding="utf-8")
@@ -40,6 +58,10 @@ def _make_repo(root: Path) -> Path:
     for dirname in (".git", ".venv", ".cache", ".tmp", "models", "uploads", "output", "work", "logs", "archive", "failed"):
         (root / dirname).mkdir(parents=True, exist_ok=True)
         (root / dirname / "artifact.txt").write_text("runtime artifact\n", encoding="utf-8")
+    (root / "output" / "movie.zh.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    (root / "output" / "movie.quality_report.json").write_text("{}\n", encoding="utf-8")
+    (root / "output" / "movie.review_needed.srt").write_text("review\n", encoding="utf-8")
+    (root / "uploads" / "movie.mp4").write_text("media\n", encoding="utf-8")
     return root.resolve()
 
 
@@ -58,9 +80,14 @@ def test_builder_creates_portable_layout_with_fake_runtime_without_executing_it(
     assert (out / "app" / "src" / "app.py").is_file()
     assert (out / "runtime" / "python" / "python.exe").read_text(encoding="utf-8").startswith("fake runtime")
     assert (out / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe").is_file()
+    assert (out / "release_manifest.json").is_file()
+    assert (out / "release_report.md").is_file()
     for dirname in ("config", "input", "output", "work", "logs", "uploads", "models", ".cache", ".tmp"):
         assert (out / dirname).is_dir()
     assert list((out / "config").iterdir()) == []
+    assert list((out / "output").iterdir()) == []
+    assert list((out / "work").iterdir()) == []
+    assert list((out / "logs").iterdir()) == []
 
 
 def test_builder_uses_whitelist_and_does_not_copy_secrets_or_runtime_artifacts(tmp_path):
@@ -75,8 +102,94 @@ def test_builder_uses_whitelist_and_does_not_copy_secrets_or_runtime_artifacts(t
 
     app = out / "app"
     assert not (app / "config" / "providers.local.json").exists()
-    for forbidden in (".git", ".venv", ".cache", ".tmp", "models", "uploads", "output", "work", "logs", "archive", "failed", "tools"):
+    for forbidden in (".git", ".venv", ".cache", ".tmp", "models", "uploads", "output", "work", "logs", "archive", "failed", "tools", "tests"):
         assert not (app / forbidden).exists()
+
+
+def test_builder_manifest_and_report_use_release_relative_paths(tmp_path):
+    builder = _load_builder()
+    repo = _make_repo(tmp_path / "repo")
+
+    result = builder.build_portable_release(
+        repo_root=repo,
+        output=repo / "dist" / "cinesub-portable",
+        python_runtime=repo / "tools" / "python",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    report = result.report_path.read_text(encoding="utf-8")
+
+    assert manifest["builder"] == "m6.4-release-slimming"
+    assert manifest["paths"] == {
+        "output_root": ".",
+        "app_root": "app",
+        "runtime_python_root": "runtime/python",
+    }
+    assert manifest["copied_file_count"] == result.copied_file_count
+    assert manifest["total_bytes"] == result.total_bytes
+    assert manifest["largest_files"]
+    assert manifest["excluded_summary"]["top_level"]["tests"] == "not included in portable app"
+    assert manifest["leak_scan"]["status"] == "passed"
+    assert str(repo) not in result.manifest_path.read_text(encoding="utf-8")
+    assert str(repo) not in report
+    assert "sk-test-M5-SECRET-SHOULD-NOT-LEAK" not in report
+    assert "Generated from a local source checkout" in report
+
+
+def test_builder_does_not_fail_on_source_code_secret_field_names(tmp_path):
+    builder = _load_builder()
+    repo = _make_repo(tmp_path / "repo")
+
+    out = builder.build_portable_release(
+        repo_root=repo,
+        output=repo / "dist" / "cinesub-portable",
+        python_runtime=repo / "tools" / "python",
+    ).output_dir
+
+    copied_source = (out / "app" / "src" / "provider_fields.py").read_text(encoding="utf-8")
+    assert "api_key" in copied_source
+    assert "access_token" in copied_source
+    assert "refresh_token" in copied_source
+
+
+def test_builder_rejects_secret_looking_values_in_copied_content(tmp_path):
+    builder = _load_builder()
+    repo = _make_repo(tmp_path / "repo")
+    secret = "sk-" + ("A" * 30)
+    (repo / "src" / "bad_secret.py").write_text(f'CONFIG = {{"api_key": "{secret}"}}\n', encoding="utf-8")
+
+    with pytest.raises(builder.BuildError, match="leak scan"):
+        builder.build_portable_release(
+            repo_root=repo,
+            output=repo / "dist" / "cinesub-portable",
+            python_runtime=repo / "tools" / "python",
+        )
+
+
+def test_builder_rejects_runtime_payload_if_it_appears_in_release_root(tmp_path):
+    builder = _load_builder()
+    repo = _make_repo(tmp_path / "repo")
+    output = repo / "dist" / "cinesub-portable"
+
+    original_mkdir = Path.mkdir
+
+    def mkdir_and_inject(self, *args, **kwargs):
+        result = original_mkdir(self, *args, **kwargs)
+        if self == output / "output":
+            (self / "leaked.srt").write_text("leak\n", encoding="utf-8")
+        return result
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(Path, "mkdir", mkdir_and_inject)
+    try:
+        with pytest.raises(builder.BuildError, match="rejected file"):
+            builder.build_portable_release(
+                repo_root=repo,
+                output=output,
+                python_runtime=repo / "tools" / "python",
+            )
+    finally:
+        monkeypatch.undo()
 
 
 def test_builder_fails_clearly_when_python_exe_is_missing(tmp_path):
