@@ -54,7 +54,7 @@ def main() -> int:
     except ModelUnavailable as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
 

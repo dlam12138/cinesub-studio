@@ -160,3 +160,20 @@ def test_local_only_model_missing_fails_cleanly():
             local_files_only=True,
             model_class=MissingModel,
         )
+
+
+def test_main_prints_value_error_without_traceback(monkeypatch, capsys):
+    monkeypatch.setattr(proto, "parse_args", lambda: SimpleNamespace())
+
+    def fail_during_planning(args):
+        raise ValueError("Window end must be after start: 00:07:00-00:05:00")
+
+    monkeypatch.setattr(proto, "run_prototype_cli", fail_during_planning)
+
+    exit_code = proto.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Window end must be after start" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
