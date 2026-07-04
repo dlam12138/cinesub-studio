@@ -10,6 +10,11 @@ from pathlib import Path
 
 from process_env import build_child_process_env, redact_project_path
 from runtime_paths import resolve_runtime_paths
+from segment_asr_routing_integration import (
+    SegmentAsrRoutingError,
+    SegmentAsrRoutingOptions,
+    validate_options as validate_segment_routing_options,
+)
 
 
 PATHS = resolve_runtime_paths()
@@ -46,6 +51,10 @@ def create_job(form: dict) -> dict:
     beam_size = get_text(form, "beam_size", "5")
     vad = get_text(form, "vad", "on") == "on"
     condition_on_previous_text = get_text(form, "condition_on_previous_text", "on") == "on"
+    segment_asr_routing = get_text(form, "segment_asr_routing", "off").strip() or "off"
+    segment_threshold = get_text(form, "segment_routing_confidence_threshold", "0.70").strip() or "0.70"
+    segment_min_segments = get_text(form, "segment_routing_min_segments", "1").strip() or "1"
+    segment_strict = get_text(form, "segment_routing_strict", "") == "on"
 
     if device not in {"cpu", "cuda", "auto"}:
         raise ValueError("Invalid device.")
@@ -57,6 +66,17 @@ def create_job(form: dict) -> dict:
 
     if beam_size_int < 1 or beam_size_int > 10:
         raise ValueError("Beam size must be between 1 and 10.")
+    try:
+        segment_options = validate_segment_routing_options(
+            SegmentAsrRoutingOptions(
+                mode=segment_asr_routing,
+                confidence_threshold=float(segment_threshold),
+                min_segments=int(segment_min_segments),
+                strict=segment_strict,
+            )
+        )
+    except (ValueError, SegmentAsrRoutingError) as exc:
+        raise ValueError(f"Invalid segment ASR routing settings: {exc}") from exc
 
     translate_enabled = get_text(form, "translate_enabled", "") == "on"
     provider_select = get_text(form, "provider_select", "").strip()
@@ -154,6 +174,10 @@ def create_job(form: dict) -> dict:
             "subtitle_formats": subtitle_formats,
             "ass_style_id": ass_style_id,
             "subtitle_status": subtitle_status,
+            "segment_asr_routing": segment_options.mode,
+            "segment_routing_confidence_threshold": segment_options.confidence_threshold,
+            "segment_routing_min_segments": segment_options.min_segments,
+            "segment_routing_strict": segment_options.strict,
         },
         "_api_key": api_key,
         "logs": ["Queued."],
@@ -224,6 +248,16 @@ def run_job(job_id: str) -> None:
         command += ["--no-condition-on-previous-text"]
     command += ["--subtitle-formats", ",".join(options.get("subtitle_formats", ["srt"]))]
     command += ["--ass-style-id", str(options.get("ass_style_id", "clean-cn"))]
+    segment_mode = str(options.get("segment_asr_routing", "off"))
+    segment_threshold = float(options.get("segment_routing_confidence_threshold", 0.70))
+    segment_min_segments = int(options.get("segment_routing_min_segments", 1))
+    segment_strict = bool(options.get("segment_routing_strict"))
+    if segment_mode != "off" or segment_threshold != 0.70 or segment_min_segments != 1 or segment_strict:
+        command += ["--segment-asr-routing", segment_mode]
+        command += ["--segment-routing-confidence-threshold", str(segment_threshold)]
+        command += ["--segment-routing-min-segments", str(segment_min_segments)]
+        if segment_strict:
+            command += ["--segment-routing-strict"]
 
     lang_profile = options.get("language_profile", "")
     if lang_profile:

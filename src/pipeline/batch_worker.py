@@ -45,6 +45,13 @@ from subtitle_model import (
     DEFAULT_ASS_STYLE_ID,
     normalize_subtitle_formats,
 )
+from segment_asr_routing_integration import (
+    SegmentAsrRoutingError,
+    SegmentAsrRoutingOptions,
+    ensure_apply_is_not_strict,
+    run_segment_asr_routing,
+    validate_options as validate_segment_routing_options,
+)
 
 PATHS = resolve_runtime_paths(Path(__file__).resolve())
 PROJECT_ROOT = PATHS.project_root
@@ -118,6 +125,9 @@ class TaskState:
 
     quality_report: str = ""
 
+    segment_asr_routing_report: str = ""
+    segment_asr_routing_status: str = ""
+
     error: str = ""
     error_stage: str = ""
     retry_count: int = 0
@@ -139,6 +149,8 @@ class TaskState:
             "translated_srt": self.translated_srt,
             "bilingual_srt": self.bilingual_srt,
             "quality_report": self.quality_report,
+            "segment_asr_routing_report": self.segment_asr_routing_report,
+            "segment_asr_routing_status": self.segment_asr_routing_status,
             "error": self.error,
             "error_stage": self.error_stage,
             "retry_count": self.retry_count,
@@ -161,6 +173,8 @@ class TaskState:
             translated_srt=data.get("translated_srt", ""),
             bilingual_srt=data.get("bilingual_srt", ""),
             quality_report=data.get("quality_report", ""),
+            segment_asr_routing_report=data.get("segment_asr_routing_report", ""),
+            segment_asr_routing_status=data.get("segment_asr_routing_status", ""),
             error=data.get("error", ""),
             error_stage=data.get("error_stage", ""),
             retry_count=data.get("retry_count", 0),
@@ -291,6 +305,10 @@ class BatchConfig:
     subtitle_formats: list[str] = field(default_factory=lambda: ["srt"])
     ass_style_id: str = DEFAULT_ASS_STYLE_ID
     subtitle_style: dict | None = None
+    segment_asr_routing: str = "off"
+    segment_routing_confidence_threshold: float = 0.70
+    segment_routing_min_segments: int = 1
+    segment_routing_strict: bool = False
 
     language_profile_id: str = ""
     language_profile_name: str = ""
@@ -372,6 +390,8 @@ class BatchPipeline:
             print(f"  Target language: {self.config.target_language}")
             print(f"  Translation mode: {self.config.translation_mode}")
         print(f"  Subtitle formats: {','.join(self.config.subtitle_formats)}")
+        if self.config.segment_asr_routing != "off":
+            print(f"  Segment ASR routing: {self.config.segment_asr_routing}")
         if "ass" in self.config.subtitle_formats:
             print(f"  ASS: {ASS_RESERVED_MESSAGE}")
         print(f"  Input directory: {self.config.input_dir}")
@@ -441,6 +461,14 @@ class BatchPipeline:
             target_language=self.config.target_language,
             translation_mode=self.config.translation_mode,
         )
+        ensure_apply_is_not_strict(
+            SegmentAsrRoutingOptions(
+                mode=self.config.segment_asr_routing,
+                confidence_threshold=self.config.segment_routing_confidence_threshold,
+                min_segments=self.config.segment_routing_min_segments,
+                strict=self.config.segment_routing_strict,
+            )
+        )
 
         if not task.audio_path or not _is_valid_output_file(Path(task.audio_path)):
             task.stage = TaskStage.EXTRACTING_AUDIO
@@ -479,6 +507,37 @@ class BatchPipeline:
             ld = task.language_detection
             print(f"      language: {ld.get('source_language', '?')} "
                   f"(confidence: {ld.get('language_probability', 'N/A')})")
+
+        routing_options = SegmentAsrRoutingOptions(
+            mode=self.config.segment_asr_routing,
+            confidence_threshold=self.config.segment_routing_confidence_threshold,
+            min_segments=self.config.segment_routing_min_segments,
+            strict=self.config.segment_routing_strict,
+        )
+        if routing_options.mode != "off":
+            print("      segment ASR routing dry-run/apply metadata...")
+            try:
+                routing_result = run_segment_asr_routing(
+                    options=routing_options,
+                    media_path=input_path,
+                    routing_input_path=Path(task.audio_path),
+                    report_root=outputs.reports_dir,
+                    model_name=self.config.model,
+                    device=self.config.device,
+                    compute_type=self.config.compute_type,
+                    local_files_only=self.config.local_files_only,
+                )
+            except SegmentAsrRoutingError:
+                task.segment_asr_routing_status = "failed"
+                task.save()
+                raise
+            task.segment_asr_routing_status = routing_result.status
+            task.segment_asr_routing_report = routing_result.report_path
+            task.save()
+            if routing_result.report_path:
+                print(f"      segment routing report: {routing_result.report_path}")
+            if routing_result.fallback_used:
+                print(f"      segment routing fallback: {routing_result.fallback_reason}")
 
         if self.config.translate:
             translated_srt = outputs.translated_srt
@@ -766,6 +825,29 @@ Examples:
     parser.add_argument("--translation-prompt", default="", help="Custom translation prompt")
     parser.add_argument("--subtitle-formats", default=None, help="Subtitle output formats. ASS is reserved, e.g. srt,ass.")
     parser.add_argument("--ass-style-id", default=None, help="Reserved ASS style id. No .ass file is generated.")
+    parser.add_argument(
+        "--segment-asr-routing",
+        default="off",
+        choices=["off", "dry_run", "apply"],
+        help="Experimental segment ASR routing mode. Defaults to off.",
+    )
+    parser.add_argument(
+        "--segment-routing-confidence-threshold",
+        type=float,
+        default=0.70,
+        help="Confidence threshold for segment routing dry-run analysis.",
+    )
+    parser.add_argument(
+        "--segment-routing-min-segments",
+        type=int,
+        default=1,
+        help="Minimum segment count for usable segment routing evidence.",
+    )
+    parser.add_argument(
+        "--segment-routing-strict",
+        action="store_true",
+        help="Fail instead of falling back when experimental segment routing fails.",
+    )
 
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries")
     parser.add_argument("--no-skip-completed", action="store_true", help="Reprocess completed tasks")
@@ -778,6 +860,17 @@ Examples:
     parser.add_argument("--review-file", default=None, help="Show details for one quality report")
 
     args = parser.parse_args()
+    try:
+        validate_segment_routing_options(
+            SegmentAsrRoutingOptions(
+                mode=args.segment_asr_routing,
+                confidence_threshold=args.segment_routing_confidence_threshold,
+                min_segments=args.segment_routing_min_segments,
+                strict=args.segment_routing_strict,
+            )
+        )
+    except SegmentAsrRoutingError as exc:
+        parser.error(str(exc))
 
     os.environ.setdefault("HF_HOME", str(PROJECT_ROOT / ".cache" / "huggingface"))
     os.environ.setdefault("HF_HUB_CACHE", str(PROJECT_ROOT / ".cache" / "huggingface" / "hub"))
@@ -908,6 +1001,10 @@ Examples:
         subtitle_formats=effective_subtitle_formats,
         ass_style_id=effective_ass_style_id,
         subtitle_style=lp_subtitle_style,
+        segment_asr_routing=args.segment_asr_routing,
+        segment_routing_confidence_threshold=args.segment_routing_confidence_threshold,
+        segment_routing_min_segments=args.segment_routing_min_segments,
+        segment_routing_strict=args.segment_routing_strict,
         language_profile_id=lang_profile_info.get("profile_id", ""),
         language_profile_name=lang_profile_info.get("profile_name", ""),
         lang_profile_config=lang_profile_info,

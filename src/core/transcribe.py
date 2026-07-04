@@ -22,6 +22,13 @@ from subtitle_model import (
     DEFAULT_ASS_STYLE_ID,
     normalize_subtitle_formats,
 )
+from segment_asr_routing_integration import (
+    SegmentAsrRoutingError,
+    SegmentAsrRoutingOptions,
+    ensure_apply_is_not_strict,
+    run_segment_asr_routing,
+    validate_options as validate_segment_routing_options,
+)
 
 PATHS = resolve_runtime_paths(Path(__file__).resolve())
 PROJECT_ROOT = PATHS.project_root
@@ -53,6 +60,17 @@ AUDIO_EXTENSIONS = {
 
 def main() -> int:
     args = parse_args()
+    segment_routing = SegmentAsrRoutingOptions(
+        mode=args.segment_asr_routing,
+        confidence_threshold=args.segment_routing_confidence_threshold,
+        min_segments=args.segment_routing_min_segments,
+        strict=args.segment_routing_strict,
+    )
+    try:
+        ensure_apply_is_not_strict(segment_routing)
+    except SegmentAsrRoutingError as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
+
     project_root = PROJECT_ROOT
     subtitle_formats = normalize_subtitle_formats(args.subtitle_formats)
     args.subtitle_formats = ",".join(subtitle_formats)
@@ -90,6 +108,25 @@ def main() -> int:
         language_profile_id=args.language_profile,
         condition_on_previous_text=not args.no_condition_on_previous_text,
     )
+
+    if segment_routing.mode != "off":
+        try:
+            result = run_segment_asr_routing(
+                options=segment_routing,
+                media_path=input_path,
+                routing_input_path=audio_path,
+                report_root=output_dir / "reports",
+                model_name=args.model,
+                device=args.device,
+                compute_type=args.compute_type,
+                local_files_only=args.local_files_only,
+            )
+        except SegmentAsrRoutingError as exc:
+            raise SystemExit(f"ERROR: {exc}") from exc
+        if result.report_path:
+            print(f"Segment ASR routing report: {result.report_path}")
+        if result.fallback_used:
+            print(f"Segment ASR routing fallback: {result.fallback_reason}")
 
     print(f"Done: {srt_path}")
 
@@ -190,8 +227,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language-profile", default="", help="Language Profile ID for ASR and translation settings.")
     parser.add_argument("--subtitle-formats", default=None, help="Subtitle output formats. SRT is always enabled; ASS is reserved.")
     parser.add_argument("--ass-style-id", default=None, help="Reserved ASS style id. No .ass file is generated in this version.")
+    parser.add_argument(
+        "--segment-asr-routing",
+        default="off",
+        choices=["off", "dry_run", "apply"],
+        help="Experimental segment ASR routing mode. Defaults to off.",
+    )
+    parser.add_argument(
+        "--segment-routing-confidence-threshold",
+        type=float,
+        default=0.70,
+        help="Confidence threshold for segment routing dry-run analysis.",
+    )
+    parser.add_argument(
+        "--segment-routing-min-segments",
+        type=int,
+        default=1,
+        help="Minimum segment count for usable segment routing evidence.",
+    )
+    parser.add_argument(
+        "--segment-routing-strict",
+        action="store_true",
+        help="Fail instead of falling back when experimental segment routing fails.",
+    )
 
     args = parser.parse_args()
+    try:
+        validate_segment_routing_options(
+            SegmentAsrRoutingOptions(
+                mode=args.segment_asr_routing,
+                confidence_threshold=args.segment_routing_confidence_threshold,
+                min_segments=args.segment_routing_min_segments,
+                strict=args.segment_routing_strict,
+            )
+        )
+    except SegmentAsrRoutingError as exc:
+        parser.error(str(exc))
     args.profile_translation_style = ""
     args.profile_glossary = []
 

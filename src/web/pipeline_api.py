@@ -211,6 +211,10 @@ def start_pipeline_background(
     local_files_only: bool = False,
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
+    segment_asr_routing: str = "off",
+    segment_routing_confidence_threshold: float = 0.70,
+    segment_routing_min_segments: int = 1,
+    segment_routing_strict: bool = False,
 ) -> tuple[dict, int]:
     with PIPELINE_TASK_LOCK:
         if PIPELINE_TASK["running"]:
@@ -241,6 +245,10 @@ def start_pipeline_background(
             "local_files_only": local_files_only,
             "subtitle_formats": subtitle_formats,
             "ass_style_id": ass_style_id,
+            "segment_asr_routing": segment_asr_routing,
+            "segment_routing_confidence_threshold": segment_routing_confidence_threshold,
+            "segment_routing_min_segments": segment_routing_min_segments,
+            "segment_routing_strict": segment_routing_strict,
         },
         daemon=True,
     )
@@ -263,6 +271,10 @@ def run_pipeline_background(
     local_files_only: bool = False,
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
+    segment_asr_routing: str = "off",
+    segment_routing_confidence_threshold: float = 0.70,
+    segment_routing_min_segments: int = 1,
+    segment_routing_strict: bool = False,
 ) -> None:
     subtitle_formats_list = normalize_subtitle_formats(subtitle_formats)
     ass_style_id = ass_style_id or DEFAULT_ASS_STYLE_ID
@@ -280,6 +292,10 @@ def run_pipeline_background(
         local_files_only=local_files_only,
         subtitle_formats=subtitle_formats_list,
         ass_style_id=ass_style_id,
+        segment_asr_routing=segment_asr_routing,
+        segment_routing_confidence_threshold=segment_routing_confidence_threshold,
+        segment_routing_min_segments=segment_routing_min_segments,
+        segment_routing_strict=segment_routing_strict,
     )
     env = _pipeline_env()
     if hf_endpoint:
@@ -294,6 +310,7 @@ def run_pipeline_background(
         hf_endpoint=hf_endpoint,
         local_files_only=local_files_only,
         subtitle_formats=subtitle_formats_list,
+        segment_asr_routing=segment_asr_routing,
     )
 
     returncode = None
@@ -646,6 +663,10 @@ def _build_background_command(
     local_files_only: bool,
     subtitle_formats: list[str],
     ass_style_id: str,
+    segment_asr_routing: str = "off",
+    segment_routing_confidence_threshold: float = 0.70,
+    segment_routing_min_segments: int = 1,
+    segment_routing_strict: bool = False,
 ) -> list[str]:
     if action == "run":
         command = [
@@ -685,6 +706,17 @@ def _build_background_command(
         command += ["--no-translate"]
     command += ["--subtitle-formats", ",".join(subtitle_formats)]
     command += ["--ass-style-id", ass_style_id]
+    if (
+        segment_asr_routing != "off"
+        or float(segment_routing_confidence_threshold) != 0.70
+        or int(segment_routing_min_segments) != 1
+        or segment_routing_strict
+    ):
+        command += ["--segment-asr-routing", segment_asr_routing]
+        command += ["--segment-routing-confidence-threshold", str(segment_routing_confidence_threshold)]
+        command += ["--segment-routing-min-segments", str(segment_routing_min_segments)]
+        if segment_routing_strict:
+            command += ["--segment-routing-strict"]
     return command
 
 
@@ -701,6 +733,7 @@ def _append_pipeline_log_header(
     hf_endpoint: str,
     local_files_only: bool,
     subtitle_formats: list[str],
+    segment_asr_routing: str = "off",
 ) -> None:
     started_at = time.strftime("%Y-%m-%d %H:%M:%S")
     with PIPELINE_LOG.open("a", encoding="utf-8") as log:
@@ -716,6 +749,8 @@ def _append_pipeline_log_header(
         if local_files_only:
             log.write("  Local files only: true\n")
         log.write(f"  Subtitle formats: {','.join(subtitle_formats)}\n")
+        if segment_asr_routing and segment_asr_routing != "off":
+            log.write(f"  Segment ASR routing: {segment_asr_routing}\n")
         if "ass" in subtitle_formats:
             log.write(f"  ASS: {ASS_RESERVED_MESSAGE}\n")
         log.write(f"{'=' * 60}\n")

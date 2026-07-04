@@ -370,6 +370,11 @@ class Handler(BaseHTTPRequestHandler):
             local_files_only = bool(body.get("local_files_only", False))
             subtitle_formats = body.get("subtitle_formats", ["srt"])
             ass_style_id = body.get("ass_style_id", "")
+            try:
+                routing_payload = _parse_segment_routing_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
 
             payload, status = start_pipeline_background(
                 action="run",
@@ -385,6 +390,7 @@ class Handler(BaseHTTPRequestHandler):
                 local_files_only=local_files_only,
                 subtitle_formats=subtitle_formats,
                 ass_style_id=ass_style_id,
+                **routing_payload,
             )
             self.send_json(payload, status=status)
             return
@@ -404,6 +410,11 @@ class Handler(BaseHTTPRequestHandler):
             local_files_only = bool(body.get("local_files_only", False))
             subtitle_formats = body.get("subtitle_formats", ["srt"])
             ass_style_id = body.get("ass_style_id", "")
+            try:
+                routing_payload = _parse_segment_routing_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
 
             payload, status = start_pipeline_background(
                 action="retry-failed",
@@ -419,6 +430,7 @@ class Handler(BaseHTTPRequestHandler):
                 local_files_only=local_files_only,
                 subtitle_formats=subtitle_formats,
                 ass_style_id=ass_style_id,
+                **routing_payload,
             )
             self.send_json(payload, status=status)
             return
@@ -657,6 +669,36 @@ def _runtime_diagnostics() -> dict:
 def _first_query_value(query: dict, key: str) -> str:
     values = query.get(key) or [""]
     return str(values[0] or "").strip()
+
+
+def _parse_segment_routing_payload(body: dict) -> dict:
+    from segment_asr_routing_integration import (
+        SegmentAsrRoutingError,
+        SegmentAsrRoutingOptions,
+        validate_options,
+    )
+
+    mode = str(body.get("segment_asr_routing") or "off").strip() or "off"
+    threshold = body.get("segment_routing_confidence_threshold", 0.70)
+    min_segments = body.get("segment_routing_min_segments", 1)
+    strict = bool(body.get("segment_routing_strict", False))
+    try:
+        options = validate_options(
+            SegmentAsrRoutingOptions(
+                mode=mode,
+                confidence_threshold=float(threshold),
+                min_segments=int(min_segments),
+                strict=strict,
+            )
+        )
+    except (TypeError, ValueError, SegmentAsrRoutingError) as exc:
+        raise ValueError(f"Invalid segment ASR routing settings: {exc}") from exc
+    return {
+        "segment_asr_routing": options.mode,
+        "segment_routing_confidence_threshold": options.confidence_threshold,
+        "segment_routing_min_segments": options.min_segments,
+        "segment_routing_strict": options.strict,
+    }
 
 
 def _effective_translation_config(query: dict | None = None) -> dict:

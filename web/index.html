@@ -315,6 +315,11 @@
       font-size: 13px;
     }
 
+    .experimental-routing {
+      border-color: #d6e4ff;
+      background: #f8fbff;
+    }
+
     .toolbar {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -1256,6 +1261,38 @@
         <span class="help-text">语言配置会带入识别、翻译风格和质检阈值；不懂就用 active profile。</span>
       </div>
       </div>
+
+      <details class="advanced-settings experimental-routing">
+        <summary>实验性分段 ASR 路由（默认关闭）</summary>
+        <div class="row">
+          <div class="option-card">
+            <label for="pipelineSegmentAsrRouting">路由模式</label>
+            <select id="pipelineSegmentAsrRouting">
+              <option value="off" selected>off - 不运行</option>
+              <option value="dry_run">dry_run - 只生成证据报告</option>
+              <option value="apply">apply - M8.1 延后并回退</option>
+            </select>
+            <span class="help-text">实验能力只在显式选择后运行。dry_run 不改变字幕输出。</span>
+          </div>
+          <div class="option-card">
+            <label for="pipelineSegmentRoutingThreshold">置信阈值</label>
+            <input id="pipelineSegmentRoutingThreshold" type="number" min="0" max="1" step="0.01" value="0.70">
+            <span class="help-text">用于分析窗口分类；默认 0.70。</span>
+          </div>
+          <div class="option-card">
+            <label for="pipelineSegmentRoutingMinSegments">最少片段数</label>
+            <input id="pipelineSegmentRoutingMinSegments" type="number" min="0" max="20" step="1" value="1">
+            <span class="help-text">低于该片段数的窗口证据会被视为不足。</span>
+          </div>
+          <div class="option-card">
+            <label class="check">
+              <input id="pipelineSegmentRoutingStrict" type="checkbox">
+              strict：路由失败时直接失败
+            </label>
+            <span class="help-text">M8.1 的 apply strict 会在生成字幕前失败；普通 dry_run 建议不要勾。</span>
+          </div>
+        </div>
+      </details>
     </div>
 
     <div class="actions toolbar-actions">
@@ -1441,6 +1478,39 @@
                   <span class="help-text">让 Whisper 记住上一段内容。长对白建议开启；歌词、跳切、多语言混杂可关闭。</span>
                 </div>
               </div>
+              <details class="advanced-settings experimental-routing">
+                <summary>实验性分段 ASR 路由（默认关闭）</summary>
+                <div class="row">
+                  <div class="option-card">
+                    <label for="segment_asr_routing">路由模式</label>
+                    <select id="segment_asr_routing" name="segment_asr_routing">
+                      <option value="off" selected>off - 不运行</option>
+                      <option value="dry_run">dry_run - 只生成证据报告</option>
+                      <option value="apply">apply - M8.1 延后并回退</option>
+                    </select>
+                    <span class="help-text">dry_run 会额外生成路由证据报告，但不会改变 SRT 输出。</span>
+                  </div>
+                  <div class="option-card">
+                    <label for="segment_routing_confidence_threshold">置信阈值</label>
+                    <input id="segment_routing_confidence_threshold" name="segment_routing_confidence_threshold" type="number" min="0" max="1" step="0.01" value="0.70">
+                    <span class="help-text">用于窗口分类分析；默认 0.70。</span>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="option-card">
+                    <label for="segment_routing_min_segments">最少片段数</label>
+                    <input id="segment_routing_min_segments" name="segment_routing_min_segments" type="number" min="0" max="20" step="1" value="1">
+                    <span class="help-text">证据片段数不足时不会贸然采信窗口结果。</span>
+                  </div>
+                  <div class="option-card">
+                    <label class="check">
+                      <input id="segment_routing_strict" name="segment_routing_strict" type="checkbox">
+                      strict：路由失败时直接失败
+                    </label>
+                    <span class="help-text">M8.1 的 apply strict 会在生成字幕前失败；普通 dry_run 建议保持关闭。</span>
+                  </div>
+                </div>
+              </details>
             </details>
           </div>
 
@@ -1816,6 +1886,10 @@ async function pipelineAction(action) {
     var computeTypeSel = document.getElementById('pipelineComputeType');
     var languageSel = document.getElementById('pipelineLanguage');
     var translateCb = document.getElementById('pipelineTranslateEnabled');
+    var segmentRoutingSel = document.getElementById('pipelineSegmentAsrRouting');
+    var segmentThresholdEl = document.getElementById('pipelineSegmentRoutingThreshold');
+    var segmentMinEl = document.getElementById('pipelineSegmentRoutingMinSegments');
+    var segmentStrictEl = document.getElementById('pipelineSegmentRoutingStrict');
     var body = { input_dir: input_dir };
     if (provSel && provSel.value) body.provider_id = provSel.value;
     if (lpSel && lpSel.value) body.language_profile_id = lpSel.value;
@@ -1824,6 +1898,10 @@ async function pipelineAction(action) {
     if (computeTypeSel && computeTypeSel.value) body.compute_type = computeTypeSel.value;
     body.translate_enabled = translateCb ? translateCb.checked : true;
     if (languageSel && languageSel.value) body.language = languageSel.value;
+    if (segmentRoutingSel) body.segment_asr_routing = segmentRoutingSel.value || 'off';
+    if (segmentThresholdEl) body.segment_routing_confidence_threshold = segmentThresholdEl.value || '0.70';
+    if (segmentMinEl) body.segment_routing_min_segments = segmentMinEl.value || '1';
+    if (segmentStrictEl) body.segment_routing_strict = segmentStrictEl.checked;
     fetchOpts.headers = { 'Content-Type': 'application/json' };
     fetchOpts.body = JSON.stringify(body);
   } else {
