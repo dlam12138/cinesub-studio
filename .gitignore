@@ -72,6 +72,7 @@ acceptance/*
 !acceptance/m6_10_local_storage_hygiene.md
 !acceptance/m7_0_real_wav_evidence_run.md
 !acceptance/m7_2_segment_asr_routing_heuristics.md
+!acceptance/m7_3_segment_asr_routing_sandbox_summary.md
 acceptance/screenshots/
 acceptance/tmp/
 data/

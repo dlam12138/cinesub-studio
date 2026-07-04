@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "report_type": "segment_asr_prototype",
+  "generated_at": "2025-01-15T10:00:00Z",
+  "metadata": {
+    "input_path": "tests/fixtures/sample.mp4",
+    "input_name": "sample.mp4",
+    "duration_seconds": 300.0,
+    "model": "small",
+    "device": "cpu",
+    "compute_type": "int8",
+    "local_files_only": true,
+    "allow_model_download": false,
+    "window_source": "samples",
+    "manual_windows": [],
+    "samples": 5,
+    "sample_every_seconds": null,
+    "window_seconds": 60.0,
+    "ffmpeg_path": "tools/ffmpeg/bin/ffmpeg.exe",
+    "ffprobe_path": "tools/ffmpeg/bin/ffprobe.exe",
+    "device_warnings": []
+  },
+  "windows": [
+    {
+      "window_index": 1,
+      "start_seconds": 0.0,
+      "end_seconds": 60.0,
+      "results": [
+        {
+          "mode": "auto",
+          "requested_language": null,
+          "detected_language": "en",
+          "language_probability": 0.95,
+          "segment_count": 3,
+          "text_preview": "hello world here",
+          "error": ""
+        },
+        {
+          "mode": "forced-fr",
+          "requested_language": "fr",
+          "detected_language": "en",
+          "language_probability": 0.85,
+          "segment_count": 3,
+          "text_preview": "hello world here",
+          "error": ""
+        },
+        {
+          "mode": "forced-en",
+          "requested_language": "en",
+          "detected_language": "en",
+          "language_probability": 0.96,
+          "segment_count": 3,
+          "text_preview": "hello world here",
+          "error": ""
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "window_count": 1,
+    "mode_count": 3,
+    "limitations": []
+  }
+}
