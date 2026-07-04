@@ -101,7 +101,7 @@ tests/test_segment_asr_report_analyzer.py        9  passed
 tests/test_segment_asr_prototype.py              10 passed
 tests/test_mixed_language_asr_evidence.py       8  passed
 --------------------------------------------------------------------------------
-Full pytest suite                                119 passed
+Full pytest suite                                139 passed
 ```
 
 `git diff --check` is clean.
