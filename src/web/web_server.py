@@ -29,6 +29,7 @@ UPLOAD_DIR = PROJECT_ROOT / "uploads"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 MODEL_DIR = PROJECT_ROOT / "models"
 WORK_DIR = PROJECT_ROOT / "work"
+ASR_EVIDENCE_DIR = OUTPUT_DIR / "reports" / "asr_evidence"
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 SUPPORTED_MEDIA_EXTENSIONS = {
     ".mp4",
@@ -208,6 +209,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/storage/status":
             self.send_json(_storage_status())
+            return
+
+        if parsed.path == "/api/asr-evidence/reports":
+            self.send_json(_asr_evidence_reports())
+            return
+
+        if parsed.path == "/api/asr-evidence/report":
+            query = parse_qs(parsed.query)
+            file_name = (query.get("file") or [""])[0].strip()
+            payload, status = _asr_evidence_report(file_name)
+            self.send_json(payload, status=status)
             return
 
         if parsed.path == "/api/translation/effective-config":
@@ -784,6 +796,98 @@ def _format_bytes(size: int) -> str:
             return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
         value /= 1024
     return f"{size} B"
+
+
+def _asr_evidence_reports() -> dict:
+    reports: list[dict] = []
+    if ASR_EVIDENCE_DIR.exists():
+        for path in sorted(
+            ASR_EVIDENCE_DIR.glob("*.asr_evidence.json"),
+            key=lambda item: item.stat().st_mtime if item.exists() else 0,
+            reverse=True,
+        ):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not _is_asr_evidence_report(data):
+                continue
+            metadata = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
+            summary = data.get("summary", {}) if isinstance(data.get("summary"), dict) else {}
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            reports.append({
+                "file": path.name,
+                "path": str(path.resolve()),
+                "bytes": stat.st_size,
+                "display_size": _format_bytes(stat.st_size),
+                "generated_at": data.get("generated_at", ""),
+                "input_name": metadata.get("input_name", ""),
+                "input_path": metadata.get("input_path", ""),
+                "model": metadata.get("model", ""),
+                "summary": {
+                    "mixed_language_likelihood": summary.get("mixed_language_likelihood", "none"),
+                    "dominant_language": summary.get("dominant_language", ""),
+                    "distinct_detected_languages": summary.get("distinct_detected_languages", []),
+                    "low_confidence_count": summary.get("low_confidence_count", 0),
+                    "failed_sample_count": summary.get("failed_sample_count", 0),
+                },
+            })
+    return {
+        "ok": True,
+        "directory": str(ASR_EVIDENCE_DIR.resolve()),
+        "reports": reports,
+        "count": len(reports),
+    }
+
+
+def _asr_evidence_report(file_name: str) -> tuple[dict, int]:
+    path, error = _resolve_asr_evidence_report(file_name)
+    if path is None:
+        return {"ok": False, "error": error}, 404
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": f"Could not read ASR evidence report: {exc}"}, 400
+    if not _is_asr_evidence_report(data):
+        return {"ok": False, "error": "Invalid ASR evidence report."}, 400
+    return {"ok": True, "file": path.name, "report": data}, 200
+
+
+def _resolve_asr_evidence_report(file_name: str) -> tuple[Path | None, str]:
+    name = str(file_name or "").strip()
+    if not name:
+        return None, "Missing report file name"
+    if Path(name).is_absolute() or Path(name).name != name or "/" in name or "\\" in name:
+        return None, "Invalid report file name"
+    if not name.endswith(".asr_evidence.json"):
+        return None, "Unsupported ASR evidence report file"
+    try:
+        base = ASR_EVIDENCE_DIR.resolve()
+        path = (base / name).resolve()
+        if not path.is_relative_to(base):
+            return None, "Invalid report file name"
+        if not path.is_file() or path.stat().st_size <= 0:
+            return None, "ASR evidence report not found"
+    except OSError as exc:
+        return None, f"Could not resolve ASR evidence report: {exc}"
+    return path, ""
+
+
+def _is_asr_evidence_report(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if data.get("report_type") != "mixed_language_asr_evidence":
+        return False
+    if not isinstance(data.get("metadata"), dict):
+        return False
+    if not isinstance(data.get("summary"), dict):
+        return False
+    if not isinstance(data.get("samples"), list):
+        return False
+    return True
 
 
 def _content_type_for_artifact(path: Path) -> str:

@@ -25,29 +25,57 @@ def find_ffmpeg(project_root: Path | str | None = None) -> str | None:
     return info["path"] if info["ok"] else None
 
 
+def find_ffprobe(project_root: Path | str | None = None) -> str | None:
+    """Return the bundled ffprobe path, falling back to PATH."""
+    info = find_ffprobe_info(project_root)
+    return info["path"] if info["ok"] else None
+
+
 def find_ffmpeg_info(project_root: Path | str | None = None) -> dict:
     """Return the ffmpeg path plus its source without changing lookup order."""
-    root = Path(project_root).resolve() if project_root else resolve_runtime_paths().project_root
-    exe_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    return _find_tool_info(
+        project_root=project_root,
+        tool_name="ffmpeg",
+        env_names=("CINESUB_FFMPEG", "FFMPEG_PATH"),
+    )
 
-    for env_name in ("CINESUB_FFMPEG", "FFMPEG_PATH"):
-        found = _as_ffmpeg_path(os.environ.get(env_name), exe_name)
+
+def find_ffprobe_info(project_root: Path | str | None = None) -> dict:
+    """Return the ffprobe path plus its source using the FFmpeg lookup layout."""
+    return _find_tool_info(
+        project_root=project_root,
+        tool_name="ffprobe",
+        env_names=("CINESUB_FFPROBE", "FFPROBE_PATH"),
+    )
+
+
+def _find_tool_info(
+    *,
+    project_root: Path | str | None,
+    tool_name: str,
+    env_names: tuple[str, ...],
+) -> dict:
+    root = Path(project_root).resolve() if project_root else resolve_runtime_paths().project_root
+    exe_name = f"{tool_name}.exe" if sys.platform == "win32" else tool_name
+
+    for env_name in env_names:
+        found = _as_tool_path(os.environ.get(env_name), exe_name)
         if found:
             return _info(True, str(found), "env")
 
     for candidate in _direct_candidates(root, exe_name):
-        if _is_ffmpeg_file(candidate, exe_name):
+        if _is_tool_file(candidate, exe_name):
             return _info(True, str(candidate), "bundled")
 
     for base in (root / "tools", root / "bin", root / "vendor", root / "ffmpeg"):
         if not base.exists():
             continue
         for candidate in base.rglob(exe_name):
-            if _is_ffmpeg_file(candidate, exe_name):
+            if _is_tool_file(candidate, exe_name):
                 return _info(True, str(candidate), "bundled")
 
-    system = shutil.which("ffmpeg")
-    if system and _is_ffmpeg_file(Path(system), exe_name):
+    system = shutil.which(tool_name)
+    if system and _is_tool_file(Path(system), exe_name):
         return _info(True, system, "path")
     return _info(False, "", "not_found")
 
@@ -77,16 +105,16 @@ def _direct_candidates(root: Path, exe_name: str) -> list[Path]:
     ]
 
 
-def _as_ffmpeg_path(value: str | None, exe_name: str) -> Path | None:
+def _as_tool_path(value: str | None, exe_name: str) -> Path | None:
     if not value:
         return None
     path = Path(value).expanduser()
     if path.is_dir():
         path = path / exe_name
-    if _is_ffmpeg_file(path, exe_name):
+    if _is_tool_file(path, exe_name):
         return path
     return None
 
 
-def _is_ffmpeg_file(path: Path, exe_name: str) -> bool:
+def _is_tool_file(path: Path, exe_name: str) -> bool:
     return path.is_file() and path.name.lower() == exe_name.lower()

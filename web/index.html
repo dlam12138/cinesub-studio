@@ -459,6 +459,87 @@
       word-break: break-all;
     }
 
+    .asr-evidence-layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.4fr);
+      gap: 12px;
+    }
+
+    .asr-report-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .asr-report-button {
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfcfe;
+      padding: 9px 10px;
+      cursor: pointer;
+      color: var(--text);
+    }
+
+    .asr-report-button:hover,
+    .asr-report-button.active {
+      border-color: #9ec5fe;
+      background: #f5f9ff;
+    }
+
+    .asr-report-button strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 3px;
+      word-break: break-all;
+    }
+
+    .asr-report-button span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .asr-evidence-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(90px, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .asr-evidence-summary .storage-item {
+      min-height: 62px;
+    }
+
+    .asr-sample-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .asr-sample-table th,
+    .asr-sample-table td {
+      padding: 7px 8px;
+      border-bottom: 1px solid #edf0f3;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .asr-sample-table th {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .02em;
+    }
+
+    .asr-sample-table td:last-child {
+      max-width: 360px;
+      word-break: break-word;
+    }
+
     /* ── Pipeline: Cards ── */
     .cards {
       display: grid;
@@ -1068,6 +1149,8 @@
       .toolbar { grid-template-columns: 1fr; }
       .toolbar .wide { grid-column: auto; }
       .storage-grid { grid-template-columns: 1fr; }
+      .asr-evidence-layout,
+      .asr-evidence-summary { grid-template-columns: 1fr; }
       .actions { flex-direction: column; }
       .actions button { width: 100%; }
       .toolbar-actions button,
@@ -1204,6 +1287,12 @@
       <div class="card full-width">
         <h2>运行环境诊断</h2>
         <div id="diagnostics-result" class="placeholder">正在读取 Python、FFmpeg、Provider 和模型缓存状态...</div>
+      </div>
+
+      <div class="card full-width">
+        <h2>ASR Evidence Reports</h2>
+        <div class="help-text">Read-only mixed-language sampling reports from output/reports/asr_evidence/. This panel does not run Whisper or change pipeline state.</div>
+        <div id="asr-evidence-result" class="placeholder">Loading ASR evidence reports...</div>
       </div>
 
       <div class="card">
@@ -1680,6 +1769,7 @@ var pipelinePollTimer = null;
 var pipelineCanRetryFailed = false;
 var pipelineCurrentFilter = 'all';
 var pipelineLastProgress = null;
+var asrEvidenceCurrentFile = '';
 
 function setLoading(action, state) {
   pipelineLoading[action] = state;
@@ -2339,6 +2429,7 @@ function refreshAll() {
   pipelineAction('status');
   pipelineAction('review');
   loadStorageStatus();
+  loadAsrEvidenceReports();
   loadTopStatus();
 }
 
@@ -2377,6 +2468,7 @@ async function loadTopStatus() {
     setStatusText('statusProfile', 'auto-detect');
   }
   loadStorageStatus();
+  loadAsrEvidenceReports();
   loadRuntimeDiagnostics();
 }
 
@@ -2530,6 +2622,107 @@ async function loadStorageStatus() {
     var el = document.getElementById('storage-result');
     if (el) el.innerHTML = '<div class="placeholder">缓存状态读取失败: ' + escapeHtml(err.message) + '</div>';
   }
+}
+
+function renderAsrEvidenceReports(data) {
+  var el = document.getElementById('asr-evidence-result');
+  if (!el) return;
+  if (!data || data.ok === false) {
+    el.innerHTML = '<div class="placeholder">ASR evidence reports could not be loaded.</div>';
+    return;
+  }
+  var reports = data.reports || [];
+  if (!reports.length) {
+    el.innerHTML = '<div class="placeholder">No ASR evidence reports yet. Run src/tools/mixed_language_asr_evidence.py to create JSON reports in output/reports/asr_evidence/.</div>';
+    return;
+  }
+  var hasCurrent = reports.some(function(report) { return report.file === asrEvidenceCurrentFile; });
+  if (!asrEvidenceCurrentFile || !hasCurrent) asrEvidenceCurrentFile = reports[0].file || '';
+  var html = '<div class="asr-evidence-layout">';
+  html += '<div class="asr-report-list">';
+  for (var i = 0; i < reports.length; i++) {
+    var report = reports[i];
+    var summary = report.summary || {};
+    var active = report.file === asrEvidenceCurrentFile ? ' active' : '';
+    html += '<button type="button" class="asr-report-button' + active + '" data-file="' + escapeHtml(report.file || '') + '" onclick="loadAsrEvidenceReport(\'' + escapeJsString(report.file || '') + '\')">';
+    html += '<strong>' + escapeHtml(report.input_name || report.file || 'report') + '</strong>';
+    html += '<span>' + escapeHtml(summary.mixed_language_likelihood || 'none') + ' / ' + escapeHtml(summary.dominant_language || 'unknown') + '</span>';
+    html += '<span>' + escapeHtml(report.generated_at || '') + ' · ' + escapeHtml(report.display_size || '') + '</span>';
+    html += '</button>';
+  }
+  html += '</div>';
+  html += '<div id="asr-evidence-detail"><div class="placeholder">Loading selected report...</div></div>';
+  html += '</div>';
+  el.innerHTML = html;
+  loadAsrEvidenceReport(asrEvidenceCurrentFile);
+}
+
+async function loadAsrEvidenceReports() {
+  var el = document.getElementById('asr-evidence-result');
+  if (!el) return;
+  try {
+    var resp = await fetch('/api/asr-evidence/reports');
+    var data = await resp.json();
+    renderAsrEvidenceReports(data);
+  } catch (err) {
+    el.innerHTML = '<div class="placeholder">ASR evidence reports failed to load: ' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+async function loadAsrEvidenceReport(file) {
+  if (!file) return;
+  asrEvidenceCurrentFile = file;
+  document.querySelectorAll('.asr-report-button').forEach(function(button) {
+    button.classList.toggle('active', button.getAttribute('data-file') === file);
+  });
+  var detail = document.getElementById('asr-evidence-detail');
+  if (detail) detail.innerHTML = '<div class="placeholder">Loading report...</div>';
+  try {
+    var resp = await fetch('/api/asr-evidence/report?file=' + encodeURIComponent(file));
+    var data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      throw new Error(data.error || 'Report could not be loaded.');
+    }
+    renderAsrEvidenceDetail(data.report || {});
+  } catch (err) {
+    if (detail) detail.innerHTML = '<div class="placeholder">ASR evidence report failed to load: ' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+function renderAsrEvidenceDetail(report) {
+  var detail = document.getElementById('asr-evidence-detail');
+  if (!detail) return;
+  var metadata = report.metadata || {};
+  var summary = report.summary || {};
+  var languages = summary.distinct_detected_languages || [];
+  var html = '<div class="asr-evidence-summary">';
+  html += '<div class="storage-item"><strong>Likelihood</strong><span>' + escapeHtml(summary.mixed_language_likelihood || 'none') + '</span></div>';
+  html += '<div class="storage-item"><strong>Dominant</strong><span>' + escapeHtml(summary.dominant_language || 'unknown') + '</span></div>';
+  html += '<div class="storage-item"><strong>Languages</strong><span>' + escapeHtml(languages.join(', ') || '(none)') + '</span></div>';
+  html += '<div class="storage-item"><strong>Low confidence</strong><span>' + escapeHtml(String(summary.low_confidence_count || 0)) + '</span></div>';
+  html += '</div>';
+  html += '<div class="hint">Input: ' + escapeHtml(metadata.input_path || '') + '<br>Model: ' + escapeHtml(metadata.model || '') + ' · ' + escapeHtml(metadata.device || '') + ' / ' + escapeHtml(metadata.compute_type || '') + ' · local-only=' + escapeHtml(String(metadata.local_files_only !== false)) + '</div>';
+  html += '<table class="asr-sample-table"><thead><tr><th>#</th><th>Time</th><th>Lang</th><th>Prob</th><th>Preview / Error</th></tr></thead><tbody>';
+  var samples = report.samples || [];
+  for (var i = 0; i < samples.length; i++) {
+    var sample = samples[i];
+    var prob = sample.language_probability;
+    var probText = (prob === null || prob === undefined || prob === '') ? '' : String(Math.round(Number(prob) * 100)) + '%';
+    var preview = sample.error || sample.text_preview || '';
+    html += '<tr>';
+    html += '<td>' + escapeHtml(String(sample.sample_index || i + 1)) + '</td>';
+    html += '<td>' + escapeHtml(String(sample.start_seconds || 0)) + '-' + escapeHtml(String(sample.end_seconds || 0)) + 's</td>';
+    html += '<td>' + escapeHtml(sample.detected_language || '') + '</td>';
+    html += '<td>' + escapeHtml(probText) + '</td>';
+    html += '<td>' + escapeHtml(preview) + '</td>';
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  var limitations = summary.limitations || [];
+  if (limitations.length) {
+    html += '<div class="hint" style="margin-top:10px"><strong>Limitations:</strong> ' + escapeHtml(limitations.join(' ')) + '</div>';
+  }
+  detail.innerHTML = html;
 }
 
 async function cleanupTransientFiles() {
