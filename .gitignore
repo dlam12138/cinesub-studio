@@ -74,6 +74,7 @@ acceptance/*
 !acceptance/m7_2_segment_asr_routing_heuristics.md
 !acceptance/m7_3_segment_asr_routing_sandbox_summary.md
 !acceptance/m7_4_segment_asr_routing_sandbox_replay.md
+!acceptance/m7_5_segment_asr_routing_policy_dry_run.md
 acceptance/screenshots/
 acceptance/tmp/
 data/
