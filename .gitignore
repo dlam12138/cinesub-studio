@@ -71,6 +71,7 @@ acceptance/*
 !acceptance/m6_6_portable_python_runtime_prep.md
 !acceptance/m6_10_local_storage_hygiene.md
 !acceptance/m7_0_real_wav_evidence_run.md
+!acceptance/m7_2_segment_asr_routing_heuristics.md
 acceptance/screenshots/
 acceptance/tmp/
 data/
