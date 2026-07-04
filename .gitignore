@@ -69,6 +69,7 @@ acceptance/*
 !acceptance/m6_4_release_slimming.md
 !acceptance/m6_5_portable_runtime_smoke.md
 !acceptance/m6_6_portable_python_runtime_prep.md
+!acceptance/m6_10_local_storage_hygiene.md
 acceptance/screenshots/
 acceptance/tmp/
 data/
