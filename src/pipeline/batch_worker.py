@@ -514,6 +514,7 @@ class BatchPipeline:
             min_segments=self.config.segment_routing_min_segments,
             strict=self.config.segment_routing_strict,
         )
+        routed_source_applied = False
         if routing_options.mode != "off":
             print("      segment ASR routing dry-run/apply metadata...")
             try:
@@ -526,6 +527,8 @@ class BatchPipeline:
                     device=self.config.device,
                     compute_type=self.config.compute_type,
                     local_files_only=self.config.local_files_only,
+                    normal_srt_path=source_srt,
+                    routed_srt_path=source_srt,
                 )
             except SegmentAsrRoutingError:
                 task.segment_asr_routing_status = "failed"
@@ -533,9 +536,12 @@ class BatchPipeline:
                 raise
             task.segment_asr_routing_status = routing_result.status
             task.segment_asr_routing_report = routing_result.report_path
+            routed_source_applied = routing_result.subtitle_output_affected
             task.save()
             if routing_result.report_path:
                 print(f"      segment routing report: {routing_result.report_path}")
+            if routed_source_applied:
+                print(f"      segment routing applied: {routing_result.routed_srt_path}")
             if routing_result.fallback_used:
                 print(f"      segment routing fallback: {routing_result.fallback_reason}")
 
@@ -544,7 +550,7 @@ class BatchPipeline:
             bilingual_srt = outputs.bilingual_srt
             output_translated = outputs.translation_output
 
-            if not _is_valid_output_file(output_translated):
+            if routed_source_applied or not _is_valid_output_file(output_translated):
                 task.stage = TaskStage.TRANSLATING
                 task.status = "running"
                 task.save()
@@ -568,7 +574,7 @@ class BatchPipeline:
                 print("  [3/5] Translated SRT already exists, skipping translation")
 
             report_path = outputs.quality_report
-            if not _is_valid_output_file(report_path):
+            if routed_source_applied or not _is_valid_output_file(report_path):
                 task.stage = TaskStage.QUALITY_CHECKING
                 task.status = "running"
                 task.save()

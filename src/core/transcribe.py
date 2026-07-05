@@ -120,11 +120,15 @@ def main() -> int:
                 device=args.device,
                 compute_type=args.compute_type,
                 local_files_only=args.local_files_only,
+                normal_srt_path=srt_path,
+                routed_srt_path=srt_path,
             )
         except SegmentAsrRoutingError as exc:
             raise SystemExit(f"ERROR: {exc}") from exc
         if result.report_path:
             print(f"Segment ASR routing report: {result.report_path}")
+        if result.subtitle_output_affected:
+            print(f"Segment ASR routing applied: {result.routed_srt_path}")
         if result.fallback_used:
             print(f"Segment ASR routing fallback: {result.fallback_reason}")
 
