@@ -37,6 +37,64 @@ def _candidate_files(report_root: Path) -> list[Path]:
     return list((report_root / routing.REPORT_DIR_NAME / "candidates").glob("*.candidate.srt"))
 
 
+def _full_payload(windows, duration_seconds=None):
+    if duration_seconds is None:
+        duration_seconds = max(float(window.get("end_seconds", 0.0) or 0.0) for window in windows)
+    return {
+        "schema_version": 1,
+        "duration_seconds": duration_seconds,
+        "window_planning": {
+            "mode": "full_coverage",
+            "window_seconds": duration_seconds,
+            "window_count": len(windows),
+        },
+        "coverage": {
+            "full_coverage": True,
+            "coverage_rate": 1.0,
+            "gap_count": 0,
+            "covered_seconds": duration_seconds,
+            "duration_seconds": duration_seconds,
+        },
+        "windows": windows,
+    }
+
+
+def _incomplete_payload(windows, duration_seconds=10.0):
+    return {
+        "schema_version": 1,
+        "duration_seconds": duration_seconds,
+        "window_planning": {
+            "mode": "full_coverage",
+            "window_seconds": 5.0,
+            "window_count": len(windows),
+        },
+        "coverage": {
+            "full_coverage": False,
+            "coverage_rate": 0.5,
+            "gap_count": 1,
+            "covered_seconds": 5.0,
+            "duration_seconds": duration_seconds,
+        },
+        "windows": windows,
+    }
+
+
+def _prototype_report_with_full_segments(tmp_path, windows, duration_seconds=5.0):
+    prototype_json = tmp_path / "prototype.json"
+    report = {
+        "metadata": {
+            "include_full_segments": True,
+            "duration_seconds": duration_seconds,
+            "window_seconds": duration_seconds,
+        },
+        "windows": windows,
+    }
+    prototype_json.write_text(json.dumps(report), encoding="utf-8")
+    report["json_path"] = str(prototype_json)
+    report["markdown_path"] = str(tmp_path / "prototype.md")
+    return report
+
+
 def test_transcribe_default_segment_routing_is_off(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["transcribe.py", "movie.wav"])
 
@@ -177,6 +235,69 @@ def test_strict_dry_run_failure_raises_controlled_error(monkeypatch, tmp_path):
         )
 
 
+def test_get_full_routed_segments_builds_payload_and_window_coverage(tmp_path):
+    report = _prototype_report_with_full_segments(
+        tmp_path,
+        [
+            {
+                "window_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 5.0,
+                "results": [
+                    {
+                        "mode": "auto",
+                        "requested_language": None,
+                        "detected_language": "en",
+                        "language_probability": 0.9,
+                        "segment_count": 1,
+                        "text_preview": "preview should not be copied",
+                        "full_segments_available": True,
+                        "segments": [{"start": 0.0, "end": 1.0, "text": "real segment"}],
+                        "error": "",
+                    }
+                ],
+            }
+        ],
+        duration_seconds=5.0,
+    )
+
+    payload = routing.get_full_routed_segments(
+        prototype_report=report,
+        analysis={"windows": []},
+        media_path=tmp_path / "movie.mkv",
+        routing_input_path=tmp_path / "movie.wav",
+        model_name="small",
+        device="cpu",
+        compute_type="int8",
+        local_files_only=True,
+    )
+
+    assert payload["coverage"]["full_coverage"] is True
+    assert payload["coverage"]["gap_count"] == 0
+    assert payload["window_planning"]["mode"] == "full_coverage"
+    assert payload["windows"][0]["runs"]["auto"]["segments"] == [
+        {"start": 0.0, "end": 1.0, "text": "real segment"}
+    ]
+    assert "preview should not be copied" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_get_full_routed_segments_rejects_unknown_duration(tmp_path):
+    report = _prototype_report_with_full_segments(tmp_path, [], duration_seconds=5.0)
+    report["metadata"]["duration_seconds"] = None
+
+    with pytest.raises(routing.SegmentAsrRoutingError, match=routing.APPLY_UNKNOWN_DURATION_REASON):
+        routing.get_full_routed_segments(
+            prototype_report=report,
+            analysis={"windows": []},
+            media_path=tmp_path / "movie.mkv",
+            routing_input_path=tmp_path / "movie.wav",
+            model_name="small",
+            device="cpu",
+            compute_type="int8",
+            local_files_only=True,
+        )
+
+
 def test_apply_success_writes_routed_report_and_affects_subtitle(monkeypatch, tmp_path):
     _patch_apply_evidence(
         monkeypatch,
@@ -184,8 +305,8 @@ def test_apply_success_writes_routed_report_and_affects_subtitle(monkeypatch, tm
         [
             {
                 "window_index": 1,
-                "start_seconds": 10.0,
-                "end_seconds": 20.0,
+                "start_seconds": 0.0,
+                "end_seconds": 10.0,
                 "classification": "prefer_forced_fr",
             }
         ],
@@ -193,19 +314,19 @@ def test_apply_success_writes_routed_report_and_affects_subtitle(monkeypatch, tm
     monkeypatch.setattr(
         routing,
         "get_full_routed_segments",
-        lambda **kwargs: {
-            "windows": [
+        lambda **kwargs: _full_payload(
+            [
                 {
                     "window_index": 1,
-                    "start_seconds": 10.0,
-                    "end_seconds": 20.0,
+                    "start_seconds": 0.0,
+                    "end_seconds": 10.0,
                     "runs": {
                         "auto": {"segments": [{"start": 0.0, "end": 1.0, "text": "auto"}]},
                         "forced-fr": {"segments": [{"start": 1.0, "end": 2.0, "text": "bonjour"}]},
                     },
                 }
             ]
-        },
+        ),
     )
     final_srt = tmp_path / "movie.srt"
     final_srt.write_text("normal baseline", encoding="utf-8")
@@ -242,6 +363,83 @@ def test_apply_success_writes_routed_report_and_affects_subtitle(monkeypatch, tm
     assert _candidate_files(tmp_path / "reports") == []
     assert "bonjour" in final_srt.read_text(encoding="utf-8")
     assert "normal baseline" not in final_srt.read_text(encoding="utf-8")
+
+
+def test_apply_success_uses_full_segments_from_prototype_report(monkeypatch, tmp_path):
+    prototype_report = _prototype_report_with_full_segments(
+        tmp_path,
+        [
+            {
+                "window_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 5.0,
+                "results": [
+                    {
+                        "mode": "auto",
+                        "requested_language": None,
+                        "detected_language": "en",
+                        "language_probability": 0.9,
+                        "segment_count": 1,
+                        "text_preview": "preview must not be routed",
+                        "full_segments_available": True,
+                        "segments": [{"start": 0.0, "end": 1.0, "text": "real auto"}],
+                        "error": "",
+                    },
+                    {
+                        "mode": "forced-fr",
+                        "requested_language": "fr",
+                        "detected_language": "fr",
+                        "language_probability": 0.9,
+                        "segment_count": 1,
+                        "text_preview": "bonjour preview",
+                        "full_segments_available": True,
+                        "segments": [{"start": 1.0, "end": 2.0, "text": "bonjour real"}],
+                        "error": "",
+                    },
+                ],
+            }
+        ],
+        duration_seconds=5.0,
+    )
+    monkeypatch.setattr(routing, "run_prototype_cli", lambda args: prototype_report)
+    monkeypatch.setattr(
+        routing,
+        "analyze_reports",
+        lambda input_files, settings: {
+            "summary": {"total_windows": 1, "prefer_forced_fr": 1},
+            "windows": [
+                {
+                    "window_index": 1,
+                    "start_seconds": 0.0,
+                    "end_seconds": 5.0,
+                    "classification": "prefer_forced_fr",
+                }
+            ],
+        },
+    )
+    final_srt = tmp_path / "movie.srt"
+    final_srt.write_text("normal baseline", encoding="utf-8")
+
+    result = routing.run_segment_asr_routing(
+        options=routing.SegmentAsrRoutingOptions(mode="apply"),
+        media_path=tmp_path / "movie.mkv",
+        routing_input_path=tmp_path / "movie.wav",
+        report_root=tmp_path / "reports",
+        model_name="small",
+        device="cpu",
+        compute_type="int8",
+        local_files_only=True,
+        normal_srt_path=final_srt,
+        routed_srt_path=final_srt,
+    )
+    report = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
+    output = final_srt.read_text(encoding="utf-8")
+
+    assert result.status == "apply_complete"
+    assert "bonjour real" in output
+    assert "preview must not be routed" not in output
+    assert report["coverage_full"] is True
+    assert report["selected_run_counts"] == {"forced-fr": 1}
 
 
 def test_apply_missing_full_segments_falls_back_with_report(monkeypatch, tmp_path):
@@ -286,6 +484,248 @@ def test_apply_missing_full_segments_falls_back_with_report(monkeypatch, tmp_pat
     assert final_srt.read_text(encoding="utf-8") == "normal baseline"
 
 
+def test_apply_incomplete_coverage_falls_back_and_preserves_normal_srt(monkeypatch, tmp_path):
+    _patch_apply_evidence(
+        monkeypatch,
+        tmp_path,
+        [
+            {
+                "window_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 5.0,
+                "classification": "keep_auto",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        routing,
+        "get_full_routed_segments",
+        lambda **kwargs: _incomplete_payload(
+            [
+                {
+                    "window_index": 1,
+                    "start_seconds": 0.0,
+                    "end_seconds": 5.0,
+                    "runs": {
+                        "auto": {"segments": [{"start": 0.0, "end": 1.0, "text": "partial"}]},
+                    },
+                }
+            ],
+            duration_seconds=10.0,
+        ),
+    )
+    final_srt = tmp_path / "movie.srt"
+    final_srt.write_text("normal baseline", encoding="utf-8")
+
+    result = routing.run_segment_asr_routing(
+        options=routing.SegmentAsrRoutingOptions(mode="apply"),
+        media_path=tmp_path / "movie.mkv",
+        routing_input_path=tmp_path / "movie.wav",
+        report_root=tmp_path / "reports",
+        model_name="small",
+        device="cpu",
+        compute_type="int8",
+        local_files_only=True,
+        normal_srt_path=final_srt,
+        routed_srt_path=final_srt,
+    )
+    report = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
+
+    assert result.status == "fallback"
+    assert result.fallback_reason == routing.APPLY_COVERAGE_INCOMPLETE_REASON
+    assert report["coverage_full"] is False
+    assert report["gap_count"] == 1
+    assert final_srt.read_text(encoding="utf-8") == "normal baseline"
+
+
+def test_strict_apply_incomplete_coverage_fails_cleanly(monkeypatch, tmp_path):
+    _patch_apply_evidence(
+        monkeypatch,
+        tmp_path,
+        [
+            {
+                "window_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 5.0,
+                "classification": "keep_auto",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        routing,
+        "get_full_routed_segments",
+        lambda **kwargs: _incomplete_payload(
+            [
+                {
+                    "window_index": 1,
+                    "start_seconds": 0.0,
+                    "end_seconds": 5.0,
+                    "runs": {
+                        "auto": {"segments": [{"start": 0.0, "end": 1.0, "text": "partial"}]},
+                    },
+                }
+            ],
+            duration_seconds=10.0,
+        ),
+    )
+    report_root = tmp_path / "reports"
+    final_srt = tmp_path / "movie.srt"
+    final_srt.write_text("normal baseline", encoding="utf-8")
+
+    with pytest.raises(routing.SegmentAsrRoutingError, match="no routed subtitle output was accepted"):
+        routing.run_segment_asr_routing(
+            options=routing.SegmentAsrRoutingOptions(mode="apply", strict=True),
+            media_path=tmp_path / "movie.mkv",
+            routing_input_path=tmp_path / "movie.wav",
+            report_root=report_root,
+            model_name="small",
+            device="cpu",
+            compute_type="int8",
+            local_files_only=True,
+            normal_srt_path=final_srt,
+            routed_srt_path=final_srt,
+        )
+
+    reports = list((report_root / routing.REPORT_DIR_NAME).glob("*.segment_asr_routing.json"))
+    assert reports
+    report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert report["status"] == "apply_failed"
+    assert report["apply_failure_reason"] == routing.APPLY_COVERAGE_INCOMPLETE_REASON
+    assert report["coverage_full"] is False
+    assert final_srt.read_text(encoding="utf-8") == "normal baseline"
+
+
+def test_apply_unknown_duration_falls_back(monkeypatch, tmp_path):
+    _patch_apply_evidence(
+        monkeypatch,
+        tmp_path,
+        [
+            {
+                "window_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 5.0,
+                "classification": "keep_auto",
+            }
+        ],
+    )
+
+    def raise_unknown_duration(**kwargs):
+        raise routing.SegmentAsrRoutingError(routing.APPLY_UNKNOWN_DURATION_REASON)
+
+    monkeypatch.setattr(routing, "get_full_routed_segments", raise_unknown_duration)
+    final_srt = tmp_path / "movie.srt"
+    final_srt.write_text("normal baseline", encoding="utf-8")
+
+    result = routing.run_segment_asr_routing(
+        options=routing.SegmentAsrRoutingOptions(mode="apply"),
+        media_path=tmp_path / "movie.mkv",
+        routing_input_path=tmp_path / "movie.wav",
+        report_root=tmp_path / "reports",
+        model_name="small",
+        device="cpu",
+        compute_type="int8",
+        local_files_only=True,
+        normal_srt_path=final_srt,
+        routed_srt_path=final_srt,
+    )
+
+    assert result.status == "fallback"
+    assert result.fallback_reason == routing.APPLY_UNKNOWN_DURATION_REASON
+    assert final_srt.read_text(encoding="utf-8") == "normal baseline"
+
+
+def test_strict_apply_unknown_duration_fails_cleanly(monkeypatch, tmp_path):
+    _patch_apply_evidence(
+        monkeypatch,
+        tmp_path,
+        [
+            {
+                "window_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 5.0,
+                "classification": "keep_auto",
+            }
+        ],
+    )
+
+    def raise_unknown_duration(**kwargs):
+        raise routing.SegmentAsrRoutingError(routing.APPLY_UNKNOWN_DURATION_REASON)
+
+    monkeypatch.setattr(routing, "get_full_routed_segments", raise_unknown_duration)
+    final_srt = tmp_path / "movie.srt"
+    final_srt.write_text("normal baseline", encoding="utf-8")
+
+    with pytest.raises(routing.SegmentAsrRoutingError, match="no routed subtitle output was accepted"):
+        routing.run_segment_asr_routing(
+            options=routing.SegmentAsrRoutingOptions(mode="apply", strict=True),
+            media_path=tmp_path / "movie.mkv",
+            routing_input_path=tmp_path / "movie.wav",
+            report_root=tmp_path / "reports",
+            model_name="small",
+            device="cpu",
+            compute_type="int8",
+            local_files_only=True,
+            normal_srt_path=final_srt,
+            routed_srt_path=final_srt,
+        )
+
+    assert final_srt.read_text(encoding="utf-8") == "normal baseline"
+
+
+def test_selected_run_missing_full_segments_falls_back(monkeypatch, tmp_path):
+    _patch_apply_evidence(
+        monkeypatch,
+        tmp_path,
+        [
+            {
+                "window_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 5.0,
+                "classification": "prefer_forced_fr",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        routing,
+        "get_full_routed_segments",
+        lambda **kwargs: _full_payload(
+            [
+                {
+                    "window_index": 1,
+                    "start_seconds": 0.0,
+                    "end_seconds": 5.0,
+                    "runs": {
+                        "auto": {"segments": [{"start": 0.0, "end": 1.0, "text": "auto"}]},
+                        "forced-fr": {
+                            "segment_count": 1,
+                            "text_preview": "preview is not enough",
+                        },
+                    },
+                }
+            ]
+        ),
+    )
+    final_srt = tmp_path / "movie.srt"
+    final_srt.write_text("normal baseline", encoding="utf-8")
+
+    result = routing.run_segment_asr_routing(
+        options=routing.SegmentAsrRoutingOptions(mode="apply"),
+        media_path=tmp_path / "movie.mkv",
+        routing_input_path=tmp_path / "movie.wav",
+        report_root=tmp_path / "reports",
+        model_name="small",
+        device="cpu",
+        compute_type="int8",
+        local_files_only=True,
+        normal_srt_path=final_srt,
+        routed_srt_path=final_srt,
+    )
+
+    assert result.status == "fallback"
+    assert result.fallback_reason == routing.APPLY_SEGMENTS_UNAVAILABLE_REASON
+    assert final_srt.read_text(encoding="utf-8") == "normal baseline"
+
+
 def test_apply_zero_cue_candidate_preserves_normal_srt_on_fallback(monkeypatch, tmp_path):
     _patch_apply_evidence(
         monkeypatch,
@@ -302,8 +742,8 @@ def test_apply_zero_cue_candidate_preserves_normal_srt_on_fallback(monkeypatch, 
     monkeypatch.setattr(
         routing,
         "get_full_routed_segments",
-        lambda **kwargs: {
-            "windows": [
+        lambda **kwargs: _full_payload(
+            [
                 {
                     "window_index": 1,
                     "start_seconds": 0.0,
@@ -313,7 +753,7 @@ def test_apply_zero_cue_candidate_preserves_normal_srt_on_fallback(monkeypatch, 
                     },
                 }
             ]
-        },
+        ),
     )
     report_root = tmp_path / "reports"
     final_srt = tmp_path / "movie.srt"
@@ -360,8 +800,8 @@ def test_strict_apply_zero_cue_candidate_preserves_normal_srt(monkeypatch, tmp_p
     monkeypatch.setattr(
         routing,
         "get_full_routed_segments",
-        lambda **kwargs: {
-            "windows": [
+        lambda **kwargs: _full_payload(
+            [
                 {
                     "window_index": 1,
                     "start_seconds": 0.0,
@@ -371,7 +811,7 @@ def test_strict_apply_zero_cue_candidate_preserves_normal_srt(monkeypatch, tmp_p
                     },
                 }
             ]
-        },
+        ),
     )
     report_root = tmp_path / "reports"
     final_srt = tmp_path / "movie.srt"
@@ -499,7 +939,7 @@ def test_apply_rejects_preview_only_payload(monkeypatch, tmp_path):
     assert "preview must not become subtitle" not in final_srt.read_text(encoding="utf-8")
 
 
-def test_apply_needs_review_uses_auto_and_skip_window_is_counted(monkeypatch, tmp_path):
+def test_apply_needs_review_uses_auto(monkeypatch, tmp_path):
     _patch_apply_evidence(
         monkeypatch,
         tmp_path,
@@ -510,19 +950,13 @@ def test_apply_needs_review_uses_auto_and_skip_window_is_counted(monkeypatch, tm
                 "end_seconds": 5.0,
                 "classification": "needs_review",
             },
-            {
-                "window_index": 2,
-                "start_seconds": 5.0,
-                "end_seconds": 10.0,
-                "classification": "skip_window",
-            },
         ],
     )
     monkeypatch.setattr(
         routing,
         "get_full_routed_segments",
-        lambda **kwargs: {
-            "windows": [
+        lambda **kwargs: _full_payload(
+            [
                 {
                     "window_index": 1,
                     "start_seconds": 0.0,
@@ -531,15 +965,9 @@ def test_apply_needs_review_uses_auto_and_skip_window_is_counted(monkeypatch, tm
                         "auto": {"segments": [{"start": 0.0, "end": 1.0, "text": "auto usable"}]},
                         "forced-fr": {"segments": [{"start": 0.0, "end": 1.0, "text": "forced"}]},
                     },
-                },
-                {
-                    "window_index": 2,
-                    "start_seconds": 5.0,
-                    "end_seconds": 10.0,
-                    "runs": {},
-                },
+                }
             ]
-        },
+        ),
     )
     final_srt = tmp_path / "movie.srt"
     final_srt.write_text("normal baseline", encoding="utf-8")
@@ -562,7 +990,63 @@ def test_apply_needs_review_uses_auto_and_skip_window_is_counted(monkeypatch, tm
     assert "auto usable" in final_srt.read_text(encoding="utf-8")
     assert "forced" not in final_srt.read_text(encoding="utf-8")
     assert report["assembler"]["selected_run_counts"]["auto"] == 1
-    assert report["assembler"]["skipped_window_count"] == 1
+    assert report["needs_review_window_count"] == 1
+    assert report["skip_window_count"] == 0
+
+
+def test_apply_skip_window_falls_back_and_preserves_normal_srt(monkeypatch, tmp_path):
+    _patch_apply_evidence(
+        monkeypatch,
+        tmp_path,
+        [
+            {
+                "window_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 5.0,
+                "classification": "skip_window",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        routing,
+        "get_full_routed_segments",
+        lambda **kwargs: _full_payload(
+            [
+                {
+                    "window_index": 1,
+                    "start_seconds": 0.0,
+                    "end_seconds": 5.0,
+                    "runs": {
+                        "auto": {"segments": []},
+                        "forced-fr": {"segments": []},
+                        "forced-en": {"segments": []},
+                    },
+                }
+            ]
+        ),
+    )
+    final_srt = tmp_path / "movie.srt"
+    final_srt.write_text("normal baseline", encoding="utf-8")
+
+    result = routing.run_segment_asr_routing(
+        options=routing.SegmentAsrRoutingOptions(mode="apply"),
+        media_path=tmp_path / "movie.mkv",
+        routing_input_path=tmp_path / "movie.wav",
+        report_root=tmp_path / "reports",
+        model_name="small",
+        device="cpu",
+        compute_type="int8",
+        local_files_only=True,
+        normal_srt_path=final_srt,
+        routed_srt_path=final_srt,
+    )
+    report = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
+
+    assert result.status == "fallback"
+    assert result.fallback_reason == routing.APPLY_SKIP_WINDOW_REASON
+    assert report["skip_window_count"] == 1
+    assert report["subtitle_output_affected"] is False
+    assert final_srt.read_text(encoding="utf-8") == "normal baseline"
 
 
 def test_invalid_routing_options_rejected_cleanly(monkeypatch):

@@ -110,6 +110,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Allow faster-whisper to download missing model files.",
     )
+    parser.add_argument(
+        "--include-full-segments",
+        action="store_true",
+        help="Include full timestamped ASR segments in the JSON report. Reports may contain transcript text.",
+    )
     return parser.parse_args()
 
 
@@ -161,9 +166,20 @@ def run_prototype_cli(args: argparse.Namespace) -> dict[str, Any]:
         sample_path = tmp_dir / f"window-{window.index:03}.wav"
         try:
             evidence.extract_sample(input_path, sample_path, window, ffmpeg)
-            mode_results = analyze_window_modes(model, sample_path)
+            mode_results = analyze_window_modes(
+                model,
+                sample_path,
+                include_full_segments=bool(getattr(args, "include_full_segments", False)),
+            )
         except Exception as exc:
-            mode_results = [mode_error(mode, exc) for mode in TRANSCRIPTION_MODES]
+            mode_results = [
+                mode_error(
+                    mode,
+                    exc,
+                    include_full_segments=bool(getattr(args, "include_full_segments", False)),
+                )
+                for mode in TRANSCRIPTION_MODES
+            ]
         finally:
             try:
                 sample_path.unlink(missing_ok=True)
@@ -189,6 +205,7 @@ def run_prototype_cli(args: argparse.Namespace) -> dict[str, Any]:
         samples=args.samples,
         sample_every_seconds=args.sample_every_seconds,
         window_seconds=args.window_seconds,
+        include_full_segments=bool(getattr(args, "include_full_segments", False)),
         ffmpeg_path=ffmpeg,
         ffprobe_path=ffprobe,
         windows=window_results,
@@ -342,17 +359,35 @@ def _positive_finite(value: float | int) -> bool:
     return math.isfinite(number) and number > 0
 
 
-def analyze_window_modes(model: Any, sample_path: Path) -> list[dict[str, Any]]:
+def analyze_window_modes(
+    model: Any,
+    sample_path: Path,
+    *,
+    include_full_segments: bool = False,
+) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for mode in TRANSCRIPTION_MODES:
         try:
-            results.append(analyze_window_mode(model, sample_path, mode))
+            results.append(
+                analyze_window_mode(
+                    model,
+                    sample_path,
+                    mode,
+                    include_full_segments=include_full_segments,
+                )
+            )
         except Exception as exc:
-            results.append(mode_error(mode, exc))
+            results.append(mode_error(mode, exc, include_full_segments=include_full_segments))
     return results
 
 
-def analyze_window_mode(model: Any, sample_path: Path, mode: TranscriptionMode) -> dict[str, Any]:
+def analyze_window_mode(
+    model: Any,
+    sample_path: Path,
+    mode: TranscriptionMode,
+    *,
+    include_full_segments: bool = False,
+) -> dict[str, Any]:
     segments_iter, info = model.transcribe(
         str(sample_path),
         language=mode.requested_language,
@@ -363,7 +398,7 @@ def analyze_window_mode(model: Any, sample_path: Path, mode: TranscriptionMode) 
     segments = list(segments_iter)
     preview = evidence._preview_text(getattr(segment, "text", "") for segment in segments)
     probability = getattr(info, "language_probability", None)
-    return {
+    result = {
         "mode": mode.name,
         "requested_language": mode.requested_language,
         "detected_language": getattr(info, "language", None),
@@ -372,10 +407,19 @@ def analyze_window_mode(model: Any, sample_path: Path, mode: TranscriptionMode) 
         "text_preview": preview,
         "error": "",
     }
+    if include_full_segments:
+        result["full_segments_available"] = True
+        result["segments"] = [_serialize_segment(segment) for segment in segments]
+    return result
 
 
-def mode_error(mode: TranscriptionMode, exc: Exception) -> dict[str, Any]:
-    return {
+def mode_error(
+    mode: TranscriptionMode,
+    exc: Exception,
+    *,
+    include_full_segments: bool = False,
+) -> dict[str, Any]:
+    result = {
         "mode": mode.name,
         "requested_language": mode.requested_language,
         "detected_language": None,
@@ -383,6 +427,18 @@ def mode_error(mode: TranscriptionMode, exc: Exception) -> dict[str, Any]:
         "segment_count": 0,
         "text_preview": "",
         "error": str(exc),
+    }
+    if include_full_segments:
+        result["full_segments_available"] = False
+        result["segments"] = None
+    return result
+
+
+def _serialize_segment(segment: Any) -> dict[str, Any]:
+    return {
+        "start": round(float(getattr(segment, "start")), 3),
+        "end": round(float(getattr(segment, "end")), 3),
+        "text": str(getattr(segment, "text", "") or "").strip(),
     }
 
 
@@ -398,6 +454,7 @@ def build_report(
     samples: int,
     sample_every_seconds: float | None,
     window_seconds: float,
+    include_full_segments: bool = False,
     ffmpeg_path: str,
     ffprobe_path: str,
     windows: list[dict[str, Any]],
@@ -423,6 +480,7 @@ def build_report(
             "samples": samples,
             "sample_every_seconds": sample_every_seconds,
             "window_seconds": window_seconds,
+            "include_full_segments": include_full_segments,
             "ffmpeg_path": ffmpeg_path,
             "ffprobe_path": ffprobe_path,
             "device_warnings": list(device_warnings or []),

@@ -52,6 +52,20 @@ def test_sample_every_seconds_takes_precedence_over_samples():
     ]
 
 
+def test_interval_windows_include_final_partial_tail():
+    windows = proto.plan_interval_windows(
+        duration_seconds=125,
+        sample_every_seconds=60,
+        window_seconds=60,
+    )
+
+    assert windows == [
+        proto.SampleWindow(index=1, start_seconds=0.0, end_seconds=60.0),
+        proto.SampleWindow(index=2, start_seconds=60.0, end_seconds=120.0),
+        proto.SampleWindow(index=3, start_seconds=120.0, end_seconds=125.0),
+    ]
+
+
 def test_samples_use_window_seconds_for_uniform_windows():
     windows = proto.plan_windows(
         duration_seconds=300,
@@ -86,6 +100,48 @@ def test_forced_language_modes_pass_requested_languages():
     assert [result["requested_language"] for result in results] == [None, "fr", "en"]
     assert [result["mode"] for result in results] == ["auto", "forced-fr", "forced-en"]
     assert all(result["segment_count"] == 1 for result in results)
+    assert all("segments" not in result for result in results)
+
+
+def test_full_segments_are_included_only_when_requested():
+    class FakeModel:
+        def transcribe(self, path, **kwargs):
+            language = kwargs["language"] or "en"
+            return [
+                SimpleNamespace(start=0.0, end=1.25, text=f"text for {language}"),
+            ], SimpleNamespace(
+                language=language,
+                language_probability=0.75,
+            )
+
+    default_results = proto.analyze_window_modes(FakeModel(), Path("sample.wav"))
+    full_results = proto.analyze_window_modes(
+        FakeModel(),
+        Path("sample.wav"),
+        include_full_segments=True,
+    )
+
+    assert "segments" not in default_results[0]
+    assert full_results[0]["full_segments_available"] is True
+    assert full_results[0]["segments"] == [
+        {"start": 0.0, "end": 1.25, "text": "text for en"}
+    ]
+
+
+def test_no_speech_window_records_empty_full_segments_when_requested():
+    class FakeModel:
+        def transcribe(self, path, **kwargs):
+            return [], SimpleNamespace(language="en", language_probability=0.75)
+
+    results = proto.analyze_window_modes(
+        FakeModel(),
+        Path("sample.wav"),
+        include_full_segments=True,
+    )
+
+    assert results[0]["segment_count"] == 0
+    assert results[0]["full_segments_available"] is True
+    assert results[0]["segments"] == []
 
 
 def test_report_contains_mode_fields_and_forced_language_warning(tmp_path):
@@ -145,6 +201,7 @@ def test_report_contains_mode_fields_and_forced_language_warning(tmp_path):
     assert report["windows"][0]["results"][0]["requested_language"] == "fr"
     assert report["windows"][0]["results"][0]["detected_language"] == "fr"
     assert report["windows"][0]["results"][0]["language_probability"] == 0.9
+    assert report["metadata"]["include_full_segments"] is False
 
 
 def test_local_only_model_missing_fails_cleanly():

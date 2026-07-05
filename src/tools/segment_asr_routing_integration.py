@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,7 +15,11 @@ from segment_asr_srt_assembler import assemble_routed_srt
 
 ROUTING_MODES = {"off", "dry_run", "apply"}
 APPLY_SEGMENTS_UNAVAILABLE_REASON = "routed ASR segments are not available"
+APPLY_COVERAGE_INCOMPLETE_REASON = "routed segment coverage is incomplete"
+APPLY_UNKNOWN_DURATION_REASON = "media duration is unavailable for routed segment coverage"
+APPLY_SKIP_WINDOW_REASON = "routed segment classification skip_window cannot be applied"
 REPORT_DIR_NAME = "segment_asr_routing"
+COVERAGE_TOLERANCE_SECONDS = 0.50
 
 
 class SegmentAsrRoutingError(RuntimeError):
@@ -193,11 +198,13 @@ def _collect_routing_evidence(
     device: str,
     compute_type: str | None,
     local_files_only: bool,
+    include_full_segments: bool = False,
+    full_coverage: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     from argparse import Namespace
 
     prototype_dir = report_dir / "prototype"
-    window_settings = _window_settings()
+    window_settings = _window_settings(full_coverage=full_coverage)
     args = Namespace(
         input=str(routing_input_path),
         model=model_name,
@@ -209,6 +216,7 @@ def _collect_routing_evidence(
         window_seconds=window_settings["window_seconds"],
         output_dir=str(prototype_dir),
         allow_model_download=not local_files_only,
+        include_full_segments=include_full_segments,
     )
     prototype_report = run_prototype_cli(args)
     prototype_json = str(prototype_report.get("json_path") or "")
@@ -241,6 +249,7 @@ def _run_apply(
     preview_only_rejected = False
     candidate_path: Path | None = None
     candidate_accepted = False
+    full_payload: dict[str, Any] | None = None
 
     try:
         prototype_report, analysis = _collect_routing_evidence(
@@ -251,6 +260,8 @@ def _run_apply(
             device=device,
             compute_type=compute_type,
             local_files_only=local_files_only,
+            include_full_segments=True,
+            full_coverage=True,
         )
         full_payload = get_full_routed_segments(
             prototype_report=prototype_report,
@@ -262,10 +273,11 @@ def _run_apply(
             compute_type=compute_type,
             local_files_only=local_files_only,
         )
-        full_segments_available = _payload_has_full_segments(full_payload)
+        full_segments_available = _payload_has_full_segment_data(full_payload)
         preview_only_rejected = not full_segments_available
         if not full_segments_available:
             raise SegmentAsrRoutingError(APPLY_SEGMENTS_UNAVAILABLE_REASON)
+        coverage = _validate_payload_coverage(full_payload)
 
         routed_payload = _build_routed_payload(
             full_payload=full_payload,
@@ -306,6 +318,9 @@ def _run_apply(
             preview_only_rejected=False,
             candidate_srt_path=candidate_path,
             candidate_accepted=True,
+            coverage=coverage,
+            routing_metadata=routed_payload.get("metadata"),
+            window_planning=full_payload.get("window_planning"),
         )
         report["prototype_report"] = _prototype_report_summary(prototype_report)
         report["analyzer"] = analysis
@@ -342,6 +357,11 @@ def _run_apply(
                 preview_only_rejected=preview_only_rejected,
                 candidate_srt_path=candidate_path,
                 candidate_accepted=False,
+                coverage=(full_payload or {}).get("coverage") if isinstance(full_payload, dict) else None,
+                routing_metadata=_analysis_routing_metadata(analysis),
+                window_planning=(full_payload or {}).get("window_planning")
+                if isinstance(full_payload, dict)
+                else None,
                 failure_reason=fallback_reason,
             )
             raise SegmentAsrRoutingError(
@@ -370,6 +390,11 @@ def _run_apply(
                 preview_only_rejected=preview_only_rejected,
                 candidate_srt_path=candidate_path,
                 candidate_accepted=False,
+                coverage=(full_payload or {}).get("coverage") if isinstance(full_payload, dict) else None,
+                routing_metadata=_analysis_routing_metadata(analysis),
+                window_planning=(full_payload or {}).get("window_planning")
+                if isinstance(full_payload, dict)
+                else None,
             )
         except Exception:
             return SegmentAsrRoutingResult(
@@ -392,12 +417,207 @@ def get_full_routed_segments(
     compute_type: str | None,
     local_files_only: bool,
 ) -> dict[str, Any] | None:
-    """Return full timestamped routed segments when a provider exists.
+    """Return full timestamped routed segments from an M8.3 prototype report."""
+    metadata = prototype_report.get("metadata") if isinstance(prototype_report, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("include_full_segments") is not True:
+        return None
 
-    M7.1 currently persists preview-only evidence, so live M8.2 returns
-    unavailable here. Tests may monkeypatch this helper with real segments.
-    """
+    duration_seconds = _known_duration_seconds(metadata.get("duration_seconds"))
+    if duration_seconds is None:
+        raise SegmentAsrRoutingError(APPLY_UNKNOWN_DURATION_REASON)
+
+    raw_windows = prototype_report.get("windows")
+    if not isinstance(raw_windows, list):
+        return None
+
+    windows: list[dict[str, Any]] = []
+    for raw_window in raw_windows:
+        if not isinstance(raw_window, dict):
+            continue
+        runs = _full_runs_from_prototype_window(raw_window)
+        windows.append(
+            {
+                "window_index": _int_or_default(raw_window.get("window_index"), len(windows) + 1),
+                "start_seconds": _float_or_default(raw_window.get("start_seconds"), 0.0),
+                "end_seconds": _float_or_default(raw_window.get("end_seconds"), 0.0),
+                "timestamp_scope": "local",
+                "runs": runs,
+            }
+        )
+
+    coverage = _calculate_window_coverage(windows, duration_seconds)
+    return {
+        "schema_version": 1,
+        "media_path": str(Path(media_path).resolve()),
+        "routing_input_path": str(Path(routing_input_path).resolve()),
+        "duration_seconds": duration_seconds,
+        "window_planning": {
+            "mode": "full_coverage",
+            "window_seconds": _float_or_default(metadata.get("window_seconds"), DEFAULT_WINDOW_SECONDS),
+            "window_count": len(windows),
+        },
+        "coverage": coverage,
+        "windows": windows,
+    }
+
+
+def _full_runs_from_prototype_window(raw_window: dict[str, Any]) -> dict[str, Any]:
+    runs: dict[str, Any] = {}
+    raw_results = raw_window.get("results")
+    if not isinstance(raw_results, list):
+        return runs
+    for result in raw_results:
+        if not isinstance(result, dict):
+            continue
+        mode = _canonical_run_key(result.get("mode"), result.get("requested_language"))
+        if not mode:
+            continue
+        full_available = result.get("full_segments_available") is True
+        raw_segments = result.get("segments")
+        segments = _normalize_full_segments(raw_segments) if full_available else None
+        error = str(result.get("error") or "")
+        runs[mode] = {
+            "usable": full_available and isinstance(segments, list) and not error,
+            "full_segments_available": full_available and isinstance(segments, list),
+            "requested_language": result.get("requested_language"),
+            "detected_language": result.get("detected_language"),
+            "language_probability": result.get("language_probability"),
+            "segment_count": _int_or_default(result.get("segment_count"), 0),
+            "error": error,
+            "segments": segments,
+        }
+    return runs
+
+
+def _canonical_run_key(mode: Any, requested_language: Any = None) -> str | None:
+    text = str(mode or "").strip().lower().replace("_", "-")
+    aliases = {
+        "auto": "auto",
+        "forced-fr": "forced-fr",
+        "forced-en": "forced-en",
+        "fr": "forced-fr",
+        "en": "forced-en",
+    }
+    if text in aliases:
+        return aliases[text]
+    if requested_language in ("fr", "en"):
+        return f"forced-{requested_language}"
     return None
+
+
+def _normalize_full_segments(raw_segments: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(raw_segments, list):
+        return None
+    segments: list[dict[str, Any]] = []
+    for raw_segment in raw_segments:
+        if not isinstance(raw_segment, dict):
+            return None
+        if "start" not in raw_segment or "end" not in raw_segment or "text" not in raw_segment:
+            return None
+        try:
+            start = float(raw_segment["start"])
+            end = float(raw_segment["end"])
+        except (TypeError, ValueError):
+            return None
+        text = str(raw_segment.get("text") or "").strip()
+        segments.append({"start": start, "end": end, "text": text})
+    return segments
+
+
+def _known_duration_seconds(value: Any) -> float | None:
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(duration) or duration <= 0:
+        return None
+    return duration
+
+
+def _calculate_window_coverage(
+    windows: list[dict[str, Any]],
+    duration_seconds: float,
+) -> dict[str, Any]:
+    intervals: list[tuple[float, float]] = []
+    for window in windows:
+        try:
+            start = float(window["start_seconds"])
+            end = float(window["end_seconds"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+            continue
+        clipped_start = max(0.0, min(duration_seconds, start))
+        clipped_end = max(0.0, min(duration_seconds, end))
+        if clipped_end > clipped_start:
+            intervals.append((clipped_start, clipped_end))
+
+    intervals.sort()
+    merged: list[tuple[float, float]] = []
+    for start, end in intervals:
+        if not merged or start > merged[-1][1] + COVERAGE_TOLERANCE_SECONDS:
+            merged.append((start, end))
+        else:
+            previous_start, previous_end = merged[-1]
+            merged[-1] = (previous_start, max(previous_end, end))
+
+    covered_seconds = sum(end - start for start, end in merged)
+    gap_count = _coverage_gap_count(merged, duration_seconds)
+    coverage_rate = covered_seconds / duration_seconds if duration_seconds > 0 else 0.0
+    full_coverage = gap_count == 0 and coverage_rate >= 0.99
+    return {
+        "full_coverage": full_coverage,
+        "coverage_rate": round(coverage_rate, 6),
+        "gap_count": gap_count,
+        "covered_seconds": round(covered_seconds, 3),
+        "duration_seconds": round(duration_seconds, 3),
+        "coverage_tolerance_seconds": COVERAGE_TOLERANCE_SECONDS,
+    }
+
+
+def _coverage_gap_count(merged: list[tuple[float, float]], duration_seconds: float) -> int:
+    if not merged:
+        return 1
+    gap_count = 0
+    cursor = 0.0
+    for start, end in merged:
+        if start > cursor + COVERAGE_TOLERANCE_SECONDS:
+            gap_count += 1
+        cursor = max(cursor, end)
+    if duration_seconds > cursor + COVERAGE_TOLERANCE_SECONDS:
+        gap_count += 1
+    return gap_count
+
+
+def _validate_payload_coverage(payload: dict[str, Any]) -> dict[str, Any]:
+    coverage = payload.get("coverage") if isinstance(payload, dict) else None
+    if not isinstance(coverage, dict):
+        raise SegmentAsrRoutingError(APPLY_COVERAGE_INCOMPLETE_REASON)
+    if coverage.get("full_coverage") is not True:
+        raise SegmentAsrRoutingError(APPLY_COVERAGE_INCOMPLETE_REASON)
+    try:
+        coverage_rate = float(coverage.get("coverage_rate"))
+        gap_count = int(coverage.get("gap_count"))
+    except (TypeError, ValueError) as exc:
+        raise SegmentAsrRoutingError(APPLY_COVERAGE_INCOMPLETE_REASON) from exc
+    if coverage_rate < 0.99 or gap_count != 0:
+        raise SegmentAsrRoutingError(APPLY_COVERAGE_INCOMPLETE_REASON)
+    return coverage
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _write_fallback_report(
@@ -421,6 +641,9 @@ def _write_fallback_report(
     preview_only_rejected: bool = False,
     candidate_srt_path: Path | None = None,
     candidate_accepted: bool = False,
+    coverage: dict[str, Any] | None = None,
+    routing_metadata: dict[str, Any] | None = None,
+    window_planning: dict[str, Any] | None = None,
 ) -> SegmentAsrRoutingResult:
     report = _base_report(
         options=options,
@@ -441,6 +664,9 @@ def _write_fallback_report(
         preview_only_rejected=preview_only_rejected,
         candidate_srt_path=candidate_srt_path,
         candidate_accepted=candidate_accepted,
+        coverage=coverage,
+        routing_metadata=routing_metadata,
+        window_planning=window_planning,
     )
     if prototype_report is not None:
         report["prototype_report"] = _prototype_report_summary(prototype_report)
@@ -477,6 +703,9 @@ def _write_apply_failure_report(
     preview_only_rejected: bool,
     candidate_srt_path: Path | None,
     candidate_accepted: bool,
+    coverage: dict[str, Any] | None,
+    routing_metadata: dict[str, Any] | None,
+    window_planning: dict[str, Any] | None,
     failure_reason: str,
 ) -> None:
     report = _base_report(
@@ -498,6 +727,9 @@ def _write_apply_failure_report(
         preview_only_rejected=preview_only_rejected,
         candidate_srt_path=candidate_srt_path,
         candidate_accepted=candidate_accepted,
+        coverage=coverage,
+        routing_metadata=routing_metadata,
+        window_planning=window_planning,
     )
     report["apply_failure_reason"] = failure_reason
     report["strict_failure_note"] = "no routed subtitle output was accepted"
@@ -530,8 +762,11 @@ def _base_report(
     preview_only_rejected: bool = False,
     candidate_srt_path: Path | None = None,
     candidate_accepted: bool = False,
+    coverage: dict[str, Any] | None = None,
+    routing_metadata: dict[str, Any] | None = None,
+    window_planning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    report = {
         "schema_version": 1,
         "report_type": "segment_asr_routing_integration",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -547,10 +782,24 @@ def _base_report(
         "preview_only_rejected": preview_only_rejected,
         "candidate_srt_path": str(Path(candidate_srt_path).resolve()) if candidate_srt_path else "",
         "candidate_accepted": candidate_accepted,
+        "coverage_full": bool(coverage.get("full_coverage")) if isinstance(coverage, dict) else False,
+        "coverage_rate": coverage.get("coverage_rate") if isinstance(coverage, dict) else None,
+        "gap_count": coverage.get("gap_count") if isinstance(coverage, dict) else None,
+        "needs_review_window_count": (
+            routing_metadata.get("needs_review_window_count") if isinstance(routing_metadata, dict) else 0
+        ),
+        "skip_window_count": (
+            routing_metadata.get("skip_window_count") if isinstance(routing_metadata, dict) else 0
+        ),
+        "selected_run_counts": (
+            dict(routing_metadata.get("selected_run_counts") or {})
+            if isinstance(routing_metadata, dict)
+            else {}
+        ),
         "confidence_threshold": options.confidence_threshold,
         "min_segments": options.min_segments,
         "strict": options.strict,
-        "window_planning": _window_settings(),
+        "window_planning": window_planning or _window_settings(),
         "metadata": {
             "media_path": str(Path(media_path).resolve()),
             "routing_input_path": str(Path(routing_input_path).resolve()),
@@ -562,6 +811,9 @@ def _base_report(
             "routed_srt_path": str(Path(routed_srt_path).resolve()) if routed_srt_path else "",
         },
     }
+    if isinstance(coverage, dict):
+        report["coverage"] = coverage
+    return report
 
 
 def _prototype_report_summary(prototype_report: dict[str, Any]) -> dict[str, str]:
@@ -571,7 +823,7 @@ def _prototype_report_summary(prototype_report: dict[str, Any]) -> dict[str, str
     }
 
 
-def _payload_has_full_segments(payload: Any) -> bool:
+def _payload_has_full_segment_data(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
     windows = payload.get("windows")
@@ -585,11 +837,19 @@ def _payload_has_full_segments(payload: Any) -> bool:
         runs = window.get("runs")
         if isinstance(runs, dict):
             for run in runs.values():
-                if isinstance(run, dict) and _segments_are_full(run.get("segments")):
+                if (
+                    isinstance(run, dict)
+                    and _run_has_full_segment_data(run)
+                    and isinstance(run.get("segments"), list)
+                ):
                     return True
                 if _segments_are_full(run):
                     return True
     return False
+
+
+def _payload_has_full_segments(payload: Any) -> bool:
+    return _payload_has_full_segment_data(payload)
 
 
 def _segments_are_full(segments: Any) -> bool:
@@ -614,36 +874,35 @@ def _build_routed_payload(
         if isinstance(window, dict)
     }
     routed_windows: list[dict[str, Any]] = []
-    skipped_count = 0
+    selected_run_counts: dict[str, int] = {}
+    needs_review_count = 0
+    skip_window_count = 0
 
     for analyzed in analysis.get("windows", []):
         if not isinstance(analyzed, dict):
             continue
         window_index = int(analyzed.get("window_index", 0) or 0)
         classification = str(analyzed.get("classification") or "")
+        if classification == "needs_review":
+            needs_review_count += 1
+        if classification == "skip_window":
+            skip_window_count += 1
         selected_run = _selected_run_for_classification(classification)
         if selected_run is None:
-            skipped_count += 1
-            routed_windows.append(
-                {
-                    "window_index": window_index,
-                    "start_seconds": analyzed.get("start_seconds", 0.0),
-                    "end_seconds": analyzed.get("end_seconds", 0.0),
-                    "classification": classification,
-                    "selected_run": "skip_window",
-                    "segments": None,
-                }
-            )
-            continue
+            raise SegmentAsrRoutingError(APPLY_SKIP_WINDOW_REASON)
 
         full_window = full_windows.get(window_index)
         if full_window is None:
             raise SegmentAsrRoutingError(APPLY_SEGMENTS_UNAVAILABLE_REASON)
 
-        segments = _segments_for_selected_run(full_window, selected_run)
+        run = _run_for_selected_run(full_window, selected_run)
+        segments = run.get("segments") if isinstance(run, dict) else None
+        if not isinstance(run, dict) or not _run_has_full_segment_data(run):
+            raise SegmentAsrRoutingError(APPLY_SEGMENTS_UNAVAILABLE_REASON)
         if not _segments_are_full(segments):
             raise SegmentAsrRoutingError(APPLY_SEGMENTS_UNAVAILABLE_REASON)
 
+        selected_run_counts[selected_run] = selected_run_counts.get(selected_run, 0) + 1
         routed_windows.append(
             {
                 "window_index": window_index,
@@ -656,9 +915,48 @@ def _build_routed_payload(
             }
         )
 
-    if not routed_windows and skipped_count:
+    if not routed_windows and skip_window_count:
         raise SegmentAsrRoutingError(APPLY_SEGMENTS_UNAVAILABLE_REASON)
-    return {"windows": routed_windows}
+    return {
+        "windows": routed_windows,
+        "metadata": {
+            "needs_review_window_count": needs_review_count,
+            "skip_window_count": skip_window_count,
+            "selected_run_counts": selected_run_counts,
+        },
+    }
+
+
+def _analysis_routing_metadata(analysis: dict[str, Any] | None) -> dict[str, Any]:
+    needs_review_count = 0
+    skip_window_count = 0
+    selected_run_counts: dict[str, int] = {}
+    windows = analysis.get("windows", []) if isinstance(analysis, dict) else []
+    if not isinstance(windows, list):
+        return {
+            "needs_review_window_count": 0,
+            "skip_window_count": 0,
+            "selected_run_counts": {},
+        }
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        classification = str(window.get("classification") or "")
+        if classification == "needs_review":
+            needs_review_count += 1
+        if classification == "skip_window":
+            skip_window_count += 1
+        try:
+            selected_run = _selected_run_for_classification(classification) if classification else None
+        except SegmentAsrRoutingError:
+            selected_run = None
+        if selected_run:
+            selected_run_counts[selected_run] = selected_run_counts.get(selected_run, 0) + 1
+    return {
+        "needs_review_window_count": needs_review_count,
+        "skip_window_count": skip_window_count,
+        "selected_run_counts": selected_run_counts,
+    }
 
 
 def _selected_run_for_classification(classification: str) -> str | None:
@@ -675,7 +973,7 @@ def _selected_run_for_classification(classification: str) -> str | None:
     raise SegmentAsrRoutingError(f"unsupported routing classification: {classification}")
 
 
-def _segments_for_selected_run(window: dict[str, Any], selected_run: str) -> Any:
+def _run_for_selected_run(window: dict[str, Any], selected_run: str) -> Any:
     runs = window.get("runs")
     if isinstance(runs, dict):
         candidate_keys = {
@@ -686,12 +984,19 @@ def _segments_for_selected_run(window: dict[str, Any], selected_run: str) -> Any
         for key in candidate_keys:
             run = runs.get(key)
             if isinstance(run, dict):
-                return run.get("segments")
-            if isinstance(run, list):
                 return run
+            if isinstance(run, list):
+                return {"full_segments_available": True, "segments": run}
     if str(window.get("selected_run") or "") in ("", selected_run):
-        return window.get("segments")
+        return {
+            "full_segments_available": isinstance(window.get("segments"), list),
+            "segments": window.get("segments"),
+        }
     return None
+
+
+def _run_has_full_segment_data(run: dict[str, Any]) -> bool:
+    return run.get("full_segments_available") is not False and isinstance(run.get("segments"), list)
 
 
 def _routed_output_path(
@@ -723,7 +1028,15 @@ def _cleanup_candidate(candidate_path: Path | None) -> None:
         pass
 
 
-def _window_settings() -> dict[str, Any]:
+def _window_settings(*, full_coverage: bool = False) -> dict[str, Any]:
+    if full_coverage:
+        return {
+            "mode": "full_coverage",
+            "samples": 0,
+            "sample_every_seconds": DEFAULT_WINDOW_SECONDS,
+            "window_seconds": DEFAULT_WINDOW_SECONDS,
+            "manual_windows": [],
+        }
     return {
         "samples": DEFAULT_SAMPLE_COUNT,
         "sample_every_seconds": None,
