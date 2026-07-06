@@ -81,6 +81,7 @@ acceptance/*
 !acceptance/m8_4_segment_asr_apply_smoke_and_guards.md
 !acceptance/m8_5_segment_asr_apply_smoke_ux.md
 !acceptance/m8_6_segment_asr_apply_real_smoke.md
+!acceptance/m8_7_authorized_real_smoke_run.md
 acceptance/screenshots/
 acceptance/tmp/
 data/
