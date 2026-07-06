@@ -102,7 +102,8 @@ M9 should start from this closeout tip and focus on making the existing Web subt
 ## 8. Repository State at Closeout
 
 - **Tip commit:** `7e1003a` — `m8.9: clarify ASR config ownership`
-- **Branch:** `main`
+- **Branch:** `milestone6.10-local-storage-hygiene`
+- **Note:** The closeout commit was created on branch `milestone6.10-local-storage-hygiene`.
 - **Worktree:** Clean except for intentionally untracked files listed in Section 5.
 - **Existing M8 tags:**
   - `m8.1-segment-routing-opt-in`
