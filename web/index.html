@@ -1061,6 +1061,112 @@
     .badge-status.done { background: #dcfae6; color: var(--ok); }
     .badge-status.failed { background: #fee4e2; color: var(--danger); }
 
+    .job-queue {
+      display: grid;
+      gap: 8px;
+      max-height: 360px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .job-queue-item {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .job-queue-item.failed {
+      border-color: #fecaca;
+      background: #fffafa;
+    }
+
+    .job-queue-item.done {
+      border-color: #bbf7d0;
+      background: #fbfffc;
+    }
+
+    .job-queue-item.running {
+      border-color: #bfdbfe;
+      background: #f8fbff;
+    }
+
+    .job-queue-head {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    .job-queue-name {
+      font-size: 13px;
+      font-weight: 650;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+
+    .job-queue-meta {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 6px;
+      font-size: 12px;
+      color: #475569;
+    }
+
+    .job-queue-progress {
+      margin-top: 8px;
+    }
+
+    .job-queue-progress .progress-track {
+      height: 8px;
+    }
+
+    .job-queue-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .job-queue-actions button {
+      min-height: 28px;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .job-queue-actions button:hover { background: #eef2f6; }
+    .job-queue-actions button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .job-queue-actions button.primary:hover { background: var(--primary-dark); }
+    .job-queue-actions button:disabled { opacity: .5; cursor: not-allowed; }
+
+    .job-error-details {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid #fecaca;
+      border-radius: 6px;
+      background: #fff7f6;
+      font-size: 12px;
+      color: var(--danger);
+      line-height: 1.5;
+    }
+
+    .job-error-details summary {
+      cursor: pointer;
+      font-weight: 650;
+    }
+
     .dl-link {
       color: var(--primary);
       font-weight: 650;
@@ -1699,6 +1805,17 @@
           <a id="downloadTranslated" class="dl-link" href="#" hidden>下载双语 SRT</a>
         </div>
         <pre id="log" class="log-panel">等待任务开始。</pre>
+
+        <div id="jobQueuePanel" style="margin-top:18px">
+          <h3 style="font-size:15px;margin:0 0 10px">📋 最近任务</h3>
+          <div id="jobQueueActions" style="margin-bottom:10px">
+            <button type="button" class="secondary-btn" onclick="loadJobQueue()">刷新</button>
+            <span class="help-text" style="margin-left:6px">自动刷新会在有运行中任务时开启。</span>
+          </div>
+          <div id="jobQueueList">
+            <div class="placeholder">暂无任务记录。</div>
+          </div>
+        </div>
       </section>
     </div>
   </div>
@@ -2921,6 +3038,117 @@ async function inspectInputFile() {
   }
 }
 
+// ═══════════════════ Job Queue / History / Progress ═══════════════════
+
+var jobQueueTimer = null;
+var jobQueueLastActive = false;
+
+function formatTime(ts) {
+  if (!ts) return '-';
+  var d = new Date(ts * 1000);
+  return d.toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function jobStatusBadgeClass(status) {
+  if (status === 'done') return 'badge-ok';
+  if (status === 'failed') return 'badge-err';
+  if (status === 'running') return 'badge-running';
+  return 'badge-pending';
+}
+
+function renderJobQueueItem(job) {
+  var statusClass = job.status || 'queued';
+  var html = '<div class="job-queue-item ' + escapeHtml(statusClass) + '">';
+  html += '<div class="job-queue-head">';
+  html += '<div class="job-queue-name" title="' + escapeHtml(job.input || '') + '">' + escapeHtml(job.input ? String(job.input).replace(/^.*[\\\/]/, '') : '-') + '</div>';
+  html += '<span class="badge ' + jobStatusBadgeClass(job.status) + '">' + escapeHtml(job.status_label || job.status) + '</span>';
+  html += '</div>';
+
+  html += '<div class="job-queue-meta">';
+  html += '<span>' + escapeHtml(job.stage_label || job.stage || '-') + '</span>';
+  if (job.progress !== undefined && job.progress !== null) {
+    html += '<span>' + escapeHtml(String(job.progress)) + '%</span>';
+  }
+  html += '<span>更新于 ' + formatTime(job.updated_at) + '</span>';
+  html += '</div>';
+
+  if (job.status === 'running' && job.progress !== undefined && job.progress !== null) {
+    html += '<div class="job-queue-progress">' + renderProgressBar(job.progress) + '</div>';
+  }
+
+  if (job.status === 'done') {
+    html += '<div class="job-queue-actions">';
+    if (job.source_output) html += '<a class="dl-link" href="/download?job=' + encodeURIComponent(job.id) + '&type=source">下载原文</a>';
+    if (job.translated_output) html += '<a class="dl-link" href="/download?job=' + encodeURIComponent(job.id) + '&type=translated">下载双语</a>';
+    html += '</div>';
+  } else if (job.status === 'failed') {
+    html += '<div class="job-queue-actions">';
+    if (job.can_retry) {
+      html += '<button class="primary" onclick="retryJob(\'' + escapeJsString(job.id) + '\')">重新提交</button>';
+    } else {
+      html += '<button disabled title="' + escapeHtml(job.retry_reason || '无法重试') + '">无法重试</button>';
+    }
+    html += '</div>';
+    if (job.error_summary) {
+      html += '<details class="job-error-details"><summary>错误详情</summary>' + escapeHtml(job.error_summary) + '</details>';
+    }
+  }
+
+  html += '</div>';
+  return html;
+}
+
+async function loadJobQueue() {
+  var el = document.getElementById('jobQueueList');
+  if (!el) return;
+  try {
+    var resp = await fetch('/api/jobs');
+    var data = await resp.json();
+    var jobs = data.jobs || [];
+    var active = false;
+    if (!jobs.length) {
+      el.innerHTML = '<div class="placeholder">暂无任务记录。</div>';
+    } else {
+      var html = '<div class="job-queue">';
+      for (var i = 0; i < jobs.length; i++) {
+        html += renderJobQueueItem(jobs[i]);
+        if (jobs[i].status === 'running' || jobs[i].status === 'queued') active = true;
+      }
+      html += '</div>';
+      el.innerHTML = html;
+    }
+    jobQueueLastActive = active;
+    _scheduleJobQueuePoll();
+  } catch (err) {
+    el.innerHTML = '<div class="placeholder">加载失败: ' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+function _scheduleJobQueuePoll() {
+  if (jobQueueTimer) {
+    clearTimeout(jobQueueTimer);
+    jobQueueTimer = null;
+  }
+  var interval = jobQueueLastActive ? 2000 : 8000;
+  jobQueueTimer = setTimeout(loadJobQueue, interval);
+}
+
+async function retryJob(jobId) {
+  if (!confirm('确定要重新提交这个失败任务？将使用相同的参数创建一个新任务。')) return;
+  try {
+    var resp = await fetch('/api/jobs/' + encodeURIComponent(jobId) + '/retry', { method: 'POST' });
+    var data = await resp.json();
+    if (resp.ok && data.ok) {
+      alert('重试已创建: ' + (data.job && data.job.id ? data.job.id : ''));
+      loadJobQueue();
+    } else {
+      alert('重试失败: ' + (data.error || '未知错误'));
+    }
+  } catch (err) {
+    alert('重试请求失败: ' + err.message);
+  }
+}
+
 // ═══════════════════ Job Result Display ═══════════════════
 
 function renderJobResult(job) {
@@ -3130,6 +3358,8 @@ function escapeHtml(text) {
       activeJob = payload.id;
       pollJob();
       timer = setInterval(pollJob, 1200);
+      // Also refresh the job queue immediately
+      loadJobQueue();
     } catch (err) {
       setStatus("failed");
       logBox.textContent += String(err.message || err) + "\n";
@@ -3574,7 +3804,7 @@ function switchTab(name) {
     c.classList.toggle('active', c.id === 'tab-' + name);
   });
   if (name === 'providers') loadProviders();
-  if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); }
+  if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); loadJobQueue(); }
   if (name === 'langprofiles') loadLangProfiles();
   if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); }
 }
@@ -3946,6 +4176,7 @@ async function loadEffectiveConfigPreview() {
 document.getElementById('api_key').addEventListener('focus', function() { /* manual override */ });
 loadProviderSelect();
 loadEffectiveConfigPreview();
+loadJobQueue();
 </script>
 </body>
 </html>

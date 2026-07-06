@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from job_api import get_job, list_jobs, sanitize_filename, start_job
+from job_api import get_job, list_jobs, retry_job, sanitize_filename, start_job
 from pipeline_api import (
     get_pipeline_task,
     pipeline_progress,
@@ -529,6 +529,29 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path != "/api/jobs":
+            # Check for /api/jobs/<job_id>/retry before 404
+            retry_match = None
+            if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/retry"):
+                retry_match = parsed.path[len("/api/jobs/"):][:-len("/retry")]
+            if retry_match:
+                job_id = retry_match
+                safe_job = get_job(job_id)
+                if safe_job is None:
+                    self.send_error_json(404, "Job not found")
+                    return
+                if safe_job.get("status") != "failed":
+                    self.send_error_json(400, "只能重试失败的任务")
+                    return
+                if not safe_job.get("can_retry"):
+                    self.send_error_json(400, safe_job.get("retry_reason") or "无法重试此任务")
+                    return
+                new_job = retry_job(job_id)
+                if new_job is None:
+                    self.send_error_json(500, "重试失败：无法创建新任务")
+                    return
+                self.send_json({"ok": True, "job": new_job}, status=201)
+                return
+
             self.send_error_json(404, "Not found")
             return
 

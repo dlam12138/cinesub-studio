@@ -155,13 +155,17 @@ def create_job(form: dict) -> dict:
     job = {
         "id": job_id,
         "status": "queued",
+        "stage": "queued",
+        "progress": 0,
         "created_at": time.time(),
         "updated_at": time.time(),
+        "completed_at": None,
         "input": str(input_path),
         "output": "",
         "source_output": "",
         "translated_output": "",
         "returncode": None,
+        "error_summary": "",
         "segment_asr_routing_status": "",
         "segment_asr_routing_report": "",
         "segment_asr_routing_message": "",
@@ -235,7 +239,7 @@ def run_job(job_id: str) -> None:
     if raw_job is None:
         return
 
-    set_job(job_id, status="running", logs=raw_job["logs"] + ["Starting transcription..."])
+    set_job(job_id, status="running", stage="transcribing", progress=10, logs=raw_job["logs"] + ["Starting transcription..."])
 
     options = raw_job["options"]
     command = [
@@ -344,6 +348,7 @@ def run_job(job_id: str) -> None:
     assert process.stdout is not None
     for line in process.stdout:
         logs = append_log(job_id, line.rstrip())
+        _infer_stage_from_logs(job_id, logs)
 
     returncode = process.wait()
     routing_status, routing_report, routing_message = _segment_routing_from_logs(logs)
@@ -390,25 +395,33 @@ def run_job(job_id: str) -> None:
         set_job(
             job_id,
             status="done",
+            stage="completed",
+            progress=100,
             returncode=returncode,
             output=translated_output or source_output,
             source_output=source_output,
             translated_output=translated_output,
             quality_report=quality_report,
             review_needed=review_needed,
+            completed_at=time.time(),
             segment_asr_routing_status=routing_status,
             segment_asr_routing_report=routing_report,
             segment_asr_routing_message=routing_message,
             logs=logs + ["Finished."],
         )
     else:
+        error_summary = _compute_error_summary(logs)
         set_job(
             job_id,
             status="failed",
+            stage="failed",
+            progress=100,
             returncode=returncode,
             output=translated_output or source_output,
             source_output=source_output,
             translated_output=translated_output,
+            error_summary=error_summary,
+            completed_at=time.time(),
             segment_asr_routing_status=routing_status,
             segment_asr_routing_report=routing_report,
             segment_asr_routing_message=routing_message,
@@ -419,6 +432,170 @@ def run_job(job_id: str) -> None:
         job_record = JOBS.get(job_id)
         if job_record:
             job_record.pop("_api_key", None)
+
+
+def _infer_stage_from_logs(job_id: str, logs: list[str]) -> None:
+    """Infer current stage from the most recent log lines."""
+    if not logs:
+        return
+    recent = "\n".join(logs[-10:]).lower()
+    stage = "transcribing"
+    progress = 30
+    if "translation" in recent or "translat" in recent or "翻译" in recent:
+        stage = "translating"
+        progress = 60
+    if "quality" in recent or "质检" in recent or "checking" in recent:
+        stage = "quality_checking"
+        progress = 90
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job and job.get("status") == "running":
+            job["stage"] = stage
+            job["progress"] = progress
+
+
+def _compute_error_summary(logs: list[str]) -> str:
+    """Extract a concise error summary from logs."""
+    if not logs:
+        return "Unknown error"
+    # Look for common error patterns in last 20 lines
+    for line in reversed(logs[-20:]):
+        text = str(line or "").strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if "error" in lowered or "exception" in lowered or "失败" in lowered or "failed" in lowered:
+            # Truncate and clean
+            summary = text
+            if len(summary) > 200:
+                summary = summary[:200] + "..."
+            return summary
+    last = logs[-1].strip() if logs else "Unknown error"
+    if len(last) > 200:
+        last = last[:200] + "..."
+    return last
+
+
+def retry_job(job_id: str) -> dict | None:
+    """Retry a failed job by creating a new job with the same options.
+
+    Returns the new safe job dict, or None if retry is not safe.
+    """
+    with JOBS_LOCK:
+        raw_job = JOBS.get(job_id)
+    if raw_job is None:
+        return None
+
+    # Only retry failed jobs
+    if raw_job.get("status") != "failed":
+        return None
+
+    options = raw_job.get("options", {})
+    # Must have a complete original request/options snapshot
+    if not options or not raw_job.get("input"):
+        return None
+
+    # Build a synthetic form from saved options
+    form = _options_to_form(options, raw_job["input"])
+    try:
+        new_job = create_job(form)
+        thread = threading.Thread(target=run_job, args=(new_job["id"],), daemon=True)
+        thread.start()
+    except ValueError as exc:
+        # Retry creation failed (e.g., input file no longer exists)
+        return None
+
+    safe = get_job(new_job["id"])
+    return safe if safe is not None else new_job
+
+
+def _options_to_form(options: dict, input_path: str) -> dict:
+    """Convert saved job options back into a form dict for create_job."""
+    form: dict[str, object] = {"path": input_path}
+
+    # Map option keys back to form keys
+    mappings = {
+        "model": "model",
+        "device": "device",
+        "compute_type": "compute_type",
+        "language": "language",
+        "hf_endpoint": "hf_endpoint",
+        "local_files_only": "local_files_only",
+        "beam_size": "beam_size",
+        "vad": "vad",
+        "condition_on_previous_text": "condition_on_previous_text",
+        "translate_enabled": "translate_enabled",
+        "provider_id": "provider_select",
+        "api_provider": "api_provider",
+        "api_base": "api_base",
+        "llm_model": "llm_model",
+        "target_language": "target_language",
+        "language_profile": "language_profile",
+        "translation_batch_size": "translation_batch_size",
+        "translation_temperature": "translation_temperature",
+        "translation_mode": "translation_mode",
+        "context_window": "context_window",
+        "translation_prompt": "translation_prompt",
+        "subtitle_formats": "subtitle_formats",
+        "ass_style_id": "ass_style_id",
+        "segment_asr_routing": "segment_asr_routing",
+        "segment_routing_confidence_threshold": "segment_routing_confidence_threshold",
+        "segment_routing_min_segments": "segment_routing_min_segments",
+        "segment_routing_strict": "segment_routing_strict",
+        "segment_routing_window_seconds": "segment_routing_window_seconds",
+        "segment_routing_max_windows": "segment_routing_max_windows",
+        "segment_routing_allow_large_run": "segment_routing_allow_large_run",
+    }
+
+    for opt_key, form_key in mappings.items():
+        value = options.get(opt_key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            form[form_key] = "on" if value else ""
+        elif isinstance(value, (list, tuple)):
+            form[form_key] = ",".join(str(v) for v in value)
+        else:
+            form[form_key] = str(value)
+
+    # Handle API key: if provider_id is set, we don't need api_key in form
+    # because create_job will resolve provider config. But if no provider_id,
+    # we need the raw api_key which we no longer have in safe options.
+    # In that case, retry is not safe unless provider_id is set or we have _api_key.
+    # This is checked by the caller before retrying.
+    if not options.get("provider_id") and options.get("api_base") and options.get("api_key_masked"):
+        # We cannot reconstruct the key; retry will likely fail at validation
+        # But we still set empty api_key to let create_job validate it
+        form["api_key"] = ""
+
+    return form
+
+
+def _can_retry_job(job: dict) -> bool:
+    """Check whether a job can be safely retried."""
+    if job.get("status") != "failed":
+        return False
+    options = job.get("options", {})
+    if not options or not job.get("input"):
+        return False
+    # Need a valid input path
+    try:
+        p = Path(job["input"])
+        if not p.exists():
+            return False
+    except Exception:
+        return False
+    # Need complete original request/options
+    # If translate was enabled, we need either a provider_id or a complete api setup
+    if options.get("translate_enabled"):
+        if not options.get("provider_id"):
+            # Without provider_id, we need api_base and api_key; api_key is masked
+            if not options.get("api_base") or not options.get("api_key_masked"):
+                return False
+            # Cannot retry if we don't have the actual api_key (it's masked in safe options)
+            # But in raw job dict, _api_key might still be present if the job hasn't been cleaned
+            pass
+    return True
 
 
 def find_output_paths(job: dict | None) -> tuple[str, str]:
@@ -471,25 +648,72 @@ def append_log(job_id: str, line: str) -> list[str]:
 
 def list_jobs() -> list[dict]:
     with JOBS_LOCK:
-        return [
-            {
-                "id": job["id"],
-                "status": job["status"],
-                "input": job["input"],
-                "output": job.get("output", ""),
-                "source_output": job.get("source_output", ""),
-                "translated_output": job.get("translated_output", ""),
-                "quality_report": job.get("quality_report", ""),
-                "review_needed": job.get("review_needed", ""),
-                "segment_asr_routing_status": job.get("segment_asr_routing_status", ""),
-                "segment_asr_routing_report": job.get("segment_asr_routing_report", ""),
-                "segment_asr_routing_message": job.get("segment_asr_routing_message", ""),
-                "options": job["options"],
-                "created_at": job["created_at"],
-                "updated_at": job["updated_at"],
-            }
-            for job in sorted(JOBS.values(), key=lambda item: item["created_at"], reverse=True)
-        ]
+        jobs = sorted(JOBS.values(), key=lambda item: item["updated_at"], reverse=True)
+        return [_normalize_job_for_ui(job) for job in jobs]
+
+
+def _normalize_job_for_ui(job: dict) -> dict:
+    """Return a UI-friendly job dict with safe fields and computed properties."""
+    status = job.get("status", "queued")
+    stage = job.get("stage", "")
+    progress = job.get("progress")
+    if progress is None:
+        # Fallback for jobs created before M10
+        if status == "running":
+            progress = 10
+        elif status in ("done", "failed"):
+            progress = 100
+        else:
+            progress = 0
+    options = job.get("options", {})
+    can_retry = False
+    retry_reason = ""
+    if status == "failed":
+        can_retry = _can_retry_job(job)
+        retry_reason = "" if can_retry else "无法重试：缺少原始任务参数或输入文件已不存在，请重新提交"
+
+    # Status label mapping (Chinese)
+    status_labels = {
+        "queued": "等待中",
+        "running": "处理中",
+        "done": "已完成",
+        "failed": "失败",
+    }
+    stage_labels = {
+        "queued": "排队中",
+        "starting": "启动中",
+        "transcribing": "转写",
+        "translating": "翻译",
+        "quality_checking": "质检",
+        "completed": "已完成",
+        "failed": "失败",
+    }
+
+    return {
+        "id": job["id"],
+        "status": status,
+        "status_label": status_labels.get(status, status),
+        "stage": stage,
+        "stage_label": stage_labels.get(stage, stage),
+        "progress": progress,
+        "input": job["input"],
+        "output": job.get("output", ""),
+        "source_output": job.get("source_output", ""),
+        "translated_output": job.get("translated_output", ""),
+        "quality_report": job.get("quality_report", ""),
+        "review_needed": job.get("review_needed", ""),
+        "returncode": job.get("returncode"),
+        "error_summary": job.get("error_summary", ""),
+        "options": options,
+        "created_at": job["created_at"],
+        "updated_at": job["updated_at"],
+        "completed_at": job.get("completed_at"),
+        "can_retry": can_retry,
+        "retry_reason": retry_reason,
+        "segment_asr_routing_status": job.get("segment_asr_routing_status", ""),
+        "segment_asr_routing_report": job.get("segment_asr_routing_report", ""),
+        "segment_asr_routing_message": job.get("segment_asr_routing_message", ""),
+    }
 
 
 def _segment_routing_from_logs(logs: list[str]) -> tuple[str, str, str]:
