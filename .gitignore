@@ -83,6 +83,8 @@ acceptance/*
 !acceptance/m8_6_segment_asr_apply_real_smoke.md
 !acceptance/m8_7_authorized_real_smoke_run.md
 !acceptance/m8_8_runtime_env_fix_and_smoke_rerun.md
+!acceptance/m8_9_provider_language_profile_asr_boundary.md
+!acceptance/m8_closeout.md
 acceptance/screenshots/
 acceptance/tmp/
 data/
