@@ -23,6 +23,8 @@ from subtitle_model import (
     normalize_subtitle_formats,
 )
 from segment_asr_routing_integration import (
+    DEFAULT_APPLY_WINDOW_SECONDS,
+    DEFAULT_MAX_APPLY_WINDOWS,
     SegmentAsrRoutingError,
     SegmentAsrRoutingOptions,
     ensure_apply_is_not_strict,
@@ -65,6 +67,9 @@ def main() -> int:
         confidence_threshold=args.segment_routing_confidence_threshold,
         min_segments=args.segment_routing_min_segments,
         strict=args.segment_routing_strict,
+        window_seconds=args.segment_routing_window_seconds,
+        max_windows=args.segment_routing_max_windows,
+        allow_large_run=args.segment_routing_allow_large_run,
     )
     try:
         ensure_apply_is_not_strict(segment_routing)
@@ -254,6 +259,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fail instead of falling back when experimental segment routing fails.",
     )
+    parser.add_argument(
+        "--segment-routing-window-seconds",
+        type=float,
+        default=DEFAULT_APPLY_WINDOW_SECONDS,
+        help="Apply-only full-coverage routing window length in seconds.",
+    )
+    parser.add_argument(
+        "--segment-routing-max-windows",
+        type=int,
+        default=DEFAULT_MAX_APPLY_WINDOWS,
+        help="Apply-only maximum routed windows before fallback or strict failure.",
+    )
+    parser.add_argument(
+        "--segment-routing-allow-large-run",
+        action="store_true",
+        help="Allow apply to exceed --segment-routing-max-windows.",
+    )
 
     args = parser.parse_args()
     try:
@@ -263,6 +285,9 @@ def parse_args() -> argparse.Namespace:
                 confidence_threshold=args.segment_routing_confidence_threshold,
                 min_segments=args.segment_routing_min_segments,
                 strict=args.segment_routing_strict,
+                window_seconds=args.segment_routing_window_seconds,
+                max_windows=args.segment_routing_max_windows,
+                allow_large_run=args.segment_routing_allow_large_run,
             )
         )
     except SegmentAsrRoutingError as exc:

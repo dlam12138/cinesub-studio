@@ -11,6 +11,8 @@ from pathlib import Path
 from process_env import build_child_process_env, redact_project_path
 from runtime_paths import resolve_runtime_paths
 from segment_asr_routing_integration import (
+    DEFAULT_APPLY_WINDOW_SECONDS,
+    DEFAULT_MAX_APPLY_WINDOWS,
     SegmentAsrRoutingError,
     SegmentAsrRoutingOptions,
     validate_options as validate_segment_routing_options,
@@ -55,6 +57,15 @@ def create_job(form: dict) -> dict:
     segment_threshold = get_text(form, "segment_routing_confidence_threshold", "0.70").strip() or "0.70"
     segment_min_segments = get_text(form, "segment_routing_min_segments", "1").strip() or "1"
     segment_strict = get_text(form, "segment_routing_strict", "") == "on"
+    segment_window_seconds = (
+        get_text(form, "segment_routing_window_seconds", str(DEFAULT_APPLY_WINDOW_SECONDS)).strip()
+        or str(DEFAULT_APPLY_WINDOW_SECONDS)
+    )
+    segment_max_windows = (
+        get_text(form, "segment_routing_max_windows", str(DEFAULT_MAX_APPLY_WINDOWS)).strip()
+        or str(DEFAULT_MAX_APPLY_WINDOWS)
+    )
+    segment_allow_large_run = get_text(form, "segment_routing_allow_large_run", "") == "on"
 
     if device not in {"cpu", "cuda", "auto"}:
         raise ValueError("Invalid device.")
@@ -73,6 +84,9 @@ def create_job(form: dict) -> dict:
                 confidence_threshold=float(segment_threshold),
                 min_segments=int(segment_min_segments),
                 strict=segment_strict,
+                window_seconds=float(segment_window_seconds),
+                max_windows=int(segment_max_windows),
+                allow_large_run=segment_allow_large_run,
             )
         )
     except (ValueError, SegmentAsrRoutingError) as exc:
@@ -178,6 +192,9 @@ def create_job(form: dict) -> dict:
             "segment_routing_confidence_threshold": segment_options.confidence_threshold,
             "segment_routing_min_segments": segment_options.min_segments,
             "segment_routing_strict": segment_options.strict,
+            "segment_routing_window_seconds": segment_options.window_seconds,
+            "segment_routing_max_windows": segment_options.max_windows,
+            "segment_routing_allow_large_run": segment_options.allow_large_run,
         },
         "_api_key": api_key,
         "logs": ["Queued."],
@@ -252,12 +269,27 @@ def run_job(job_id: str) -> None:
     segment_threshold = float(options.get("segment_routing_confidence_threshold", 0.70))
     segment_min_segments = int(options.get("segment_routing_min_segments", 1))
     segment_strict = bool(options.get("segment_routing_strict"))
-    if segment_mode != "off" or segment_threshold != 0.70 or segment_min_segments != 1 or segment_strict:
+    segment_window_seconds = float(options.get("segment_routing_window_seconds", DEFAULT_APPLY_WINDOW_SECONDS))
+    segment_max_windows = int(options.get("segment_routing_max_windows", DEFAULT_MAX_APPLY_WINDOWS))
+    segment_allow_large_run = bool(options.get("segment_routing_allow_large_run"))
+    if (
+        segment_mode != "off"
+        or segment_threshold != 0.70
+        or segment_min_segments != 1
+        or segment_strict
+        or segment_window_seconds != DEFAULT_APPLY_WINDOW_SECONDS
+        or segment_max_windows != DEFAULT_MAX_APPLY_WINDOWS
+        or segment_allow_large_run
+    ):
         command += ["--segment-asr-routing", segment_mode]
         command += ["--segment-routing-confidence-threshold", str(segment_threshold)]
         command += ["--segment-routing-min-segments", str(segment_min_segments)]
+        command += ["--segment-routing-window-seconds", str(segment_window_seconds)]
+        command += ["--segment-routing-max-windows", str(segment_max_windows)]
         if segment_strict:
             command += ["--segment-routing-strict"]
+        if segment_allow_large_run:
+            command += ["--segment-routing-allow-large-run"]
 
     lang_profile = options.get("language_profile", "")
     if lang_profile:

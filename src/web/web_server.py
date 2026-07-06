@@ -673,6 +673,8 @@ def _first_query_value(query: dict, key: str) -> str:
 
 def _parse_segment_routing_payload(body: dict) -> dict:
     from segment_asr_routing_integration import (
+        DEFAULT_APPLY_WINDOW_SECONDS,
+        DEFAULT_MAX_APPLY_WINDOWS,
         SegmentAsrRoutingError,
         SegmentAsrRoutingOptions,
         validate_options,
@@ -681,7 +683,10 @@ def _parse_segment_routing_payload(body: dict) -> dict:
     mode = str(body.get("segment_asr_routing") or "off").strip() or "off"
     threshold = body.get("segment_routing_confidence_threshold", 0.70)
     min_segments = body.get("segment_routing_min_segments", 1)
-    strict = bool(body.get("segment_routing_strict", False))
+    strict = _truthy(body.get("segment_routing_strict", False))
+    window_seconds = body.get("segment_routing_window_seconds", DEFAULT_APPLY_WINDOW_SECONDS)
+    max_windows = body.get("segment_routing_max_windows", DEFAULT_MAX_APPLY_WINDOWS)
+    allow_large_run = _truthy(body.get("segment_routing_allow_large_run", False))
     try:
         options = validate_options(
             SegmentAsrRoutingOptions(
@@ -689,6 +694,9 @@ def _parse_segment_routing_payload(body: dict) -> dict:
                 confidence_threshold=float(threshold),
                 min_segments=int(min_segments),
                 strict=strict,
+                window_seconds=float(window_seconds),
+                max_windows=int(max_windows),
+                allow_large_run=allow_large_run,
             )
         )
     except (TypeError, ValueError, SegmentAsrRoutingError) as exc:
@@ -698,7 +706,18 @@ def _parse_segment_routing_payload(body: dict) -> dict:
         "segment_routing_confidence_threshold": options.confidence_threshold,
         "segment_routing_min_segments": options.min_segments,
         "segment_routing_strict": options.strict,
+        "segment_routing_window_seconds": options.window_seconds,
+        "segment_routing_max_windows": options.max_windows,
+        "segment_routing_allow_large_run": options.allow_large_run,
     }
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _effective_translation_config(query: dict | None = None) -> dict:

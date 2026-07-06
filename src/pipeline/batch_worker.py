@@ -46,6 +46,8 @@ from subtitle_model import (
     normalize_subtitle_formats,
 )
 from segment_asr_routing_integration import (
+    DEFAULT_APPLY_WINDOW_SECONDS,
+    DEFAULT_MAX_APPLY_WINDOWS,
     SegmentAsrRoutingError,
     SegmentAsrRoutingOptions,
     ensure_apply_is_not_strict,
@@ -309,6 +311,9 @@ class BatchConfig:
     segment_routing_confidence_threshold: float = 0.70
     segment_routing_min_segments: int = 1
     segment_routing_strict: bool = False
+    segment_routing_window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS
+    segment_routing_max_windows: int = DEFAULT_MAX_APPLY_WINDOWS
+    segment_routing_allow_large_run: bool = False
 
     language_profile_id: str = ""
     language_profile_name: str = ""
@@ -467,6 +472,9 @@ class BatchPipeline:
                 confidence_threshold=self.config.segment_routing_confidence_threshold,
                 min_segments=self.config.segment_routing_min_segments,
                 strict=self.config.segment_routing_strict,
+                window_seconds=self.config.segment_routing_window_seconds,
+                max_windows=self.config.segment_routing_max_windows,
+                allow_large_run=self.config.segment_routing_allow_large_run,
             )
         )
 
@@ -513,6 +521,9 @@ class BatchPipeline:
             confidence_threshold=self.config.segment_routing_confidence_threshold,
             min_segments=self.config.segment_routing_min_segments,
             strict=self.config.segment_routing_strict,
+            window_seconds=self.config.segment_routing_window_seconds,
+            max_windows=self.config.segment_routing_max_windows,
+            allow_large_run=self.config.segment_routing_allow_large_run,
         )
         routed_source_applied = False
         if routing_options.mode != "off":
@@ -854,6 +865,23 @@ Examples:
         action="store_true",
         help="Fail instead of falling back when experimental segment routing fails.",
     )
+    parser.add_argument(
+        "--segment-routing-window-seconds",
+        type=float,
+        default=DEFAULT_APPLY_WINDOW_SECONDS,
+        help="Apply-only full-coverage routing window length in seconds.",
+    )
+    parser.add_argument(
+        "--segment-routing-max-windows",
+        type=int,
+        default=DEFAULT_MAX_APPLY_WINDOWS,
+        help="Apply-only maximum routed windows before fallback or strict failure.",
+    )
+    parser.add_argument(
+        "--segment-routing-allow-large-run",
+        action="store_true",
+        help="Allow apply to exceed --segment-routing-max-windows.",
+    )
 
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries")
     parser.add_argument("--no-skip-completed", action="store_true", help="Reprocess completed tasks")
@@ -873,6 +901,9 @@ Examples:
                 confidence_threshold=args.segment_routing_confidence_threshold,
                 min_segments=args.segment_routing_min_segments,
                 strict=args.segment_routing_strict,
+                window_seconds=args.segment_routing_window_seconds,
+                max_windows=args.segment_routing_max_windows,
+                allow_large_run=args.segment_routing_allow_large_run,
             )
         )
     except SegmentAsrRoutingError as exc:
@@ -1011,6 +1042,9 @@ Examples:
         segment_routing_confidence_threshold=args.segment_routing_confidence_threshold,
         segment_routing_min_segments=args.segment_routing_min_segments,
         segment_routing_strict=args.segment_routing_strict,
+        segment_routing_window_seconds=args.segment_routing_window_seconds,
+        segment_routing_max_windows=args.segment_routing_max_windows,
+        segment_routing_allow_large_run=args.segment_routing_allow_large_run,
         language_profile_id=lang_profile_info.get("profile_id", ""),
         language_profile_name=lang_profile_info.get("profile_name", ""),
         lang_profile_config=lang_profile_info,

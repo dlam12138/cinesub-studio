@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from encoding_utils import write_json
+from ffmpeg_locator import find_ffprobe
+from mixed_language_asr_evidence import probe_duration
 from segment_asr_prototype import DEFAULT_SAMPLE_COUNT, DEFAULT_WINDOW_SECONDS, run_prototype_cli
 from segment_asr_report_analyzer import Settings, analyze_reports
 from segment_asr_srt_assembler import assemble_routed_srt
@@ -16,10 +18,13 @@ from segment_asr_srt_assembler import assemble_routed_srt
 ROUTING_MODES = {"off", "dry_run", "apply"}
 APPLY_SEGMENTS_UNAVAILABLE_REASON = "routed ASR segments are not available"
 APPLY_COVERAGE_INCOMPLETE_REASON = "routed segment coverage is incomplete"
-APPLY_UNKNOWN_DURATION_REASON = "media duration is unavailable for routed segment coverage"
+APPLY_UNKNOWN_DURATION_REASON = "segment routing apply requires known media duration"
 APPLY_SKIP_WINDOW_REASON = "routed segment classification skip_window cannot be applied"
 REPORT_DIR_NAME = "segment_asr_routing"
 COVERAGE_TOLERANCE_SECONDS = 0.50
+DEFAULT_APPLY_WINDOW_SECONDS = 120.0
+DEFAULT_MAX_APPLY_WINDOWS = 80
+APPLY_ASR_MODE_COUNT = 3
 
 
 class SegmentAsrRoutingError(RuntimeError):
@@ -32,6 +37,9 @@ class SegmentAsrRoutingOptions:
     confidence_threshold: float = 0.70
     min_segments: int = 1
     strict: bool = False
+    window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS
+    max_windows: int = DEFAULT_MAX_APPLY_WINDOWS
+    allow_large_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,11 +72,26 @@ def validate_options(options: SegmentAsrRoutingOptions) -> SegmentAsrRoutingOpti
         raise SegmentAsrRoutingError("--segment-routing-min-segments must be an integer") from exc
     if min_segments < 0:
         raise SegmentAsrRoutingError("--segment-routing-min-segments must be greater than or equal to 0")
+    try:
+        window_seconds = float(options.window_seconds)
+    except (TypeError, ValueError) as exc:
+        raise SegmentAsrRoutingError("--segment-routing-window-seconds must be a number") from exc
+    if not math.isfinite(window_seconds) or window_seconds <= 0:
+        raise SegmentAsrRoutingError("--segment-routing-window-seconds must be greater than zero")
+    try:
+        max_windows = int(options.max_windows)
+    except (TypeError, ValueError) as exc:
+        raise SegmentAsrRoutingError("--segment-routing-max-windows must be an integer") from exc
+    if max_windows <= 0:
+        raise SegmentAsrRoutingError("--segment-routing-max-windows must be greater than zero")
     return SegmentAsrRoutingOptions(
         mode=mode,
         confidence_threshold=threshold,
         min_segments=min_segments,
-        strict=bool(options.strict),
+        strict=_coerce_bool(options.strict),
+        window_seconds=window_seconds,
+        max_windows=max_windows,
+        allow_large_run=_coerce_bool(options.allow_large_run),
     )
 
 
@@ -200,11 +223,15 @@ def _collect_routing_evidence(
     local_files_only: bool,
     include_full_segments: bool = False,
     full_coverage: bool = False,
+    window_seconds: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     from argparse import Namespace
 
     prototype_dir = report_dir / "prototype"
-    window_settings = _window_settings(full_coverage=full_coverage)
+    window_settings = _window_settings(
+        full_coverage=full_coverage,
+        window_seconds=window_seconds if full_coverage else None,
+    )
     args = Namespace(
         input=str(routing_input_path),
         model=model_name,
@@ -250,8 +277,16 @@ def _run_apply(
     candidate_path: Path | None = None
     candidate_accepted = False
     full_payload: dict[str, Any] | None = None
+    runtime_guardrails: dict[str, Any] | None = None
 
     try:
+        runtime_guardrails, guardrail_failure_reason = _build_apply_runtime_guardrails(
+            media_path=media_path,
+            options=options,
+        )
+        if guardrail_failure_reason:
+            raise SegmentAsrRoutingError(guardrail_failure_reason)
+
         prototype_report, analysis = _collect_routing_evidence(
             options=options,
             routing_input_path=routing_input_path,
@@ -262,6 +297,7 @@ def _run_apply(
             local_files_only=local_files_only,
             include_full_segments=True,
             full_coverage=True,
+            window_seconds=options.window_seconds,
         )
         full_payload = get_full_routed_segments(
             prototype_report=prototype_report,
@@ -321,6 +357,7 @@ def _run_apply(
             coverage=coverage,
             routing_metadata=routed_payload.get("metadata"),
             window_planning=full_payload.get("window_planning"),
+            runtime_guardrails=runtime_guardrails,
         )
         report["prototype_report"] = _prototype_report_summary(prototype_report)
         report["analyzer"] = analysis
@@ -362,6 +399,7 @@ def _run_apply(
                 window_planning=(full_payload or {}).get("window_planning")
                 if isinstance(full_payload, dict)
                 else None,
+                runtime_guardrails=runtime_guardrails,
                 failure_reason=fallback_reason,
             )
             raise SegmentAsrRoutingError(
@@ -395,6 +433,7 @@ def _run_apply(
                 window_planning=(full_payload or {}).get("window_planning")
                 if isinstance(full_payload, dict)
                 else None,
+                runtime_guardrails=runtime_guardrails,
             )
         except Exception:
             return SegmentAsrRoutingResult(
@@ -534,6 +573,90 @@ def _known_duration_seconds(value: Any) -> float | None:
     return duration
 
 
+def build_apply_runtime_guardrails(
+    *,
+    duration_seconds: Any,
+    window_seconds: Any,
+    max_windows: Any,
+    allow_large_run: bool,
+) -> tuple[dict[str, Any], str | None]:
+    duration = _known_duration_seconds(duration_seconds)
+    try:
+        window = float(window_seconds)
+    except (TypeError, ValueError):
+        window = float("nan")
+    try:
+        cap = int(max_windows)
+    except (TypeError, ValueError):
+        cap = 0
+
+    guardrails: dict[str, Any] = {
+        "window_seconds": window if math.isfinite(window) else None,
+        "planned_window_count": None,
+        "estimated_asr_calls": None,
+        "max_windows": cap if cap > 0 else None,
+        "cap_exceeded": False,
+        "allow_large_run": _coerce_bool(allow_large_run),
+    }
+    if duration is not None:
+        guardrails["duration_seconds"] = round(duration, 3)
+
+    if duration is None:
+        return guardrails, APPLY_UNKNOWN_DURATION_REASON
+    if not math.isfinite(window) or window <= 0:
+        raise SegmentAsrRoutingError("--segment-routing-window-seconds must be greater than zero")
+    if cap <= 0:
+        raise SegmentAsrRoutingError("--segment-routing-max-windows must be greater than zero")
+
+    planned_count = int(math.ceil(duration / window))
+    estimated_calls = planned_count * APPLY_ASR_MODE_COUNT
+    cap_exceeded = planned_count > cap
+    guardrails.update(
+        {
+            "window_seconds": float(window),
+            "planned_window_count": planned_count,
+            "estimated_asr_calls": estimated_calls,
+            "max_windows": cap,
+            "cap_exceeded": cap_exceeded,
+        }
+    )
+    if cap_exceeded and not _coerce_bool(allow_large_run):
+        return guardrails, f"segment routing apply window count {planned_count} exceeds max {cap}"
+    return guardrails, None
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _build_apply_runtime_guardrails(
+    *,
+    media_path: Path,
+    options: SegmentAsrRoutingOptions,
+) -> tuple[dict[str, Any], str | None]:
+    duration = _probe_media_duration(media_path)
+    return build_apply_runtime_guardrails(
+        duration_seconds=duration,
+        window_seconds=options.window_seconds,
+        max_windows=options.max_windows,
+        allow_large_run=options.allow_large_run,
+    )
+
+
+def _probe_media_duration(media_path: Path) -> float | None:
+    ffprobe = find_ffprobe(Path(__file__).resolve().parents[2])
+    if not ffprobe:
+        return None
+    try:
+        return probe_duration(Path(media_path), ffprobe)
+    except RuntimeError:
+        return None
+
+
 def _calculate_window_coverage(
     windows: list[dict[str, Any]],
     duration_seconds: float,
@@ -644,6 +767,7 @@ def _write_fallback_report(
     coverage: dict[str, Any] | None = None,
     routing_metadata: dict[str, Any] | None = None,
     window_planning: dict[str, Any] | None = None,
+    runtime_guardrails: dict[str, Any] | None = None,
 ) -> SegmentAsrRoutingResult:
     report = _base_report(
         options=options,
@@ -667,6 +791,7 @@ def _write_fallback_report(
         coverage=coverage,
         routing_metadata=routing_metadata,
         window_planning=window_planning,
+        runtime_guardrails=runtime_guardrails,
     )
     if prototype_report is not None:
         report["prototype_report"] = _prototype_report_summary(prototype_report)
@@ -706,6 +831,7 @@ def _write_apply_failure_report(
     coverage: dict[str, Any] | None,
     routing_metadata: dict[str, Any] | None,
     window_planning: dict[str, Any] | None,
+    runtime_guardrails: dict[str, Any] | None,
     failure_reason: str,
 ) -> None:
     report = _base_report(
@@ -730,6 +856,7 @@ def _write_apply_failure_report(
         coverage=coverage,
         routing_metadata=routing_metadata,
         window_planning=window_planning,
+        runtime_guardrails=runtime_guardrails,
     )
     report["apply_failure_reason"] = failure_reason
     report["strict_failure_note"] = "no routed subtitle output was accepted"
@@ -765,6 +892,7 @@ def _base_report(
     coverage: dict[str, Any] | None = None,
     routing_metadata: dict[str, Any] | None = None,
     window_planning: dict[str, Any] | None = None,
+    runtime_guardrails: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     report = {
         "schema_version": 1,
@@ -811,6 +939,8 @@ def _base_report(
             "routed_srt_path": str(Path(routed_srt_path).resolve()) if routed_srt_path else "",
         },
     }
+    if isinstance(runtime_guardrails, dict):
+        report["runtime_guardrails"] = runtime_guardrails
     if isinstance(coverage, dict):
         report["coverage"] = coverage
     return report
@@ -1028,13 +1158,14 @@ def _cleanup_candidate(candidate_path: Path | None) -> None:
         pass
 
 
-def _window_settings(*, full_coverage: bool = False) -> dict[str, Any]:
+def _window_settings(*, full_coverage: bool = False, window_seconds: float | None = None) -> dict[str, Any]:
+    resolved_window_seconds = _positive_float_or_default(window_seconds, DEFAULT_WINDOW_SECONDS)
     if full_coverage:
         return {
             "mode": "full_coverage",
             "samples": 0,
-            "sample_every_seconds": DEFAULT_WINDOW_SECONDS,
-            "window_seconds": DEFAULT_WINDOW_SECONDS,
+            "sample_every_seconds": resolved_window_seconds,
+            "window_seconds": resolved_window_seconds,
             "manual_windows": [],
         }
     return {
@@ -1043,6 +1174,14 @@ def _window_settings(*, full_coverage: bool = False) -> dict[str, Any]:
         "window_seconds": DEFAULT_WINDOW_SECONDS,
         "manual_windows": [],
     }
+
+
+def _positive_float_or_default(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) and number > 0 else default
 
 
 def _write_integration_report(report_dir: Path, media_path: Path, report: dict[str, Any]) -> Path:

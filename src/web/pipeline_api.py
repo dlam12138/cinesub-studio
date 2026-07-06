@@ -12,6 +12,7 @@ from urllib.parse import quote
 
 from process_env import build_child_process_env, redact_project_path
 from runtime_paths import resolve_runtime_paths
+from segment_asr_routing_integration import DEFAULT_APPLY_WINDOW_SECONDS, DEFAULT_MAX_APPLY_WINDOWS
 from subtitle_model import ASS_RESERVED_MESSAGE, DEFAULT_ASS_STYLE_ID, normalize_subtitle_formats
 
 
@@ -215,6 +216,9 @@ def start_pipeline_background(
     segment_routing_confidence_threshold: float = 0.70,
     segment_routing_min_segments: int = 1,
     segment_routing_strict: bool = False,
+    segment_routing_window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS,
+    segment_routing_max_windows: int = DEFAULT_MAX_APPLY_WINDOWS,
+    segment_routing_allow_large_run: bool = False,
 ) -> tuple[dict, int]:
     with PIPELINE_TASK_LOCK:
         if PIPELINE_TASK["running"]:
@@ -249,6 +253,9 @@ def start_pipeline_background(
             "segment_routing_confidence_threshold": segment_routing_confidence_threshold,
             "segment_routing_min_segments": segment_routing_min_segments,
             "segment_routing_strict": segment_routing_strict,
+            "segment_routing_window_seconds": segment_routing_window_seconds,
+            "segment_routing_max_windows": segment_routing_max_windows,
+            "segment_routing_allow_large_run": segment_routing_allow_large_run,
         },
         daemon=True,
     )
@@ -275,6 +282,9 @@ def run_pipeline_background(
     segment_routing_confidence_threshold: float = 0.70,
     segment_routing_min_segments: int = 1,
     segment_routing_strict: bool = False,
+    segment_routing_window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS,
+    segment_routing_max_windows: int = DEFAULT_MAX_APPLY_WINDOWS,
+    segment_routing_allow_large_run: bool = False,
 ) -> None:
     subtitle_formats_list = normalize_subtitle_formats(subtitle_formats)
     ass_style_id = ass_style_id or DEFAULT_ASS_STYLE_ID
@@ -296,6 +306,9 @@ def run_pipeline_background(
         segment_routing_confidence_threshold=segment_routing_confidence_threshold,
         segment_routing_min_segments=segment_routing_min_segments,
         segment_routing_strict=segment_routing_strict,
+        segment_routing_window_seconds=segment_routing_window_seconds,
+        segment_routing_max_windows=segment_routing_max_windows,
+        segment_routing_allow_large_run=segment_routing_allow_large_run,
     )
     env = _pipeline_env()
     if hf_endpoint:
@@ -667,6 +680,9 @@ def _build_background_command(
     segment_routing_confidence_threshold: float = 0.70,
     segment_routing_min_segments: int = 1,
     segment_routing_strict: bool = False,
+    segment_routing_window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS,
+    segment_routing_max_windows: int = DEFAULT_MAX_APPLY_WINDOWS,
+    segment_routing_allow_large_run: bool = False,
 ) -> list[str]:
     if action == "run":
         command = [
@@ -711,12 +727,19 @@ def _build_background_command(
         or float(segment_routing_confidence_threshold) != 0.70
         or int(segment_routing_min_segments) != 1
         or segment_routing_strict
+        or float(segment_routing_window_seconds) != DEFAULT_APPLY_WINDOW_SECONDS
+        or int(segment_routing_max_windows) != DEFAULT_MAX_APPLY_WINDOWS
+        or segment_routing_allow_large_run
     ):
         command += ["--segment-asr-routing", segment_asr_routing]
         command += ["--segment-routing-confidence-threshold", str(segment_routing_confidence_threshold)]
         command += ["--segment-routing-min-segments", str(segment_routing_min_segments)]
+        command += ["--segment-routing-window-seconds", str(segment_routing_window_seconds)]
+        command += ["--segment-routing-max-windows", str(segment_routing_max_windows)]
         if segment_routing_strict:
             command += ["--segment-routing-strict"]
+        if segment_routing_allow_large_run:
+            command += ["--segment-routing-allow-large-run"]
     return command
 
 

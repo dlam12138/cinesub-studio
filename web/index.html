@@ -1285,11 +1285,28 @@
             <span class="help-text">低于该片段数的窗口证据会被视为不足。</span>
           </div>
           <div class="option-card">
+            <label for="pipelineSegmentRoutingWindowSeconds">apply 窗口秒数</label>
+            <input id="pipelineSegmentRoutingWindowSeconds" type="number" min="1" step="1" value="120">
+            <span class="help-text">仅用于 apply 的全覆盖窗口；dry_run 采样不变。</span>
+          </div>
+          <div class="option-card">
+            <label for="pipelineSegmentRoutingMaxWindows">apply 最大窗口数</label>
+            <input id="pipelineSegmentRoutingMaxWindows" type="number" min="1" step="1" value="80">
+            <span class="help-text">按单个媒体文件计算，超出时回退或 strict 失败。</span>
+          </div>
+          <div class="option-card">
             <label class="check">
               <input id="pipelineSegmentRoutingStrict" type="checkbox">
               strict：路由失败时直接失败
             </label>
             <span class="help-text">M8.1 的 apply strict 会在生成字幕前失败；普通 dry_run 建议不要勾。</span>
+          </div>
+          <div class="option-card">
+            <label class="check">
+              <input id="pipelineSegmentRoutingAllowLargeRun" type="checkbox">
+              允许超过最大窗口数
+            </label>
+            <span class="help-text">只绕过窗口数上限，不绕过覆盖率和候选 SRT 校验。</span>
           </div>
         </div>
       </details>
@@ -1503,11 +1520,30 @@
                     <span class="help-text">证据片段数不足时不会贸然采信窗口结果。</span>
                   </div>
                   <div class="option-card">
+                    <label for="segment_routing_window_seconds">apply 窗口秒数</label>
+                    <input id="segment_routing_window_seconds" name="segment_routing_window_seconds" type="number" min="1" step="1" value="120">
+                    <span class="help-text">仅用于 apply 的全覆盖窗口；dry_run 采样不变。</span>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="option-card">
+                    <label for="segment_routing_max_windows">apply 最大窗口数</label>
+                    <input id="segment_routing_max_windows" name="segment_routing_max_windows" type="number" min="1" step="1" value="80">
+                    <span class="help-text">按单个媒体文件计算，超出时回退或 strict 失败。</span>
+                  </div>
+                  <div class="option-card">
                     <label class="check">
                       <input id="segment_routing_strict" name="segment_routing_strict" type="checkbox">
                       strict：路由失败时直接失败
                     </label>
                     <span class="help-text">M8.1 的 apply strict 会在生成字幕前失败；普通 dry_run 建议保持关闭。</span>
+                  </div>
+                  <div class="option-card">
+                    <label class="check">
+                      <input id="segment_routing_allow_large_run" name="segment_routing_allow_large_run" type="checkbox">
+                      允许超过最大窗口数
+                    </label>
+                    <span class="help-text">只绕过窗口数上限，不绕过覆盖率和候选 SRT 校验。</span>
                   </div>
                 </div>
               </details>
@@ -1890,6 +1926,9 @@ async function pipelineAction(action) {
     var segmentThresholdEl = document.getElementById('pipelineSegmentRoutingThreshold');
     var segmentMinEl = document.getElementById('pipelineSegmentRoutingMinSegments');
     var segmentStrictEl = document.getElementById('pipelineSegmentRoutingStrict');
+    var segmentWindowEl = document.getElementById('pipelineSegmentRoutingWindowSeconds');
+    var segmentMaxWindowsEl = document.getElementById('pipelineSegmentRoutingMaxWindows');
+    var segmentAllowLargeRunEl = document.getElementById('pipelineSegmentRoutingAllowLargeRun');
     var body = { input_dir: input_dir };
     if (provSel && provSel.value) body.provider_id = provSel.value;
     if (lpSel && lpSel.value) body.language_profile_id = lpSel.value;
@@ -1902,6 +1941,9 @@ async function pipelineAction(action) {
     if (segmentThresholdEl) body.segment_routing_confidence_threshold = segmentThresholdEl.value || '0.70';
     if (segmentMinEl) body.segment_routing_min_segments = segmentMinEl.value || '1';
     if (segmentStrictEl) body.segment_routing_strict = segmentStrictEl.checked;
+    if (segmentWindowEl) body.segment_routing_window_seconds = segmentWindowEl.value || '120';
+    if (segmentMaxWindowsEl) body.segment_routing_max_windows = segmentMaxWindowsEl.value || '80';
+    if (segmentAllowLargeRunEl) body.segment_routing_allow_large_run = segmentAllowLargeRunEl.checked;
     fetchOpts.headers = { 'Content-Type': 'application/json' };
     fetchOpts.body = JSON.stringify(body);
   } else {

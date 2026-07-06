@@ -11,13 +11,17 @@ import job_api
 import pipeline_api
 import segment_asr_routing_integration as routing
 import transcribe
+import web_server
 from batch_worker import BatchConfig, BatchPipeline, TaskState
 
 
-def _patch_apply_evidence(monkeypatch, tmp_path, windows):
+def _patch_apply_evidence(monkeypatch, tmp_path, windows, duration_seconds=None):
     prototype_json = tmp_path / "prototype.json"
     prototype_json.write_text(json.dumps({"windows": []}), encoding="utf-8")
+    if duration_seconds is None:
+        duration_seconds = max(float(window.get("end_seconds", 0.0) or 0.0) for window in windows)
 
+    monkeypatch.setattr(routing, "_probe_media_duration", lambda media_path: duration_seconds)
     monkeypatch.setattr(
         routing,
         "run_prototype_cli",
@@ -104,6 +108,9 @@ def test_transcribe_default_segment_routing_is_off(monkeypatch):
     assert args.segment_routing_confidence_threshold == 0.70
     assert args.segment_routing_min_segments == 1
     assert args.segment_routing_strict is False
+    assert args.segment_routing_window_seconds == routing.DEFAULT_APPLY_WINDOW_SECONDS
+    assert args.segment_routing_max_windows == routing.DEFAULT_MAX_APPLY_WINDOWS
+    assert args.segment_routing_allow_large_run is False
 
 
 def test_batch_config_default_segment_routing_is_off():
@@ -113,6 +120,9 @@ def test_batch_config_default_segment_routing_is_off():
     assert config.segment_routing_confidence_threshold == 0.70
     assert config.segment_routing_min_segments == 1
     assert config.segment_routing_strict is False
+    assert config.segment_routing_window_seconds == routing.DEFAULT_APPLY_WINDOW_SECONDS
+    assert config.segment_routing_max_windows == routing.DEFAULT_MAX_APPLY_WINDOWS
+    assert config.segment_routing_allow_large_run is False
 
 
 def test_off_mode_writes_no_report_and_does_not_call_m7(monkeypatch, tmp_path):
@@ -359,6 +369,15 @@ def test_apply_success_writes_routed_report_and_affects_subtitle(monkeypatch, tm
     assert report["candidate_srt_path"]
     assert not Path(report["candidate_srt_path"]).exists()
     assert report["assembler"]["selected_run_counts"] == {"forced-fr": 1}
+    assert report["runtime_guardrails"] == {
+        "window_seconds": routing.DEFAULT_APPLY_WINDOW_SECONDS,
+        "planned_window_count": 1,
+        "estimated_asr_calls": 3,
+        "max_windows": routing.DEFAULT_MAX_APPLY_WINDOWS,
+        "cap_exceeded": False,
+        "allow_large_run": False,
+        "duration_seconds": 10.0,
+    }
     assert result.routed_srt_path == str(final_srt.resolve())
     assert _candidate_files(tmp_path / "reports") == []
     assert "bonjour" in final_srt.read_text(encoding="utf-8")
@@ -401,6 +420,7 @@ def test_apply_success_uses_full_segments_from_prototype_report(monkeypatch, tmp
         ],
         duration_seconds=5.0,
     )
+    monkeypatch.setattr(routing, "_probe_media_duration", lambda media_path: 5.0)
     monkeypatch.setattr(routing, "run_prototype_cli", lambda args: prototype_report)
     monkeypatch.setattr(
         routing,
@@ -596,23 +616,12 @@ def test_strict_apply_incomplete_coverage_fails_cleanly(monkeypatch, tmp_path):
 
 
 def test_apply_unknown_duration_falls_back(monkeypatch, tmp_path):
-    _patch_apply_evidence(
-        monkeypatch,
-        tmp_path,
-        [
-            {
-                "window_index": 1,
-                "start_seconds": 0.0,
-                "end_seconds": 5.0,
-                "classification": "keep_auto",
-            }
-        ],
+    monkeypatch.setattr(routing, "_probe_media_duration", lambda media_path: None)
+    monkeypatch.setattr(
+        routing,
+        "run_prototype_cli",
+        lambda args: (_ for _ in ()).throw(AssertionError("full routed ASR must not start")),
     )
-
-    def raise_unknown_duration(**kwargs):
-        raise routing.SegmentAsrRoutingError(routing.APPLY_UNKNOWN_DURATION_REASON)
-
-    monkeypatch.setattr(routing, "get_full_routed_segments", raise_unknown_duration)
     final_srt = tmp_path / "movie.srt"
     final_srt.write_text("normal baseline", encoding="utf-8")
 
@@ -631,27 +640,19 @@ def test_apply_unknown_duration_falls_back(monkeypatch, tmp_path):
 
     assert result.status == "fallback"
     assert result.fallback_reason == routing.APPLY_UNKNOWN_DURATION_REASON
+    report = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
+    assert report["runtime_guardrails"]["planned_window_count"] is None
+    assert report["runtime_guardrails"]["estimated_asr_calls"] is None
     assert final_srt.read_text(encoding="utf-8") == "normal baseline"
 
 
 def test_strict_apply_unknown_duration_fails_cleanly(monkeypatch, tmp_path):
-    _patch_apply_evidence(
-        monkeypatch,
-        tmp_path,
-        [
-            {
-                "window_index": 1,
-                "start_seconds": 0.0,
-                "end_seconds": 5.0,
-                "classification": "keep_auto",
-            }
-        ],
+    monkeypatch.setattr(routing, "_probe_media_duration", lambda media_path: None)
+    monkeypatch.setattr(
+        routing,
+        "run_prototype_cli",
+        lambda args: (_ for _ in ()).throw(AssertionError("full routed ASR must not start")),
     )
-
-    def raise_unknown_duration(**kwargs):
-        raise routing.SegmentAsrRoutingError(routing.APPLY_UNKNOWN_DURATION_REASON)
-
-    monkeypatch.setattr(routing, "get_full_routed_segments", raise_unknown_duration)
     final_srt = tmp_path / "movie.srt"
     final_srt.write_text("normal baseline", encoding="utf-8")
 
@@ -670,6 +671,10 @@ def test_strict_apply_unknown_duration_fails_cleanly(monkeypatch, tmp_path):
         )
 
     assert final_srt.read_text(encoding="utf-8") == "normal baseline"
+    reports = list((tmp_path / "reports" / routing.REPORT_DIR_NAME).glob("*.segment_asr_routing.json"))
+    report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert report["apply_failure_reason"] == routing.APPLY_UNKNOWN_DURATION_REASON
+    assert report["runtime_guardrails"]["planned_window_count"] is None
 
 
 def test_selected_run_missing_full_segments_falls_back(monkeypatch, tmp_path):
@@ -1059,6 +1064,14 @@ def test_invalid_routing_options_rejected_cleanly(monkeypatch):
         routing.validate_options(
             routing.SegmentAsrRoutingOptions(mode="dry_run", confidence_threshold=1.5)
         )
+    with pytest.raises(routing.SegmentAsrRoutingError, match="window-seconds"):
+        routing.validate_options(
+            routing.SegmentAsrRoutingOptions(mode="apply", window_seconds=0)
+        )
+    with pytest.raises(routing.SegmentAsrRoutingError, match="max-windows"):
+        routing.validate_options(
+            routing.SegmentAsrRoutingOptions(mode="apply", max_windows=0)
+        )
 
 
 def test_web_single_job_defaults_and_command_pass_through(monkeypatch, tmp_path):
@@ -1067,6 +1080,9 @@ def test_web_single_job_defaults_and_command_pass_through(monkeypatch, tmp_path)
     default_job = job_api.create_job({"path": str(media)})
 
     assert default_job["options"]["segment_asr_routing"] == "off"
+    assert default_job["options"]["segment_routing_window_seconds"] == routing.DEFAULT_APPLY_WINDOW_SECONDS
+    assert default_job["options"]["segment_routing_max_windows"] == routing.DEFAULT_MAX_APPLY_WINDOWS
+    assert default_job["options"]["segment_routing_allow_large_run"] is False
 
     dry_job = job_api.create_job(
         {
@@ -1075,6 +1091,9 @@ def test_web_single_job_defaults_and_command_pass_through(monkeypatch, tmp_path)
             "segment_routing_confidence_threshold": "0.81",
             "segment_routing_min_segments": "3",
             "segment_routing_strict": "on",
+            "segment_routing_window_seconds": "90",
+            "segment_routing_max_windows": "12",
+            "segment_routing_allow_large_run": "on",
         }
     )
     monkeypatch.setattr(job_api, "set_job", lambda *args, **kwargs: None)
@@ -1099,6 +1118,9 @@ def test_web_single_job_defaults_and_command_pass_through(monkeypatch, tmp_path)
     assert "--segment-asr-routing" in command
     assert command[command.index("--segment-asr-routing") + 1] == "dry_run"
     assert "--segment-routing-strict" in command
+    assert command[command.index("--segment-routing-window-seconds") + 1] == "90.0"
+    assert command[command.index("--segment-routing-max-windows") + 1] == "12"
+    assert "--segment-routing-allow-large-run" in command
 
     captured.clear()
     job_api.run_job(default_job["id"])
@@ -1126,6 +1148,9 @@ def test_pipeline_command_passes_non_default_routing(monkeypatch, tmp_path):
         segment_routing_confidence_threshold=0.82,
         segment_routing_min_segments=4,
         segment_routing_strict=True,
+        segment_routing_window_seconds=90,
+        segment_routing_max_windows=12,
+        segment_routing_allow_large_run=True,
     )
 
     assert "--segment-asr-routing" in command
@@ -1133,6 +1158,23 @@ def test_pipeline_command_passes_non_default_routing(monkeypatch, tmp_path):
     assert "--segment-routing-confidence-threshold" in command
     assert "--segment-routing-min-segments" in command
     assert "--segment-routing-strict" in command
+    assert command[command.index("--segment-routing-window-seconds") + 1] == "90"
+    assert command[command.index("--segment-routing-max-windows") + 1] == "12"
+    assert "--segment-routing-allow-large-run" in command
+
+
+def test_web_pipeline_old_payload_resolves_safe_defaults():
+    payload = web_server._parse_segment_routing_payload({})
+
+    assert payload == {
+        "segment_asr_routing": "off",
+        "segment_routing_confidence_threshold": 0.70,
+        "segment_routing_min_segments": 1,
+        "segment_routing_strict": False,
+        "segment_routing_window_seconds": routing.DEFAULT_APPLY_WINDOW_SECONDS,
+        "segment_routing_max_windows": routing.DEFAULT_MAX_APPLY_WINDOWS,
+        "segment_routing_allow_large_run": False,
+    }
 
 
 def test_batch_completed_skip_not_changed_by_routing(monkeypatch, tmp_path):
