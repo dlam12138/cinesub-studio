@@ -131,6 +131,9 @@ def pipeline_progress() -> dict:
             "language_detection": _language_detection_summary(raw.get("language_detection")),
             "target_language": _target_language_from_state(raw),
             "quality_summary": _quality_summary(raw),
+            "segment_asr_routing_status": raw.get("segment_asr_routing_status", ""),
+            "segment_asr_routing_report": raw.get("segment_asr_routing_report", ""),
+            "segment_asr_routing_message": raw.get("segment_asr_routing_message", ""),
             "artifacts": pipeline_artifacts_for_state(raw),
         })
 

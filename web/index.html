@@ -1264,13 +1264,14 @@
 
       <details class="advanced-settings experimental-routing">
         <summary>实验性分段 ASR 路由（默认关闭）</summary>
+        <span class="help-text">Apply is experimental. It may fall back to normal ASR unless strict mode is enabled. Large runs are blocked unless allow large run is enabled.</span>
         <div class="row">
           <div class="option-card">
             <label for="pipelineSegmentAsrRouting">路由模式</label>
             <select id="pipelineSegmentAsrRouting">
               <option value="off" selected>off - 不运行</option>
               <option value="dry_run">dry_run - 只生成证据报告</option>
-              <option value="apply">apply - M8.1 延后并回退</option>
+              <option value="apply">apply - 实验性应用路由结果</option>
             </select>
             <span class="help-text">实验能力只在显式选择后运行。dry_run 不改变字幕输出。</span>
           </div>
@@ -1497,13 +1498,14 @@
               </div>
               <details class="advanced-settings experimental-routing">
                 <summary>实验性分段 ASR 路由（默认关闭）</summary>
+                <span class="help-text">Apply is experimental. It may fall back to normal ASR unless strict mode is enabled. Large runs are blocked unless allow large run is enabled.</span>
                 <div class="row">
                   <div class="option-card">
                     <label for="segment_asr_routing">路由模式</label>
                     <select id="segment_asr_routing" name="segment_asr_routing">
                       <option value="off" selected>off - 不运行</option>
                       <option value="dry_run">dry_run - 只生成证据报告</option>
-                      <option value="apply">apply - M8.1 延后并回退</option>
+                      <option value="apply">apply - 实验性应用路由结果</option>
                     </select>
                     <span class="help-text">dry_run 会额外生成路由证据报告，但不会改变 SRT 输出。</span>
                   </div>
@@ -2354,6 +2356,14 @@ function renderTaskSignals(task) {
   if (qs.status) {
     var issueText = '质检 ' + qs.status + ' / ' + String(qs.total_issues || 0) + ' 个问题';
     html += '<div class="task-sub"><span class="badge ' + (qs.errors ? 'badge-err' : (qs.warnings ? 'badge-warn' : 'badge-ok')) + '">' + escapeHtml(issueText) + '</span></div>';
+  }
+  if (task.segment_asr_routing_status || task.segment_asr_routing_message || task.segment_asr_routing_report) {
+    var routingText = task.segment_asr_routing_message || ('Segment ASR routing: ' + task.segment_asr_routing_status);
+    var routingClass = task.segment_asr_routing_status === 'failed' ? 'badge-err' : (task.segment_asr_routing_status === 'fallback' ? 'badge-warn' : 'badge-pending');
+    html += '<div class="task-sub"><span class="badge ' + routingClass + '">' + escapeHtml(routingText) + '</span></div>';
+    if (task.segment_asr_routing_report) {
+      html += '<div class="task-sub"><span class="badge badge-pending">路由报告 ' + escapeHtml(task.segment_asr_routing_report) + '</span></div>';
+    }
   }
   var issueTypes = qs.issue_types || {};
   if (issueTypes.mixed_language || issueTypes.possibly_untranslated) {

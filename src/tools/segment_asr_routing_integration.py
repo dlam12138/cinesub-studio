@@ -47,6 +47,8 @@ class SegmentAsrRoutingResult:
     mode: str
     report_path: str = ""
     status: str = "off"
+    user_status: str = "off"
+    message: str = ""
     fallback_used: bool = False
     fallback_reason: str = ""
     subtitle_output_affected: bool = False
@@ -97,6 +99,43 @@ def validate_options(options: SegmentAsrRoutingOptions) -> SegmentAsrRoutingOpti
 
 def ensure_apply_is_not_strict(options: SegmentAsrRoutingOptions) -> None:
     validate_options(options)
+
+
+def user_status_for_report(report: dict[str, Any]) -> str:
+    status = str(report.get("status") or "")
+    mode = str(report.get("segment_asr_routing_mode") or report.get("mode") or "")
+    if mode == "off" or status == "off":
+        return "off"
+    if status == "apply_complete" or report.get("apply_succeeded") is True:
+        return "applied"
+    if status == "apply_failed":
+        return "failed"
+    if report.get("fallback_used") is True or status == "fallback":
+        return "fallback"
+    if status == "dry_run_complete" or mode == "dry_run":
+        return "dry_run"
+    return status or mode or "off"
+
+
+def routing_user_message(
+    *,
+    user_status: str,
+    fallback_reason: str = "",
+    failure_reason: str = "",
+) -> str:
+    if user_status == "applied":
+        return "Segment ASR routing: applied routed SRT successfully."
+    if user_status == "fallback":
+        reason = fallback_reason or "routed output was not accepted"
+        return f"Segment ASR routing: fell back to normal ASR. Reason: {reason}."
+    if user_status == "failed":
+        reason = _clean_user_reason(
+            failure_reason or fallback_reason or "strict mode prevents fallback to normal ASR"
+        )
+        return f"Segment ASR routing: failed in strict mode. Reason: {reason}."
+    if user_status == "dry_run":
+        return "Segment ASR routing: dry_run completed; subtitle output was not changed."
+    return ""
 
 
 def run_segment_asr_routing(
@@ -161,6 +200,8 @@ def run_segment_asr_routing(
             return SegmentAsrRoutingResult(
                 mode=options.mode,
                 status="fallback",
+                user_status="fallback",
+                message=routing_user_message(user_status="fallback", fallback_reason=str(exc)),
                 fallback_used=True,
                 fallback_reason=str(exc),
             )
@@ -209,6 +250,8 @@ def _run_dry_run(
         mode=options.mode,
         report_path=str(report_path.resolve()),
         status="dry_run_complete",
+        user_status="dry_run",
+        message=routing_user_message(user_status="dry_run"),
     )
 
 
@@ -368,6 +411,8 @@ def _run_apply(
             mode=options.mode,
             report_path=str(report_path.resolve()),
             status="apply_complete",
+            user_status="applied",
+            message=routing_user_message(user_status="applied"),
             subtitle_output_affected=True,
             normal_srt_path=str(Path(normal_srt_path).resolve()) if normal_srt_path else "",
             routed_srt_path=str(output_path.resolve()),
@@ -439,6 +484,8 @@ def _run_apply(
             return SegmentAsrRoutingResult(
                 mode=options.mode,
                 status="fallback",
+                user_status="fallback",
+                message=routing_user_message(user_status="fallback", fallback_reason=fallback_reason),
                 fallback_used=True,
                 fallback_reason=fallback_reason,
                 normal_srt_path=str(Path(normal_srt_path).resolve()) if normal_srt_path else "",
@@ -803,6 +850,8 @@ def _write_fallback_report(
         mode=options.mode,
         report_path=str(report_path.resolve()),
         status="fallback",
+        user_status="fallback",
+        message=routing_user_message(user_status="fallback", fallback_reason=fallback_reason),
         fallback_used=True,
         fallback_reason=fallback_reason,
         normal_srt_path=str(Path(normal_srt_path).resolve()) if normal_srt_path else "",
@@ -1189,8 +1238,97 @@ def _write_integration_report(report_dir: Path, media_path: Path, report: dict[s
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     stem = _safe_stem(Path(media_path).stem)
     path = report_dir / f"{stem}.{stamp}.segment_asr_routing.json"
+    _attach_derived_report_views(report)
     write_json(path, report)
     return path
+
+
+def _attach_derived_report_views(report: dict[str, Any]) -> None:
+    user_status = user_status_for_report(report)
+    fallback_reason = str(report.get("fallback_reason") or "")
+    failure_reason = str(report.get("apply_failure_reason") or "")
+    report["user_summary"] = _user_summary(
+        user_status=user_status,
+        fallback_reason=fallback_reason,
+        failure_reason=failure_reason,
+    )
+    report["decision_summary"] = {
+        "mode": report.get("segment_asr_routing_mode", ""),
+        "apply_attempted": bool(report.get("apply_attempted")),
+        "apply_succeeded": bool(report.get("apply_succeeded")),
+        "subtitle_output_affected": bool(report.get("subtitle_output_affected")),
+        "fallback_used": bool(report.get("fallback_used")),
+        "fallback_reason": report.get("fallback_reason"),
+    }
+    runtime_guardrails = report.get("runtime_guardrails")
+    coverage = report.get("coverage")
+    report["safety_summary"] = {
+        "duration_known": _duration_known(runtime_guardrails, coverage),
+        "coverage_full": bool(report.get("coverage_full")),
+        "candidate_accepted": bool(report.get("candidate_accepted")),
+        "preview_only_rejected": bool(report.get("preview_only_rejected")),
+        "guardrail_cap_exceeded": (
+            bool(runtime_guardrails.get("cap_exceeded")) if isinstance(runtime_guardrails, dict) else False
+        ),
+    }
+
+
+def _user_summary(*, user_status: str, fallback_reason: str, failure_reason: str) -> dict[str, str]:
+    if user_status == "applied":
+        return {
+            "status": "applied",
+            "title": "Segment ASR routing applied",
+            "message": "Routed SRT was accepted after full coverage and candidate validation.",
+            "next_action": "Review the generated SRT before using it as final subtitles.",
+        }
+    if user_status == "fallback":
+        reason = fallback_reason or "routed output was not accepted"
+        return {
+            "status": "fallback",
+            "title": "Segment ASR routing fell back to normal ASR",
+            "message": f"Routed output was not accepted because {reason}.",
+            "next_action": "Use dry_run or smaller window settings to inspect evidence before trying apply again.",
+        }
+    if user_status == "failed":
+        reason = _clean_user_reason(failure_reason or "strict mode prevents fallback to normal ASR")
+        return {
+            "status": "failed",
+            "title": "Segment ASR routing failed in strict mode",
+            "message": f"Strict mode prevents fallback to normal ASR. Reason: {reason}.",
+            "next_action": "Disable strict mode or inspect the routing report.",
+        }
+    if user_status == "dry_run":
+        return {
+            "status": "dry_run",
+            "title": "Segment ASR routing dry run completed",
+            "message": "Routing evidence was generated without changing subtitle output.",
+            "next_action": "Inspect the routing report before trying apply.",
+        }
+    return {
+        "status": "off",
+        "title": "Segment ASR routing is off",
+        "message": "Normal ASR ran without segment routing.",
+        "next_action": "No routing action is needed.",
+    }
+
+
+def _duration_known(runtime_guardrails: Any, coverage: Any) -> bool:
+    if isinstance(runtime_guardrails, dict):
+        return runtime_guardrails.get("duration_seconds") is not None
+    if isinstance(coverage, dict):
+        return coverage.get("duration_seconds") is not None
+    return False
+
+
+def _clean_user_reason(reason: str) -> str:
+    text = str(reason or "").strip()
+    prefix = "segment ASR routing apply failed: "
+    suffix = "; no routed subtitle output was accepted"
+    if text.startswith(prefix):
+        text = text[len(prefix):]
+    if text.endswith(suffix):
+        text = text[: -len(suffix)]
+    return text.strip() or "strict mode prevents fallback to normal ASR"
 
 
 def _safe_stem(value: str) -> str:

@@ -162,6 +162,9 @@ def create_job(form: dict) -> dict:
         "source_output": "",
         "translated_output": "",
         "returncode": None,
+        "segment_asr_routing_status": "",
+        "segment_asr_routing_report": "",
+        "segment_asr_routing_message": "",
         "options": {
             "model": model,
             "device": device,
@@ -343,6 +346,7 @@ def run_job(job_id: str) -> None:
         logs = append_log(job_id, line.rstrip())
 
     returncode = process.wait()
+    routing_status, routing_report, routing_message = _segment_routing_from_logs(logs)
     source_output, translated_output = find_output_paths(raw_job)
     quality_report = ""
     review_needed = ""
@@ -392,6 +396,9 @@ def run_job(job_id: str) -> None:
             translated_output=translated_output,
             quality_report=quality_report,
             review_needed=review_needed,
+            segment_asr_routing_status=routing_status,
+            segment_asr_routing_report=routing_report,
+            segment_asr_routing_message=routing_message,
             logs=logs + ["Finished."],
         )
     else:
@@ -402,6 +409,9 @@ def run_job(job_id: str) -> None:
             output=translated_output or source_output,
             source_output=source_output,
             translated_output=translated_output,
+            segment_asr_routing_status=routing_status,
+            segment_asr_routing_report=routing_report,
+            segment_asr_routing_message=routing_message,
             logs=logs + [f"Failed with code {returncode}."],
         )
 
@@ -471,12 +481,42 @@ def list_jobs() -> list[dict]:
                 "translated_output": job.get("translated_output", ""),
                 "quality_report": job.get("quality_report", ""),
                 "review_needed": job.get("review_needed", ""),
+                "segment_asr_routing_status": job.get("segment_asr_routing_status", ""),
+                "segment_asr_routing_report": job.get("segment_asr_routing_report", ""),
+                "segment_asr_routing_message": job.get("segment_asr_routing_message", ""),
                 "options": job["options"],
                 "created_at": job["created_at"],
                 "updated_at": job["updated_at"],
             }
             for job in sorted(JOBS.values(), key=lambda item: item["created_at"], reverse=True)
         ]
+
+
+def _segment_routing_from_logs(logs: list[str]) -> tuple[str, str, str]:
+    status = ""
+    report = ""
+    message = ""
+    for line in logs:
+        text = str(line or "").strip()
+        if text.startswith("Segment ASR routing report:"):
+            report = text.split(":", 1)[1].strip()
+        if "Segment ASR routing:" not in text:
+            continue
+        if text.startswith("ERROR: "):
+            text = text[len("ERROR: "):].strip()
+        if text.startswith("Segment ASR routing report:"):
+            continue
+        message = text
+        lowered = text.lower()
+        if "applied routed srt successfully" in lowered:
+            status = "applied"
+        elif "fell back to normal asr" in lowered:
+            status = "fallback"
+        elif "failed in strict mode" in lowered:
+            status = "failed"
+        elif "dry_run completed" in lowered:
+            status = "dry_run"
+    return status, report, message
 
 
 def get_text(form: dict, key: str, default_value: str) -> str:

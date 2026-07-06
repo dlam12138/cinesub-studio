@@ -51,6 +51,7 @@ from segment_asr_routing_integration import (
     SegmentAsrRoutingError,
     SegmentAsrRoutingOptions,
     ensure_apply_is_not_strict,
+    routing_user_message,
     run_segment_asr_routing,
     validate_options as validate_segment_routing_options,
 )
@@ -129,6 +130,7 @@ class TaskState:
 
     segment_asr_routing_report: str = ""
     segment_asr_routing_status: str = ""
+    segment_asr_routing_message: str = ""
 
     error: str = ""
     error_stage: str = ""
@@ -153,6 +155,7 @@ class TaskState:
             "quality_report": self.quality_report,
             "segment_asr_routing_report": self.segment_asr_routing_report,
             "segment_asr_routing_status": self.segment_asr_routing_status,
+            "segment_asr_routing_message": self.segment_asr_routing_message,
             "error": self.error,
             "error_stage": self.error_stage,
             "retry_count": self.retry_count,
@@ -177,6 +180,7 @@ class TaskState:
             quality_report=data.get("quality_report", ""),
             segment_asr_routing_report=data.get("segment_asr_routing_report", ""),
             segment_asr_routing_status=data.get("segment_asr_routing_status", ""),
+            segment_asr_routing_message=data.get("segment_asr_routing_message", ""),
             error=data.get("error", ""),
             error_stage=data.get("error_stage", ""),
             retry_count=data.get("retry_count", 0),
@@ -541,20 +545,23 @@ class BatchPipeline:
                     normal_srt_path=source_srt,
                     routed_srt_path=source_srt,
                 )
-            except SegmentAsrRoutingError:
+            except SegmentAsrRoutingError as exc:
                 task.segment_asr_routing_status = "failed"
+                task.segment_asr_routing_message = routing_user_message(
+                    user_status="failed",
+                    failure_reason=str(exc),
+                )
                 task.save()
                 raise
-            task.segment_asr_routing_status = routing_result.status
+            task.segment_asr_routing_status = routing_result.user_status
             task.segment_asr_routing_report = routing_result.report_path
+            task.segment_asr_routing_message = routing_result.message
             routed_source_applied = routing_result.subtitle_output_affected
             task.save()
+            if routing_result.message:
+                print(f"      {routing_result.message}")
             if routing_result.report_path:
                 print(f"      segment routing report: {routing_result.report_path}")
-            if routed_source_applied:
-                print(f"      segment routing applied: {routing_result.routed_srt_path}")
-            if routing_result.fallback_used:
-                print(f"      segment routing fallback: {routing_result.fallback_reason}")
 
         if self.config.translate:
             translated_srt = outputs.translated_srt

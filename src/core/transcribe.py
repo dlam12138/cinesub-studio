@@ -28,6 +28,7 @@ from segment_asr_routing_integration import (
     SegmentAsrRoutingError,
     SegmentAsrRoutingOptions,
     ensure_apply_is_not_strict,
+    routing_user_message,
     run_segment_asr_routing,
     validate_options as validate_segment_routing_options,
 )
@@ -129,13 +130,12 @@ def main() -> int:
                 routed_srt_path=srt_path,
             )
         except SegmentAsrRoutingError as exc:
-            raise SystemExit(f"ERROR: {exc}") from exc
+            message = routing_user_message(user_status="failed", failure_reason=str(exc))
+            raise SystemExit(f"ERROR: {message}") from exc
+        if result.message:
+            print(result.message)
         if result.report_path:
             print(f"Segment ASR routing report: {result.report_path}")
-        if result.subtitle_output_affected:
-            print(f"Segment ASR routing applied: {result.routed_srt_path}")
-        if result.fallback_used:
-            print(f"Segment ASR routing fallback: {result.fallback_reason}")
 
     print(f"Done: {srt_path}")
 
