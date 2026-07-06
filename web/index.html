@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CineSub Studio Pipeline</title>
+  <title>字幕工坊 — 视频字幕生成器</title>
   <style>
     :root {
       color-scheme: light;
@@ -1169,18 +1169,18 @@
 
 <header>
   <h1>CineSub Studio Pipeline</h1>
-  <p class="sub">流水线识别、翻译、质检</p>
+  <p class="sub">选择视频 → 语音识别 → 翻译 → 获取字幕</p>
   <div class="status-strip">
-    <div class="status-pill"><span>模型接口</span><strong id="statusProvider">读取中...</strong></div>
-    <div class="status-pill"><span>语言配置</span><strong id="statusProfile">auto-detect</strong></div>
+    <div class="status-pill"><span>翻译接口</span><strong id="statusProvider">读取中...</strong></div>
+    <div class="status-pill"><span>语言风格</span><strong id="statusProfile">auto-detect</strong></div>
     <div class="status-pill"><span>临时空间</span><strong id="statusTempSpace">读取中...</strong></div>
     <div class="status-pill"><span>模型缓存</span><strong id="statusModelCache">项目内 .cache / models</strong></div>
   </div>
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">⚙ 流水线控制台</button>
-    <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">📝 单文件处理</button>
-    <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">🔑 模型接口</button>
-    <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')">🌐 语言配置</button>
+    <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">📁 批量处理</button>
+    <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">🎬 单文件字幕</button>
+    <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">🔑 翻译接口</button>
+    <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')">🌐 语言风格</button>
   </nav>
 </header>
 
@@ -1191,16 +1191,16 @@
     <div class="settings-panel">
       <div class="settings-head">
         <h2>流水线参数</h2>
-        <p class="panel-copy">适合批量处理目录里的电影。先扫目录，再开始处理；失败重试只处理失败任务，不扫描新文件。</p>
+        <p class="panel-copy">将视频文件放入输入目录，点击"开始处理"即可批量生成字幕。系统会自动识别语音、翻译并质检。</p>
       </div>
       <div class="toolbar">
       <div class="field wide option-card">
-        <label for="pipelineInputDir">输入目录<span class="recommend-badge">可填绝对路径</span></label>
+        <label for="pipelineInputDir">视频目录<span class="recommend-badge">可填绝对路径</span></label>
         <input id="pipelineInputDir" type="text" value="input" placeholder="input 或 D:\Movies">
         <span class="help-text">相对路径会从项目目录开始找；蓝光电影建议放在任意磁盘目录，然后填完整路径。</span>
       </div>
       <div class="field option-card">
-        <label for="pipelineModel">模型<span class="recommend-badge">small 稳妥</span></label>
+        <label for="pipelineModel">语音识别模型<span class="recommend-badge">small 稳妥</span></label>
         <select id="pipelineModel">
           <option value="tiny">tiny</option>
           <option value="base">base</option>
@@ -1212,7 +1212,7 @@
         <span class="help-text">模型越大越准也越慢。CPU 先用 small；追求质量再试 medium / large-v3。</span>
       </div>
       <div class="field option-card">
-        <label for="pipelineDevice">设备<span class="recommend-badge">CPU 最稳</span></label>
+        <label for="pipelineDevice">运行设备<span class="recommend-badge">CPU 最稳</span></label>
         <select id="pipelineDevice">
           <option value="cpu" selected>CPU</option>
           <option value="cuda">NVIDIA CUDA</option>
@@ -1231,7 +1231,7 @@
         <span class="help-text">自动会按设备选择。CPU 通常 int8 省内存；CUDA 通常 float16；float32 最吃内存。</span>
       </div>
       <div class="field option-card">
-        <label for="pipelineLanguage">源语言</label>
+        <label for="pipelineLanguage">视频语言</label>
         <select id="pipelineLanguage">
           <option value="" selected>自动检测</option>
           <option value="en">英语</option>
@@ -1251,12 +1251,12 @@
         <span class="help-text">勾选后会调用当前模型接口，产生 API 消耗；只要原文字幕就取消。</span>
       </label>
       <div class="inline-field option-card">
-        <label for="pipelineProviderSelect">模型接口</label>
+        <label for="pipelineProviderSelect">翻译接口</label>
         <select id="pipelineProviderSelect" onchange="updatePipelineProvider()"></select>
         <span class="help-text">默认使用当前激活接口。这里选择只影响本次流水线。</span>
       </div>
       <div class="inline-field option-card">
-        <label for="pipelineLangProfileSelect">语言配置</label>
+        <label for="pipelineLangProfileSelect">语言风格</label>
         <select id="pipelineLangProfileSelect" onchange="updatePipelineLangProfile()"></select>
         <span class="help-text">语言配置会带入识别、翻译风格和质检阈值；不懂就用 active profile。</span>
       </div>
@@ -1314,10 +1314,10 @@
     </div>
 
     <div class="actions toolbar-actions">
-        <button onclick="pipelineAction('scan')" id="btn-scan">🔍 扫描</button>
+        <button onclick="pipelineAction('scan')" id="btn-scan">🔍 扫描文件</button>
         <button onclick="pipelineAction('status')" id="btn-status">📊 查看状态</button>
         <button onclick="pipelineAction('review')" id="btn-review">⚠️ 异常复核</button>
-        <button onclick="pipelineAction('run')" id="btn-run" class="primary">▶ 开始处理</button>
+        <button onclick="pipelineAction('run')" id="btn-run" class="primary">▶ 开始批量处理</button>
         <span class="spacer"></span>
         <button onclick="pipelineAction('retry')" id="btn-retry" class="danger">🔄 重试失败</button>
         <button onclick="refreshAll()" id="btn-refresh">↻ 刷新全部</button>
@@ -1374,16 +1374,16 @@
   <div id="tab-transcribe" class="tab-content">
     <div class="transcribe-layout">
       <section>
-        <h2>识别设置</h2>
-        <p class="hint">第一次使用某个模型会下载模型文件；后台会忽略系统里失效的代理设置。国内网络可尝试 hf-mirror.com，模型下载完成后可以勾选"只使用本地已下载模型"。<br>翻译使用大模型 API，API Key 不会持久化到磁盘或日志中。</p>
+        <h2>语音识别与翻译</h2>
+        <p class="hint"><strong>使用流程：</strong>选择视频 → 配置识别参数 → 选择翻译设置 → 点击"开始识别"。<br>第一次使用某个模型会自动下载；国内网络可尝试 hf-mirror.com。翻译接口的 API Key 不会持久化到磁盘或日志中。</p>
         <form id="jobForm">
           <div class="form-block settings-panel">
             <div class="settings-head">
-              <h3>目标文件</h3>
+              <h3>Step 1 · 选择视频</h3>
               <p class="panel-copy">大电影不要上传，直接填本机路径。后台读取原片并抽音频到 work/，原片不会被复制。</p>
             </div>
             <div class="file-source">
-              <label for="path">本机文件路径（直接处理，不复制原片）<span class="recommend-badge">蓝光推荐</span></label>
+              <label for="path">本地视频路径<span class="recommend-badge">推荐</span></label>
               <input id="path" name="path" type="text" placeholder="D:\Movies\电影.mkv">
               <span class="hint-inline">适合蓝光级别大文件。原片保持在原位置，抽取的音频写入项目 work/，字幕和质检结果写入 output/。</span>
               <div class="inline-actions">
@@ -1403,12 +1403,12 @@
 
           <div class="form-block settings-panel">
             <div class="settings-head">
-              <h3>识别参数</h3>
+              <h3>Step 2 · 语音识别</h3>
               <p class="panel-copy">看不懂就保持默认：small + CPU + 自动语言，是最不容易翻车的组合。</p>
             </div>
             <div class="row">
               <div class="option-card">
-                <label for="model">模型<span class="recommend-badge">small 默认</span></label>
+                <label for="model">语音识别模型<span class="recommend-badge">small 默认</span></label>
                 <select id="model" name="model">
                   <option value="tiny">tiny - 快速测试</option>
                   <option value="base">base - 轻量</option>
@@ -1420,7 +1420,7 @@
                 <span class="help-text">模型越大越慢、越吃内存。small 适合 CPU；medium / large-v3 更准；distil-large-v3 更偏 GPU。</span>
               </div>
               <div class="option-card">
-                <label for="device">设备<span class="recommend-badge">CPU 稳</span></label>
+                <label for="device">运行设备<span class="recommend-badge">CPU 稳</span></label>
                 <select id="device" name="device">
                   <option value="cpu" selected>CPU</option>
                   <option value="cuda">NVIDIA CUDA</option>
@@ -1432,7 +1432,7 @@
 
             <div class="row">
               <div class="option-card">
-                <label for="language">源语言</label>
+                <label for="language">视频语言</label>
                 <select id="language" name="language">
                   <option value="">自动检测</option>
                   <option value="en">英语 en</option>
@@ -1554,7 +1554,7 @@
 
           <div class="form-block settings-panel">
             <div class="settings-head">
-              <h3>语言与翻译</h3>
+              <h3>Step 3 · 翻译设置</h3>
               <p class="panel-copy">语言配置管识别习惯、翻译风格和质检阈值；模型接口只管 API 和大模型名称。</p>
             </div>
             <div class="row">
@@ -1577,7 +1577,7 @@
             <div id="translateSettings" style="display:none">
               <div class="row">
                 <div class="option-card">
-                  <label for="provider_select">模型接口配置</label>
+                  <label for="provider_select">翻译接口</label>
                   <select id="provider_select" name="provider_select" onchange="onProviderSelect()">
                     <option value="">-- 选择已保存的接口 --</option>
                   </select>
@@ -1597,7 +1597,7 @@
 
             <div class="row">
               <div class="option-card">
-                <label for="target_language">目标语言</label>
+                <label for="target_language">字幕语言</label>
                 <select id="target_language" name="target_language">
                   <option value="zh-CN" selected>中文 zh-CN</option>
                   <option value="zh-TW">繁体中文 zh-TW</option>
@@ -1612,7 +1612,7 @@
                 <span class="help-text">字幕目标语言。中文用户默认 zh-CN；繁体字幕选 zh-TW。</span>
               </div>
               <div class="option-card">
-                <label for="translation_mode">翻译模式</label>
+                <label for="translation_mode">输出格式</label>
                 <select id="translation_mode" name="translation_mode">
                   <option value="bilingual" selected>双语 bilingual</option>
                   <option value="translated">纯翻译 translated</option>
@@ -1692,7 +1692,7 @@
       </section>
 
       <section>
-        <h2>任务状态</h2>
+        <h2>Step 4 · 任务状态与结果</h2>
         <div class="job-status">
           <span id="badge" class="badge-status">idle</span>
           <a id="downloadSource" class="dl-link" href="#" hidden>下载原文 SRT</a>
@@ -2921,6 +2921,31 @@ async function inspectInputFile() {
   }
 }
 
+// ═══════════════════ Job Result Display ═══════════════════
+
+function renderJobResult(job) {
+  var resultEl = document.getElementById('job-result');
+  if (!resultEl) return;
+  resultEl.hidden = false;
+  var html = '';
+  if (job.status === 'done') {
+    html += '<div class="inspect-result ok">';
+    html += '<strong>✓ 任务完成</strong>';
+    if (job.source_output) html += '<div>原文字幕：' + escapeHtml(job.source_output) + '</div>';
+    if (job.translated_output) html += '<div>翻译字幕：' + escapeHtml(job.translated_output) + '</div>';
+    if (job.quality_report) html += '<div>质检报告：' + escapeHtml(job.quality_report) + '</div>';
+    html += '</div>';
+  } else if (job.status === 'failed') {
+    html += '<div class="inspect-result err">';
+    html += '<strong>✗ 处理失败</strong>';
+    var lastLog = (job.logs || []).slice(-3).join('\n');
+    if (lastLog) html += '<div style="margin-top:6px">' + escapeHtml(lastLog) + '</div>';
+    html += '<div style="margin-top:6px;font-size:12px">请检查上方日志了解详情，或确认视频文件可正常播放。</div>';
+    html += '</div>';
+  }
+  resultEl.innerHTML = html;
+}
+
 // ═══════════════════ Utility ═══════════════════
 
 function escapeHtml(text) {
@@ -2973,7 +2998,8 @@ function escapeHtml(text) {
   });
 
   function setStatus(status) {
-    badge.textContent = status;
+    var labels = { idle: '等待开始', queued: '排队中', running: '处理中', done: '已完成', failed: '处理失败' };
+    badge.textContent = labels[status] || status;
     badge.className = "badge-status " + status;
   }
 
@@ -2999,6 +3025,7 @@ function escapeHtml(text) {
     if (job.status === "done" || job.status === "failed") {
       clearInterval(timer);
       startBtn.disabled = false;
+      renderJobResult(job);
     }
 
     if (job.status === "done") {

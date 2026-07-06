@@ -85,6 +85,7 @@ acceptance/*
 !acceptance/m8_8_runtime_env_fix_and_smoke_rerun.md
 !acceptance/m8_9_provider_language_profile_asr_boundary.md
 !acceptance/m8_closeout.md
+!acceptance/m9_web_ui_productization_mvp.md
 acceptance/screenshots/
 acceptance/tmp/
 data/
