@@ -44,6 +44,8 @@ DEFAULT_EMPTY_CONFIG: dict = {
     "providers": [],
 }
 
+LEGACY_PROVIDER_ASR_FIELDS = ("whisper_model", "whisper_device")
+
 # ── 迁移：旧字段 → 新字段 ──────────────────────────────────────────────
 
 def _migrate_provider(p: dict) -> dict:
@@ -53,7 +55,7 @@ def _migrate_provider(p: dict) -> dict:
     if not p.get("translation_model") and p.get("chat_model"):
         p["translation_model"] = p["chat_model"]
     # 移除 ASR 字段（已迁移到 Language Profile）
-    for key in ("whisper_model", "whisper_device", "chat_model"):
+    for key in LEGACY_PROVIDER_ASR_FIELDS + ("chat_model",):
         p.pop(key, None)
     # 确保新字段存在
     p.setdefault("template_id", "")
