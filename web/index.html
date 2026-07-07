@@ -1316,6 +1316,43 @@
       padding: 12px 16px; background: var(--ok-bg); border: 1px solid #a3e4bc; border-radius: var(--radius); margin-bottom: 16px;
     }
     .provider-active-bar strong { color: var(--ok); }
+    .settings-intro {
+      margin: 0 0 14px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--primary);
+      border-radius: 6px;
+      background: #fbfcfe;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .settings-intro strong { color: var(--text); }
+    .settings-notice {
+      display: none;
+      margin: 10px 0 0;
+      padding: 9px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+    }
+    .settings-notice.ok { display: block; color: var(--ok); background: var(--ok-bg); border-color: #a3e4bc; }
+    .settings-notice.err { display: block; color: var(--danger); background: var(--danger-bg); border-color: #f2b8b8; }
+    .settings-jump {
+      margin-top: 8px;
+      width: fit-content;
+      min-height: 30px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--primary);
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .settings-jump:hover { background: #eef2f6; }
 
     @media (max-width: 900px) {
       main { padding: 14px; }
@@ -1428,11 +1465,13 @@
         <label for="pipelineProviderSelect">翻译接口</label>
         <select id="pipelineProviderSelect" onchange="updatePipelineProvider()"></select>
         <span class="help-text">默认使用当前激活接口。这里选择只影响本次流水线。</span>
+        <button type="button" class="settings-jump" onclick="switchTab('providers')">管理翻译接口</button>
       </div>
       <div class="inline-field option-card">
         <label for="pipelineLangProfileSelect">语言风格</label>
         <select id="pipelineLangProfileSelect" onchange="updatePipelineLangProfile()"></select>
         <span class="help-text">语言配置会带入识别、翻译风格和质检阈值；不懂就用 active profile。</span>
+        <button type="button" class="settings-jump" onclick="switchTab('langprofiles')">管理语言风格</button>
       </div>
       </div>
 
@@ -1777,6 +1816,7 @@
                   <option value="">-- 手动设置 --</option>
                 </select>
                 <span class="help-text">不懂就用默认 active profile。它会自动带入源语言、目标语言、翻译风格和质检阈值。</span>
+                <button type="button" class="settings-jump" onclick="switchTab('langprofiles')">管理语言风格</button>
               </div>
               <div class="option-card">
                 <label class="check">
@@ -1795,6 +1835,7 @@
                     <option value="">-- 选择已保存的接口 --</option>
                   </select>
                   <span class="help-text">这里选已保存的 Provider，API Key 不会展示到页面和日志。</span>
+                  <button type="button" class="settings-jump" onclick="switchTab('providers')">管理翻译接口</button>
                 </div>
                 <div class="option-card">
                   <label for="llm_model_display">大模型名称</label>
@@ -1929,10 +1970,15 @@
 
   <!-- ═══════════════ Provider Tab ═══════════════ -->
   <div id="tab-providers" class="tab-content">
+    <div class="settings-intro">
+      <strong>翻译接口只管理 LLM/API。</strong>
+      这里配置 API 地址、模型、密钥状态和轻量连接测试；ASR 模型、设备和识别语言属于“语言风格”。
+    </div>
     <div class="provider-active-bar" id="providerActiveBar">
       <span>当前默认：</span>
       <strong id="activeProviderName">(未设置)</strong>
     </div>
+    <div id="providerSettingsNotice" class="settings-notice"></div>
 
     <div class="actions">
       <button onclick="showProviderModal()" class="primary">+ 新增接口</button>
@@ -1949,10 +1995,15 @@
 
   <!-- ═══════════════ Language Profile Tab ═══════════════ -->
   <div id="tab-langprofiles" class="tab-content">
+    <div class="settings-intro">
+      <strong>语言风格管理 ASR 默认值、翻译偏好和术语表。</strong>
+      Provider 不参与识别参数；任务页显式填写的 ASR 参数仍然优先于这里的默认值。
+    </div>
     <div class="provider-active-bar" id="lpActiveBar">
       <span>当前默认：</span>
       <strong id="activeLPName">auto-detect</strong>
     </div>
+    <div id="lpSettingsNotice" class="settings-notice"></div>
 
     <div class="actions">
       <button onclick="showLPModal()" class="primary">+ 新增配置</button>
@@ -3427,6 +3478,20 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
 }
 
+function showSettingsNotice(id, message, ok) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = message;
+  el.className = 'settings-notice ' + (ok ? 'ok' : 'err');
+}
+
+function clearSettingsNotice(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = '';
+  el.className = 'settings-notice';
+}
+
 // ═══════════════════ Transcribe Tab (preserved from original) ═══════════
 
 (function() {
@@ -3685,7 +3750,7 @@ function renderLPList() {
     el.innerHTML = '<div class="placeholder">暂无自定义配置。内置 auto-detect / fr-film / generic-european-film 始终可用。</div>';
     return;
   }
-  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>ID</th><th>源语言</th><th>目标</th><th>ASR</th><th>设备</th><th>类型</th><th class="col-act">操作</th></tr></thead><tbody>';
+  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>ID</th><th>语言</th><th>ASR 默认</th><th>翻译偏好</th><th>类型</th><th class="col-act">操作</th></tr></thead><tbody>';
   for (var i = 0; i < langProfileCache.length; i++) {
     var p = langProfileCache[i];
     var badge = p.builtin ? '<span class="badge badge-pending">内置</span>' : '<span class="badge badge-ok">自定义</span>';
@@ -3693,10 +3758,9 @@ function renderLPList() {
     html += '<tr>';
     html += '<td><strong>' + escapeHtml(p.name) + '</strong></td>';
     html += '<td>' + escapeHtml(p.id) + '</td>';
-    html += '<td>' + escapeHtml(p.source_language || 'auto') + '</td>';
-    html += '<td>' + escapeHtml(p.target_language || 'zh-CN') + '</td>';
-    html += '<td>' + escapeHtml(asr.whisper_model || '?') + '</td>';
-    html += '<td>' + escapeHtml(asr.whisper_device || 'cpu') + '</td>';
+    html += '<td>' + escapeHtml(p.source_language || 'auto') + ' → ' + escapeHtml(p.target_language || 'zh-CN') + '</td>';
+    html += '<td>' + escapeHtml(asr.whisper_model || '?') + ' / ' + escapeHtml(asr.whisper_device || 'cpu') + ' / ' + escapeHtml(asr.compute_type || '-') + '</td>';
+    html += '<td>' + (p.translation_style ? 'style ' : '') + ((p.glossary || []).length ? ('glossary ' + (p.glossary || []).length) : 'no glossary') + '</td>';
     html += '<td>' + badge + '</td>';
     html += '<td class="col-act">';
     html += '<button class="btn-primary" onclick="setActiveLP(\'' + p.id + '\')">默认</button>';
@@ -3861,7 +3925,11 @@ async function saveLP() {
       loadLangProfiles();
       loadPipelineSelects();
       loadLangProfileSelect();
+      loadTopStatus();
+      loadEffectiveConfigPreview();
+      showSettingsNotice('lpSettingsNotice', '语言风格已保存。', true);
     } else {
+      showSettingsNotice('lpSettingsNotice', '保存失败: ' + (result.error || '未知错误'), false);
       alert('保存失败: ' + (result.error || '未知错误'));
     }
   } catch (err) {
@@ -3874,8 +3942,8 @@ async function deleteLP(id) {
   try {
     var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
-    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); }
-    else { alert('删除失败: ' + (result.error || '未知错误')); }
+    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadTopStatus(); showSettingsNotice('lpSettingsNotice', '语言风格已删除；内置配置只会移除本地覆盖。', true); }
+    else { showSettingsNotice('lpSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); alert('删除失败: ' + (result.error || '未知错误')); }
   } catch (err) { alert('请求失败: ' + err.message); }
 }
 
@@ -3883,8 +3951,8 @@ async function setActiveLP(id) {
   try {
     var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
     var result = await resp.json();
-    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); }
-    else { alert('设置失败: ' + (result.error || '未知错误')); }
+    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadTopStatus(); showSettingsNotice('lpSettingsNotice', '默认语言风格已更新。', true); }
+    else { showSettingsNotice('lpSettingsNotice', '设置失败: ' + (result.error || '未知错误'), false); alert('设置失败: ' + (result.error || '未知错误')); }
   } catch (err) { alert('请求失败: ' + err.message); }
 }
 
@@ -4083,7 +4151,7 @@ function renderProviderList() {
     el.innerHTML = '<div class="placeholder">暂无接口配置。点击"+ 新增接口"添加 DeepSeek。</div>';
     return;
   }
-  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>协议</th><th>模型</th><th>Key</th><th>启用</th><th class="col-act">操作</th></tr></thead><tbody>';
+  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>协议</th><th>API 地址</th><th>模型</th><th>Key</th><th>启用</th><th>备注</th><th class="col-act">操作</th></tr></thead><tbody>';
   for (var i = 0; i < providerCache.length; i++) {
     var p = providerCache[i];
     var keyStatus = p.api_key_masked || '<span style="color:var(--danger)">未设置</span>';
@@ -4101,9 +4169,11 @@ function renderProviderList() {
     html += '<tr>';
     html += '<td><strong>' + escapeHtml(p.name) + '</strong></td>';
     html += '<td>' + escapeHtml(p.protocol) + '</td>';
+    html += '<td>' + escapeHtml(p.api_base || '-') + '</td>';
     html += '<td>' + escapeHtml(p.translation_model || '-') + modelWarn + '</td>';
     html += '<td>' + keyStatus + '</td>';
     html += '<td>' + enabledBadge + '</td>';
+    html += '<td>' + escapeHtml(p.notes || '-') + '</td>';
     html += '<td class="col-act">';
     html += '<button class="btn-primary" onclick="setActiveProvider(\'' + p.id + '\')">默认</button>';
     html += '<button onclick="editProvider(\'' + p.id + '\')">编辑</button>';
@@ -4206,13 +4276,7 @@ function onTemplateChange() {
     if (!nf.value && tpl.name) nf.placeholder = tpl.name;
   } else {
     ms.style.display = 'none'; mi.style.display = 'block';
-    /*
-    mi.placeholder = '输入模型名';
-  }
-}
-
-    */
-    mi.placeholder = 'Enter model name';
+    mi.placeholder = '输入模型名称';
   }
 }
 
@@ -4263,8 +4327,8 @@ async function saveProvider() {
     var url = isEdit ? '/api/providers/' + encodeURIComponent(data.id || editId) : '/api/providers';
     var resp = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     var result = await resp.json();
-    if (resp.ok) { closeProviderModal(); loadProviders(); }
-    else { alert('保存失败: ' + (result.error || '未知错误')); }
+    if (resp.ok) { closeProviderModal(); loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadTopStatus(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '翻译接口已保存，API Key 仍只以脱敏状态显示。', true); }
+    else { showSettingsNotice('providerSettingsNotice', '保存失败: ' + (result.error || '未知错误'), false); alert('保存失败: ' + (result.error || '未知错误')); }
   } catch (err) { alert('请求失败: ' + err.message); }
 }
 
@@ -4273,7 +4337,7 @@ async function deleteProvider(id) {
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
-    if (resp.ok) { loadProviders(); } else { alert('删除失败: ' + (result.error || '未知错误')); }
+    if (resp.ok) { loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadTopStatus(); showSettingsNotice('providerSettingsNotice', '翻译接口已删除。', true); } else { showSettingsNotice('providerSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); alert('删除失败: ' + (result.error || '未知错误')); }
   } catch (err) { alert('请求失败: ' + err.message); }
 }
 
@@ -4281,32 +4345,10 @@ async function setActiveProvider(id) {
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
     var result = await resp.json();
-    if (resp.ok) { loadProviders(); loadProviderSelect(); }
-    else { alert('设置失败: ' + (result.error || '未知错误')); }
+    if (resp.ok) { loadProviders(); loadProviderSelect(); loadPipelineSelects(); loadTopStatus(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '默认翻译接口已更新。', true); }
+    else { showSettingsNotice('providerSettingsNotice', '设置失败: ' + (result.error || '未知错误'), false); alert('设置失败: ' + (result.error || '未知错误')); }
   } catch (err) { alert('请求失败: ' + err.message); }
 }
-
-/*
-async function testProvider(id) {
-  var btn = event.target; var origText = btn.textContent; btn.textContent = '...'; btn.disabled = true;
-  try {
-    var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/test', { method: 'POST' });
-    var result = await resp.json();
-    if (result.ok) { alert('连接成功!\n延迟: ' + result.latency_ms + 'ms\n模型: ' + result.model); }
-    else { alert('连接失败: ' + (result.error || '未知错误')); }
-  } catch (err) { alert('测试失败: ' + err.message); }
-  finally { btn.textContent = origText; btn.disabled = false; }
-}
-
-async function testActiveProvider() {
-  try {
-    var resp = await fetch('/api/providers/active'); var data = await resp.json();
-    if (data.active && data.active.id) { testProvider(data.active.id); }
-    else { alert('未设置默认接口。'); }
-  } catch (err) { alert('获取默认接口失败: ' + err.message); }
-}
-
-*/
 
 async function testProvider(id) {
   var btn = event && event.target ? event.target : null;
@@ -4315,9 +4357,15 @@ async function testProvider(id) {
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/test', { method: 'POST' });
     var result = await resp.json();
-    if (result.ok) alert('Connection OK\nLatency: ' + result.latency_ms + 'ms\nModel: ' + result.model);
-    else alert('Connection failed: ' + (result.error || 'unknown error'));
+    if (result.ok) {
+      showSettingsNotice('providerSettingsNotice', '连接成功：' + result.latency_ms + 'ms，模型 ' + result.model, true);
+      alert('Connection OK\nLatency: ' + result.latency_ms + 'ms\nModel: ' + result.model);
+    } else {
+      showSettingsNotice('providerSettingsNotice', '连接失败: ' + (result.error || 'unknown error'), false);
+      alert('Connection failed: ' + (result.error || 'unknown error'));
+    }
   } catch (err) {
+    showSettingsNotice('providerSettingsNotice', '测试失败: ' + err.message, false);
     alert('Test failed: ' + err.message);
   } finally {
     if (btn) { btn.textContent = origText; btn.disabled = false; }

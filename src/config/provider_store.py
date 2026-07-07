@@ -166,6 +166,13 @@ def _mask_provider(provider: dict) -> dict:
     return p
 
 
+def sanitize_provider(provider: dict | None) -> dict | None:
+    """Return a UI-safe provider copy without the raw API key."""
+    if provider is None:
+        return None
+    return _mask_provider(provider)
+
+
 # ── 查询接口 ─────────────────────────────────────────────────────────────
 
 def load_providers() -> dict:
@@ -437,9 +444,20 @@ def test_provider_connection(provider_id: str) -> dict:
     except urllib.error.HTTPError as e:
         latency = round((time.perf_counter() - start) * 1000)
         err = e.read().decode("utf-8", errors="replace")[:300]
-        return {"ok": False, "latency_ms": latency, "model": model, "error": f"HTTP {e.code}: {err}"}
+        return {"ok": False, "latency_ms": latency, "model": model, "error": _scrub_provider_test_error(f"HTTP {e.code}: {err}", api_key)}
     except urllib.error.URLError as e:
         latency = round((time.perf_counter() - start) * 1000)
-        return {"ok": False, "latency_ms": latency, "model": model, "error": f"连接失败: {e.reason}"}
+        return {"ok": False, "latency_ms": latency, "model": model, "error": _scrub_provider_test_error(f"连接失败: {e.reason}", api_key)}
     except Exception as e:
-        return {"ok": False, "latency_ms": 0, "model": model, "error": str(e)[:300]}
+        return {"ok": False, "latency_ms": 0, "model": model, "error": _scrub_provider_test_error(str(e), api_key)}
+
+
+def _scrub_provider_test_error(message: str, api_key: str) -> str:
+    """Keep provider test failures user-readable without echoing credentials."""
+    clean = str(message or "")
+    if api_key:
+        clean = clean.replace(api_key, "[redacted-api-key]")
+        masked = mask_api_key(api_key)
+        if masked:
+            clean = clean.replace(masked, "[redacted-api-key]")
+    return clean[:300]

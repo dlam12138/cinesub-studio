@@ -6,7 +6,7 @@ from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from job_api import get_job, list_jobs, retry_job, sanitize_filename, start_job
 from pipeline_api import (
@@ -56,6 +56,26 @@ def redact_secret(value: str) -> str:
     if len(value) <= 8:
         return "***"
     return value[:3] + "***" + value[-4:]
+
+
+def _sanitize_provider_test_result(result: dict, provider_id: str) -> dict:
+    payload = dict(result or {})
+    try:
+        from provider_store import get_provider, mask_api_key
+
+        provider = get_provider(provider_id)
+        api_key = str((provider or {}).get("api_key") or "")
+        if api_key:
+            error = str(payload.get("error") or "")
+            error = error.replace(api_key, "[redacted-api-key]")
+            masked = mask_api_key(api_key)
+            if masked:
+                error = error.replace(masked, "[redacted-api-key]")
+            payload["error"] = error[:300]
+    except Exception:
+        if "error" in payload:
+            payload["error"] = str(payload.get("error") or "")[:300]
+    return payload
 
 
 def _is_secret_like_key(key: object) -> bool:
@@ -234,11 +254,20 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/providers/active":
-            from provider_store import get_active_provider, mask_api_key
-            provider = get_active_provider()
-            if provider:
-                provider["api_key_masked"] = mask_api_key(provider.pop("api_key", ""))
+            from provider_store import get_active_provider, sanitize_provider
+            provider = sanitize_provider(get_active_provider())
             self.send_json({"active": provider})
+            return
+
+        path_parts = parsed.path.split("/")
+        if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
+            from provider_store import get_provider, sanitize_provider
+            provider_id = unquote(path_parts[3])
+            provider = sanitize_provider(get_provider(provider_id))
+            if provider is None:
+                self.send_error_json(404, "Provider not found")
+                return
+            self.send_json({"provider": provider})
             return
 
         # Language Profile API
@@ -250,6 +279,17 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/language-profiles/active":
             from language_profile_store import get_active_language_profile
             self.send_json({"active": get_active_language_profile()})
+            return
+
+        path_parts = parsed.path.split("/")
+        if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
+            from language_profile_store import get_language_profile
+            profile_id = unquote(path_parts[3])
+            profile = get_language_profile(profile_id)
+            if profile is None:
+                self.send_error_json(404, "Language Profile not found")
+                return
+            self.send_json({"profile": profile})
             return
 
         # Provider Templates
@@ -273,7 +313,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Language Profile update
         if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
-            lpid = path_parts[3]
+            lpid = unquote(path_parts[3])
             body = self._read_json_body()
             if not body:
                 self.send_error_json(400, "Request body is empty.")
@@ -293,7 +333,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Provider update
         if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
-            provider_id = path_parts[3]
+            provider_id = unquote(path_parts[3])
             body = self._read_json_body()
             if not body:
                 self.send_error_json(400, "Request body is empty.")
@@ -323,7 +363,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Language Profile delete
         if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
-            lpid = path_parts[3]
+            lpid = unquote(path_parts[3])
             from language_profile_store import delete_language_profile
             try:
                 delete_language_profile(lpid)
@@ -334,7 +374,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Provider delete
         if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
-            provider_id = path_parts[3]
+            provider_id = unquote(path_parts[3])
             from provider_store import delete_provider
             try:
                 delete_provider(provider_id)
@@ -455,7 +495,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Language Profile activate
         if parsed.path.startswith("/api/language-profiles/") and parsed.path.endswith("/activate"):
-            lpid = parsed.path.split("/")[3]
+            lpid = unquote(parsed.path.split("/")[3])
             from language_profile_store import set_active_language_profile
             try:
                 set_active_language_profile(lpid)
@@ -481,7 +521,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Provider activate
         if parsed.path.startswith("/api/providers/") and parsed.path.endswith("/activate"):
-            provider_id = parsed.path.split("/")[3]
+            provider_id = unquote(parsed.path.split("/")[3])
             from provider_store import set_active_provider
             try:
                 set_active_provider(provider_id)
@@ -492,10 +532,10 @@ class Handler(BaseHTTPRequestHandler):
 
         # Provider test
         if parsed.path.startswith("/api/providers/") and parsed.path.endswith("/test"):
-            provider_id = parsed.path.split("/")[3]
+            provider_id = unquote(parsed.path.split("/")[3])
             from provider_store import test_provider_connection
             result = test_provider_connection(provider_id)
-            self.send_json(result)
+            self.send_json(_sanitize_provider_test_result(result, provider_id))
             return
 
         if parsed.path == "/api/storage/cleanup":
