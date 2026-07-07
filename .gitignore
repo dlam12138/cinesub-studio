@@ -87,6 +87,7 @@ acceptance/*
 !acceptance/m8_closeout.md
 !acceptance/m9_web_ui_productization_mvp.md
 !acceptance/m10_queue_history_progress_recovery_ui.md
+!acceptance/m11_runtime_model_ffmpeg_management_ui.md
 acceptance/screenshots/
 acceptance/tmp/
 data/

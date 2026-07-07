@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -183,6 +184,11 @@ def runtime_diagnostics() -> dict[str, Any]:
 
     ffmpeg_info = find_ffmpeg_info(PROJECT_ROOT)
     ffmpeg_path = ffmpeg_info["path"]
+    ffmpeg_version_info = _ffmpeg_version_info(ffmpeg_path) if ffmpeg_path else {
+        "ok": False,
+        "version": "",
+        "error": "ffmpeg not found",
+    }
     cublas_ok = (CUDA_DIR / "cublas64_12.dll").exists()
     cudnn_files = sorted(CUDA_DIR.glob("cudnn*_9.dll")) if CUDA_DIR.exists() else []
     cudnn_ok = bool(cudnn_files)
@@ -216,6 +222,7 @@ def runtime_diagnostics() -> dict[str, Any]:
         python_source=python_source,
         portable_python_exists=portable_python.exists(),
         ffmpeg_info=ffmpeg_info,
+        ffmpeg_version_info=ffmpeg_version_info,
         known_models=known_models,
         cuda_ready=cuda_ready,
         cuda_messages=cuda_messages,
@@ -230,6 +237,8 @@ def runtime_diagnostics() -> dict[str, Any]:
         "app_root": str(APP_ROOT),
         "src_root": str(SRC_ROOT),
         "runtime_root": str(RUNTIME_ROOT),
+        "cwd": str(Path.cwd()),
+        "platform": platform.platform(),
         "python": str(executable),
         "python_version": sys.version.split()[0],
         "python_supported": python_supported,
@@ -250,6 +259,9 @@ def runtime_diagnostics() -> dict[str, Any]:
         "ffmpeg_ok": bool(ffmpeg_path),
         "ffmpeg_source": ffmpeg_info["source"],
         "ffmpeg_source_label": ffmpeg_info["source_label"],
+        "ffmpeg_env_names": ["CINESUB_FFMPEG", "FFMPEG_PATH"],
+        "ffmpeg_version": ffmpeg_version_info.get("version", ""),
+        "ffmpeg_version_error": ffmpeg_version_info.get("error", ""),
         "model_dir": str(MODEL_DIR),
         "known_models": known_models,
         "hf_home": str(CACHE_DIR / "huggingface"),
@@ -289,6 +301,7 @@ def _runtime_diagnostic_items(
     python_source: str,
     portable_python_exists: bool,
     ffmpeg_info: dict[str, Any],
+    ffmpeg_version_info: dict[str, Any],
     known_models: list[str],
     cuda_ready: bool,
     cuda_messages: list[str],
@@ -321,6 +334,15 @@ def _runtime_diagnostic_items(
             python_explanation,
             python_suggestion,
             python_blocking,
+            details={
+                "version": python_version,
+                "path": python_path,
+                "source": python_source,
+                "platform": platform.platform(),
+                "cwd": str(Path.cwd()),
+                "app_root": str(APP_ROOT),
+                "runtime_root": str(RUNTIME_ROOT),
+            },
         ),
         _diagnostic_item(
             "venv",
@@ -347,6 +369,23 @@ def _runtime_diagnostic_items(
             ),
             "无需操作。" if ffmpeg_info["ok"] else "请导入离线包或下载 FFmpeg 到 tools/ffmpeg/bin/。",
             not ffmpeg_info["ok"],
+            details={
+                "path": ffmpeg_info.get("path", ""),
+                "source": ffmpeg_info.get("source", ""),
+                "source_label": ffmpeg_info.get("source_label", ""),
+                "env_names": ["CINESUB_FFMPEG", "FFMPEG_PATH"],
+                "version": ffmpeg_version_info.get("version", ""),
+                "version_error": ffmpeg_version_info.get("error", ""),
+            },
+        ),
+        _directory_item(
+            "runtime_root",
+            "运行根目录",
+            RUNTIME_ROOT,
+            missing_status="ok",
+            missing_explanation="runtime/ 尚不存在；当前源码布局不依赖该目录。",
+            missing_suggestion="无需操作。",
+            blocking=False,
         ),
         _directory_item(
             "output_dir",
@@ -375,6 +414,33 @@ def _runtime_diagnostic_items(
             missing_suggestion="无需操作；如果写入失败，请检查项目目录权限。",
             blocking=False,
         ),
+        _directory_item(
+            "models_dir",
+            "模型目录",
+            MODEL_DIR,
+            missing_status="not_configured",
+            missing_explanation="models/ 尚不存在；离线模型导入时会需要该目录。",
+            missing_suggestion="如需离线使用，请将模型放入 models/；本页面不会自动下载模型。",
+            blocking=False,
+        ),
+        _directory_item(
+            "tmp_dir",
+            "临时目录",
+            TMP_DIR,
+            missing_status="ok",
+            missing_explanation=".tmp/ 尚不存在；仅在离线包上传等流程需要时由运行时创建。",
+            missing_suggestion="无需操作；diagnostics 不会为了检查而创建该目录。",
+            blocking=False,
+        ),
+        _directory_item(
+            "hf_cache_dir",
+            "Hugging Face 缓存",
+            CACHE_DIR / "huggingface",
+            missing_status="not_configured",
+            missing_explanation=".cache/huggingface/ 尚不存在；首次模型使用或离线导入后才会出现。",
+            missing_suggestion="如需离线使用，请将缓存随离线包导入。",
+            blocking=False,
+        ),
         _model_cache_item(known_models),
         _diagnostic_item(
             "cuda",
@@ -392,8 +458,31 @@ def _runtime_diagnostic_items(
             ),
             "无需操作。" if cuda_ready else _cuda_suggestion(cuda_messages),
             False,
+            details={
+                "cuda_ready": cuda_ready,
+                "cuda_runtime_dir": str(CUDA_DIR),
+                "messages": cuda_messages,
+                "recommended_device": recommended_device,
+                "recommended_compute_type": recommended_compute_type,
+            },
         ),
     ]
+    if ffmpeg_info["ok"] and not ffmpeg_version_info.get("ok", False):
+        items.append(
+            _diagnostic_item(
+                "ffmpeg_version",
+                "FFmpeg 版本探测",
+                "warning",
+                ffmpeg_version_info.get("error", "") or "ffmpeg -version failed",
+                "已检测到 FFmpeg 路径，但版本探测失败；转写仍会使用该路径，实际可用性以任务运行结果为准。",
+                "请在终端运行该 FFmpeg 路径的 -version 命令，或替换 tools/ffmpeg/bin/ 中的二进制文件。",
+                False,
+                details={
+                    "path": ffmpeg_info.get("path", ""),
+                    "version_error": ffmpeg_version_info.get("error", ""),
+                },
+            )
+        )
     if portable_python_exists:
         items.insert(
             2,
@@ -418,8 +507,10 @@ def _diagnostic_item(
     explanation: str,
     suggestion: str,
     blocking: bool,
+    *,
+    details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    item = {
         "id": item_id,
         "label": label,
         "status": status,
@@ -428,12 +519,36 @@ def _diagnostic_item(
         "suggestion": suggestion,
         "blocking": blocking,
     }
+    if details is not None:
+        item["details"] = details
+    return item
 
 
 def _ffmpeg_value(ffmpeg_info: dict[str, Any]) -> str:
     if not ffmpeg_info["ok"]:
         return ffmpeg_info["source_label"]
     return f"{ffmpeg_info['source_label']} | {ffmpeg_info['path']}"
+
+
+def _ffmpeg_version_info(ffmpeg_path: str) -> dict[str, Any]:
+    if not ffmpeg_path:
+        return {"ok": False, "version": "", "error": "ffmpeg not found"}
+    try:
+        result = subprocess.run(
+            [ffmpeg_path, "-version"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception as exc:
+        return {"ok": False, "version": "", "error": str(exc)[:300]}
+    first_line = (result.stdout or result.stderr or "").strip().splitlines()
+    if result.returncode == 0 and first_line:
+        return {"ok": True, "version": first_line[0][:300], "error": ""}
+    message = (result.stderr or result.stdout or f"ffmpeg -version exited {result.returncode}").strip()
+    return {"ok": False, "version": "", "error": message[:300]}
 
 
 def _directory_item(
@@ -446,45 +561,55 @@ def _directory_item(
     missing_suggestion: str,
     blocking: bool,
 ) -> dict[str, Any]:
+    resolved = str(path)
     if path.exists():
-        if path.is_dir() and _can_write_in(path):
+        is_dir = path.is_dir()
+        writable = bool(is_dir and _can_write_in(path))
+        details = {"path": resolved, "exists": True, "writable": writable, "is_dir": is_dir}
+        if is_dir and writable:
             return _diagnostic_item(
                 item_id,
                 label,
                 "ok",
-                str(path),
+                resolved,
                 f"{label}存在且可写。",
                 "无需操作。",
                 False,
+                details=details,
             )
         return _diagnostic_item(
             item_id,
             label,
             "error",
-            str(path),
+            resolved,
             f"{label}不可写或不是目录。",
             "请检查目录权限，或确认该路径没有被同名文件占用。",
             blocking,
+            details=details,
         )
 
-    if _can_create_missing_path(path):
+    creatable = _can_create_missing_path(path)
+    details = {"path": resolved, "exists": False, "writable": creatable, "is_dir": False}
+    if creatable:
         return _diagnostic_item(
             item_id,
             label,
             missing_status,
-            str(path),
+            resolved,
             missing_explanation,
             missing_suggestion,
             False,
+            details=details,
         )
     return _diagnostic_item(
         item_id,
         label,
         "error",
-        str(path),
+        resolved,
         f"{label}不存在，且父目录不可写或不存在。",
         "请检查项目目录权限，确保运行时可以创建需要的目录。",
         blocking,
+        details=details,
     )
 
 
@@ -492,6 +617,15 @@ def _model_cache_item(known_models: list[str]) -> dict[str, Any]:
     paths = f"{MODEL_DIR} | {CACHE_DIR / 'huggingface'}"
     model_probe = _directory_probe(MODEL_DIR)
     hf_probe = _directory_probe(CACHE_DIR / "huggingface")
+    details = {
+        "model_dir": str(MODEL_DIR),
+        "hf_home": str(CACHE_DIR / "huggingface"),
+        "known_models": known_models,
+        "known_model_count": len(known_models),
+        "model_dir_exists": MODEL_DIR.exists(),
+        "hf_home_exists": (CACHE_DIR / "huggingface").exists(),
+        "downloads_triggered": False,
+    }
     if model_probe == "error" or hf_probe == "error":
         return _diagnostic_item(
             "model_cache",
@@ -501,6 +635,7 @@ def _model_cache_item(known_models: list[str]) -> dict[str, Any]:
             "模型或 Hugging Face 缓存目录不可写，首次下载或离线模型导入可能失败。",
             "请检查 models/ 和 .cache/huggingface/ 的权限。",
             False,
+            details=details,
         )
     if known_models:
         return _diagnostic_item(
@@ -511,6 +646,7 @@ def _model_cache_item(known_models: list[str]) -> dict[str, Any]:
             "已在项目内模型目录发现可用模型缓存。",
             "无需操作。",
             False,
+            details=details,
         )
     return _diagnostic_item(
         "model_cache",
@@ -520,6 +656,7 @@ def _model_cache_item(known_models: list[str]) -> dict[str, Any]:
         "尚未发现已缓存的 Whisper 模型；首次识别可能需要下载或导入离线模型。",
         "如需离线使用，请把模型随离线包导入到 models/ 或 .cache/huggingface/。",
         False,
+        details=details,
     )
 
 

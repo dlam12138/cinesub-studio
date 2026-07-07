@@ -864,6 +864,72 @@
       gap: 8px;
     }
 
+    .runtime-diagnostics-layout {
+      display: grid;
+      grid-template-columns: minmax(260px, .95fr) minmax(320px, 1.7fr);
+      gap: 12px;
+      align-items: start;
+    }
+
+    .runtime-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .runtime-sections {
+      display: grid;
+      gap: 10px;
+    }
+
+    .runtime-section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .runtime-section h3 {
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .runtime-summary-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .runtime-summary-item {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-top: 1px solid #eef2f6;
+    }
+
+    .runtime-summary-item:first-child { border-top: 0; }
+
+    .runtime-summary-item strong {
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .runtime-summary-item span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .runtime-path-list {
+      display: grid;
+      gap: 8px;
+    }
+
     .diagnostic-row {
       min-width: 0;
       padding: 10px;
@@ -1260,6 +1326,7 @@
       .toolbar { grid-template-columns: 1fr; }
       .toolbar .wide { grid-column: auto; }
       .storage-grid { grid-template-columns: 1fr; }
+      .runtime-diagnostics-layout { grid-template-columns: 1fr; }
       .asr-evidence-layout,
       .asr-evidence-summary { grid-template-columns: 1fr; }
       .actions { flex-direction: column; }
@@ -1285,6 +1352,7 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">📁 批量处理</button>
     <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">🎬 单文件字幕</button>
+    <button class="tab-btn" data-tab="runtime" onclick="switchTab('runtime')">运行环境</button>
     <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">🔑 翻译接口</button>
     <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')">🌐 语言风格</button>
   </nav>
@@ -1446,8 +1514,8 @@
       </div>
 
       <div class="card full-width">
-        <h2>运行环境诊断</h2>
-        <div id="diagnostics-result" class="placeholder">正在读取 Python、FFmpeg、Provider 和模型缓存状态...</div>
+        <h2>运行环境摘要</h2>
+        <div id="runtime-summary-result" class="placeholder">正在读取 Python、FFmpeg、模型缓存和目录状态...</div>
       </div>
 
       <div class="card full-width">
@@ -1473,6 +1541,45 @@
         </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Runtime Diagnostics Tab ═══════════════ -->
+  <div id="tab-runtime" class="tab-content">
+    <div class="runtime-toolbar">
+      <div>
+        <h2>运行环境</h2>
+        <p class="help-text">只读检查本地 Python、FFmpeg、模型缓存、运行目录和设备状态；不会启动流水线，也不会下载模型。</p>
+      </div>
+      <button type="button" onclick="loadRuntimeDiagnostics()">刷新诊断</button>
+    </div>
+    <div class="runtime-diagnostics-layout">
+      <section class="card">
+        <h2>环境检查</h2>
+        <div id="diagnostics-result" class="placeholder">正在读取运行环境诊断...</div>
+      </section>
+      <section class="runtime-sections">
+        <div class="runtime-section">
+          <h3>FFmpeg 状态</h3>
+          <div id="runtime-ffmpeg-section" class="placeholder">等待诊断结果...</div>
+        </div>
+        <div class="runtime-section">
+          <h3>模型状态</h3>
+          <div id="runtime-model-section" class="placeholder">等待诊断结果...</div>
+        </div>
+        <div class="runtime-section">
+          <h3>运行目录</h3>
+          <div id="runtime-dir-section" class="placeholder">等待诊断结果...</div>
+        </div>
+        <div class="runtime-section">
+          <h3>设备信息</h3>
+          <div id="runtime-device-section" class="placeholder">等待诊断结果...</div>
+        </div>
+        <div class="runtime-section">
+          <h3>Python / 应用运行时</h3>
+          <div id="runtime-python-section" class="placeholder">等待诊断结果...</div>
+        </div>
+      </section>
     </div>
   </div>
 
@@ -2742,11 +2849,145 @@ function renderDiagnosticRow(label, status, value, detail) {
   return html;
 }
 
-function renderRuntimeDiagnostics(data) {
-  var el = document.getElementById('diagnostics-result');
+function diagnosticDetails(item) {
+  return (item && item.details && typeof item.details === 'object') ? item.details : {};
+}
+
+function renderRuntimeSummary(data, items) {
+  var el = document.getElementById('runtime-summary-result');
   if (!el) return;
   if (!data || data.ok === false) {
-    el.innerHTML = '<div class="placeholder">运行环境诊断读取失败。</div>';
+    el.innerHTML = '<div class="placeholder">运行环境摘要读取失败。打开“运行环境”查看详细错误。</div>';
+    return;
+  }
+  var summary = data.diagnostic_summary || {};
+  var ffmpegItem = findDiagnosticItem(items, 'ffmpeg');
+  var modelItem = findDiagnosticItem(items, 'model_cache');
+  var outputItem = findDiagnosticItem(items, 'output_dir');
+  var cudaItem = findDiagnosticItem(items, 'cuda');
+  var html = '<div class="diagnostics-panel">';
+  html += '<div class="diagnostics-summary ' + escapeHtml(summary.status || 'ok') + '">';
+  html += '<strong><span class="badge ' + diagnosticBadgeClass(summary.status) + '">' + escapeHtml(summary.status || 'ok') + '</span> ' + escapeHtml(summary.title || '运行环境诊断') + '</strong>';
+  html += '<span>' + escapeHtml(summary.message || '当前 diagnostics API 已响应。') + '</span>';
+  html += '</div>';
+  html += '<div class="diagnostics-grid">';
+  html += renderDiagnosticRow('FFmpeg', ffmpegItem ? ffmpegItem.status : (data.ffmpeg_ok ? 'ok' : 'error'), data.ffmpeg_source_label || data.ffmpeg_source || '-', data.ffmpeg_path || '');
+  html += renderDiagnosticRow('模型缓存', modelItem ? modelItem.status : 'unknown', data.model_dir || '-', modelItem ? modelItem.suggestion : '');
+  html += renderDiagnosticRow('运行目录', outputItem ? outputItem.status : 'unknown', data.output_dir || '-', outputItem ? outputItem.suggestion : '');
+  html += renderDiagnosticRow('设备', cudaItem ? cudaItem.status : 'warning', (data.recommended_device || '-') + ' / ' + (data.recommended_compute_type || '-'), cudaItem ? cudaItem.suggestion : '');
+  html += '</div>';
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function renderRuntimeSection(containerId, rows) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  var html = '<div class="runtime-summary-list">';
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    html += '<div class="runtime-summary-item">';
+    html += '<div><strong>' + escapeHtml(row.label || '-') + '</strong><br><span>' + escapeHtml(row.value || '-') + '</span>';
+    if (row.detail) html += '<br><span>' + escapeHtml(row.detail) + '</span>';
+    html += '</div><span class="badge ' + diagnosticBadgeClass(row.status) + '">' + escapeHtml(row.status || 'unknown') + '</span>';
+    html += '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function renderRuntimeDetailSections(data, items) {
+  var ffmpegItem = findDiagnosticItem(items, 'ffmpeg');
+  var modelItem = findDiagnosticItem(items, 'model_cache');
+  var cudaItem = findDiagnosticItem(items, 'cuda');
+  var pythonItem = findDiagnosticItem(items, 'python');
+  var venvItem = findDiagnosticItem(items, 'venv');
+  var ffmpegDetails = diagnosticDetails(ffmpegItem);
+  var modelDetails = diagnosticDetails(modelItem);
+  var cudaDetails = diagnosticDetails(cudaItem);
+  var pythonDetails = diagnosticDetails(pythonItem);
+  var dirIds = ['runtime_root', 'output_dir', 'work_dir', 'logs_dir', 'models_dir', 'tmp_dir', 'hf_cache_dir'];
+  var dirRows = [];
+  for (var i = 0; i < dirIds.length; i++) {
+    var item = findDiagnosticItem(items, dirIds[i]);
+    if (!item) continue;
+    var details = diagnosticDetails(item);
+    dirRows.push({
+      label: item.label || dirIds[i],
+      status: item.status || 'unknown',
+      value: details.path || item.value || '-',
+      detail: 'exists=' + String(details.exists === true) + ' / writable=' + String(details.writable === true)
+    });
+  }
+
+  renderRuntimeSection('runtime-ffmpeg-section', [{
+    label: '检测结果',
+    status: ffmpegItem ? ffmpegItem.status : (data.ffmpeg_ok ? 'ok' : 'error'),
+    value: ffmpegDetails.path || data.ffmpeg_path || '未检测到',
+    detail: '来源：' + (ffmpegDetails.source_label || data.ffmpeg_source_label || '-') + '；环境变量：CINESUB_FFMPEG / FFMPEG_PATH'
+  }, {
+    label: '版本探测',
+    status: ffmpegDetails.version ? 'ok' : (data.ffmpeg_ok ? 'warning' : 'error'),
+    value: ffmpegDetails.version || '未取得版本信息',
+    detail: ffmpegDetails.version_error || (ffmpegItem ? ffmpegItem.suggestion : '')
+  }]);
+
+  renderRuntimeSection('runtime-model-section', [{
+    label: '模型目录',
+    status: modelItem ? modelItem.status : 'unknown',
+    value: modelDetails.model_dir || data.model_dir || 'models',
+    detail: '缓存：' + (modelDetails.hf_home || data.hf_home || '.cache/huggingface')
+  }, {
+    label: '已发现模型',
+    status: (modelDetails.known_model_count || 0) > 0 ? 'ok' : 'not_configured',
+    value: String(modelDetails.known_model_count || 0),
+    detail: (modelDetails.known_models || []).join(', ') || '缺失时只提示导入/预缓存；本页面不自动下载模型。'
+  }]);
+
+  renderRuntimeSection('runtime-dir-section', dirRows.length ? dirRows : [{
+    label: '运行目录',
+    status: 'unknown',
+    value: '暂无目录诊断项',
+    detail: ''
+  }]);
+
+  renderRuntimeSection('runtime-device-section', [{
+    label: '推荐设备',
+    status: cudaItem ? cudaItem.status : 'warning',
+    value: (cudaDetails.recommended_device || data.recommended_device || '-') + ' / ' + (cudaDetails.recommended_compute_type || data.recommended_compute_type || '-'),
+    detail: (cudaDetails.messages || data.cuda_messages || []).join('; ') || 'auto 会在 CUDA 不可用时回退 CPU。'
+  }, {
+    label: 'CUDA 目录',
+    status: data.cuda_runtime_ok ? 'ok' : 'warning',
+    value: cudaDetails.cuda_runtime_dir || data.cuda_runtime_dir || '-',
+    detail: data.nvidia_driver || ''
+  }]);
+
+  renderRuntimeSection('runtime-python-section', [{
+    label: 'Python',
+    status: pythonItem ? pythonItem.status : (data.python_supported ? 'ok' : 'warning'),
+    value: (pythonDetails.version || data.python_version || '-') + ' | ' + (pythonDetails.source || data.python_source || '-'),
+    detail: pythonDetails.path || data.python || ''
+  }, {
+    label: '应用根目录',
+    status: 'ok',
+    value: data.app_root || pythonDetails.app_root || '-',
+    detail: 'cwd: ' + (data.cwd || pythonDetails.cwd || '-') + '；platform: ' + (data.platform || pythonDetails.platform || '-')
+  }, {
+    label: '虚拟环境',
+    status: venvItem ? venvItem.status : (data.in_project_venv ? 'ok' : 'warning'),
+    value: venvItem ? venvItem.value : (data.project_venv || '-'),
+    detail: venvItem ? venvItem.suggestion : ''
+  }]);
+}
+
+function renderRuntimeDiagnostics(data) {
+  var el = document.getElementById('diagnostics-result');
+  var summaryEl = document.getElementById('runtime-summary-result');
+  if (!data || data.ok === false) {
+    var message = data && data.error ? data.error : '运行环境诊断读取失败。';
+    if (el) el.innerHTML = '<div class="placeholder">' + escapeHtml(message) + '</div>';
+    if (summaryEl) summaryEl.innerHTML = '<div class="placeholder">' + escapeHtml(message) + '</div>';
     return;
   }
 
@@ -2816,18 +3057,23 @@ function renderRuntimeDiagnostics(data) {
     html += '</div>';
   }
   html += '</div>';
-  el.innerHTML = html;
+  if (el) el.innerHTML = html;
+  renderRuntimeSummary(data, items);
+  renderRuntimeDetailSections(data, items);
 }
 
 async function loadRuntimeDiagnostics() {
   var el = document.getElementById('diagnostics-result');
-  if (!el) return;
+  var summaryEl = document.getElementById('runtime-summary-result');
+  if (!el && !summaryEl) return;
   try {
     var resp = await fetch('/api/runtime/diagnostics');
     var data = await resp.json();
     renderRuntimeDiagnostics(data);
   } catch (err) {
-    el.innerHTML = '<div class="placeholder">运行环境诊断读取失败: ' + escapeHtml(err.message) + '</div>';
+    var html = '<div class="placeholder">运行环境诊断读取失败: ' + escapeHtml(err.message) + '</div>';
+    if (el) el.innerHTML = html;
+    if (summaryEl) summaryEl.innerHTML = html;
   }
 }
 
@@ -3806,6 +4052,7 @@ function switchTab(name) {
   if (name === 'providers') loadProviders();
   if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); loadJobQueue(); }
   if (name === 'langprofiles') loadLangProfiles();
+  if (name === 'runtime') loadRuntimeDiagnostics();
   if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); }
 }
 

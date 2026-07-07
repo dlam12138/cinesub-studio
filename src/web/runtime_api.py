@@ -13,7 +13,24 @@ from runtime_env import (
 
 
 def get_runtime_diagnostics() -> dict:
-    diagnostics = runtime_diagnostics()
+    try:
+        diagnostics = runtime_diagnostics()
+    except Exception as exc:
+        item = _diagnostic_item(
+            "runtime_diagnostics",
+            "运行环境诊断",
+            "error",
+            "读取失败",
+            f"运行环境诊断读取失败：{str(exc)[:200]}",
+            "请查看 Web 启动终端或 logs/ 中的错误信息；该错误不会触发模型下载或流水线执行。",
+            True,
+        )
+        return {
+            "ok": False,
+            "error": str(exc)[:200],
+            "diagnostic_items": [item],
+            "diagnostic_summary": build_diagnostic_summary([item]),
+        }
     items = list(diagnostics.get("diagnostic_items") or [])
     items.append(_provider_diagnostic_item())
     items.append(_web_service_diagnostic_item())
