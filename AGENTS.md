@@ -24,7 +24,7 @@
 入口脚本：
 
 - `start_app.py`：双击启动器，启动 Web 服务并打开浏览器。
-- `start_web.ps1`：薄包装，调用 `.venv\Scripts\python.exe -B start_app.py`。
+- `start_web.ps1`：本地 Web 启动器包装，调用 `.venv\Scripts\python.exe -B start_app.py`，支持 `-NoBrowser`、`-Smoke`、`-NonInteractive`、`-Port`。
 - `run_transcribe.ps1`：单文件转写便利入口。
 - `install.ps1`：创建/重建 `.venv`，支持项目内 `tools/python/python.exe` 和 `tools/wheelhouse/` 离线安装。
 - `analyze_subtitles.ps1`：薄包装，调用 `src/tools/analyze_subtitles_workflow.py`。
@@ -190,6 +190,7 @@ Web 检查：
 
 ```powershell
 .\start_web.ps1
+.\start_web.ps1 -Smoke -NoBrowser -NonInteractive
 Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/ | Select-Object -ExpandProperty StatusCode
 Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/runtime/diagnostics | Select-Object -ExpandProperty StatusCode
 ```

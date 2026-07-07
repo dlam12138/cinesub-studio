@@ -1,3 +1,10 @@
+param(
+    [switch]$NoBrowser,
+    [switch]$Smoke,
+    [switch]$NonInteractive,
+    [int]$Port = 7860
+)
+
 $ErrorActionPreference = "Stop"
 
 try {
@@ -17,6 +24,7 @@ Set-Location $ProjectRoot
 
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $LogPath = Join-Path $ProjectRoot "logs\web_server.log"
+$LocalUrl = "http://127.0.0.1:$Port/"
 if (-not (Test-Path -LiteralPath $Python)) {
     Write-Host "CineSub Studio could not find the project virtual environment." -ForegroundColor Red
     Write-Host "Missing: $Python"
@@ -31,7 +39,26 @@ if (-not (Test-Path -LiteralPath $Python)) {
 }
 
 try {
-    & $Python -B (Join-Path $ProjectRoot "start_app.py") @args
+    Write-Host "CineSub Studio launcher" -ForegroundColor Cyan
+    Write-Host "Project: $ProjectRoot"
+    Write-Host "Python:  $Python"
+    Write-Host "URL:     $LocalUrl"
+    Write-Host "Log:     $LogPath"
+    if ($Smoke) {
+        Write-Host "Mode:    Smoke / non-interactive readiness check"
+    } elseif ($NonInteractive) {
+        Write-Host "Mode:    NonInteractive"
+    } else {
+        Write-Host "Mode:    Interactive local launcher"
+    }
+    Write-Host ""
+
+    $LauncherArgs = @("-Port", "$Port")
+    if ($NoBrowser) { $LauncherArgs += "-NoBrowser" }
+    if ($Smoke) { $LauncherArgs += "-Smoke" }
+    if ($NonInteractive) { $LauncherArgs += "-NonInteractive" }
+
+    & $Python -B (Join-Path $ProjectRoot "start_app.py") @LauncherArgs @args
     $ExitCode = $LASTEXITCODE
 } catch {
     Write-Host "Failed to start CineSub Studio Web launcher." -ForegroundColor Red
@@ -47,7 +74,8 @@ if ($ExitCode -ne 0) {
     Write-Host "Log path: $LogPath"
     Write-Host "Common next steps:"
     Write-Host "  1. Run .\install.ps1 if dependencies are missing."
-    Write-Host "  2. Open Web diagnostics after startup succeeds: http://127.0.0.1:7860/api/runtime/diagnostics"
+    Write-Host "  2. Open Web diagnostics after startup succeeds: $LocalUrl"
     Write-Host "  3. Check FFmpeg setup with: .\scripts\download_ffmpeg.ps1"
+    Write-Host "  4. To point at an existing FFmpeg, set CINESUB_FFMPEG or FFMPEG_PATH."
 }
 exit $ExitCode

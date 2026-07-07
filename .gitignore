@@ -89,6 +89,7 @@ acceptance/*
 !acceptance/m10_queue_history_progress_recovery_ui.md
 !acceptance/m11_runtime_model_ffmpeg_management_ui.md
 !acceptance/m12_provider_profile_settings_center.md
+!acceptance/m13_local_launcher_readiness.md
 acceptance/screenshots/
 acceptance/tmp/
 data/

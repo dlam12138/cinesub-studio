@@ -204,3 +204,27 @@ Web 可以启动，转写也可以运行；需要翻译时必须配置 active Pr
 - 当前版本只稳定输出 SRT。ASS 参数是预留接口，不会生成 `.ass` 成品。
 - 当前版本不做混合语言分段 ASR。混合语言影片会按一个主要源语言处理；必要时请拆分素材、使用更大的多语言 Whisper 模型，或改用官方源字幕翻译。
 - 当前版本不做字幕编码自动检测。导入外部字幕前建议先转换为 UTF-8。
+
+## M13 local launcher notes
+
+Source checkout startup:
+
+```powershell
+.\start_web.ps1
+```
+
+Optional launcher modes:
+
+```powershell
+.\start_web.ps1 -NoBrowser
+.\start_web.ps1 -Smoke -NoBrowser -NonInteractive
+.\start_web.ps1 -NoBrowser -NonInteractive
+```
+
+Default URL: `http://127.0.0.1:7860/`.
+
+`-Smoke` is a non-interactive startup readiness check. It does not open a browser, run ASR, translate, process media, load Whisper models, or download models.
+
+If FFmpeg is missing, the Web UI can still open for settings and runtime diagnostics. Media jobs that need audio extraction will fail until FFmpeg is configured. Accepted variables are `CINESUB_FFMPEG` and `FFMPEG_PATH`; the project-local expected location is `tools/ffmpeg/bin/`.
+
+M13 intentionally does not implement Electron, Tauri, a Windows installer, code signing, auto-update, a model hub, or dubbing/TTS features. See `docs/desktopization_readiness.md` for the desktop shell evaluation.
