@@ -24,7 +24,7 @@ def test_premium_app_shell_and_sidebar_navigation_exist():
     sidebar_nav = _section(html, '<nav class="tabs rail-nav">', "</nav>")
     assert 'data-refresh="v0.2-premium-ui-refresh"' in html
     assert "CineSub Studio" in html
-    assert "字幕工坊" in html
+    assert "智译字幕工坊" in html
     assert "Local Web App" in html
     assert "v0.2 Preview" in html
     for label in ("批量处理", "单个处理", "最近任务", "运行环境", "翻译接口", "语言风格"):

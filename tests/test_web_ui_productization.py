@@ -14,8 +14,8 @@ def _read_index_html() -> str:
 
 def test_index_page_has_product_title():
     html = _read_index_html()
-    assert "<title>字幕工坊" in html
-    assert "视频字幕生成器" in html
+    assert "<title>智译字幕工坊" in html
+    assert "AI 字幕生成器" in html
 
 
 # ── 2. Workflow sections are present ──

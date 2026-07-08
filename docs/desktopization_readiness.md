@@ -1,6 +1,6 @@
 # M13 Desktopization Readiness
 
-M13 keeps CineSub Studio as a local Web service with a lightweight launcher. It does not add Electron, Tauri, an installer, code signing, auto-update, or release artifacts.
+M13 keeps 智译字幕工坊 / CineSub Studio as a local Web service with a lightweight launcher. It does not add Electron, Tauri, an installer, code signing, auto-update, or release artifacts.
 
 ## Current Local Startup
 

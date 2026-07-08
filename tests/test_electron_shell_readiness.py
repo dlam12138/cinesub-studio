@@ -79,7 +79,7 @@ def test_main_port_handling_does_not_reuse_or_fallback_silently():
     assert 'return "cinesub";' in main
     assert 'return "occupied";' in main
     assert 'return "available";' in main
-    assert "CineSub Studio is already running" in main
+    assert "智译字幕工坊 / CineSub Studio is already running" in main
     assert "Port is already in use" in main
     assert "fallback" not in main.lower()
 
@@ -113,7 +113,7 @@ def test_main_uses_secure_browser_window_and_external_link_handling():
     assert "height: 900" in main
     assert "minWidth: 1100" in main
     assert "minHeight: 720" in main
-    assert 'title: "CineSub Studio"' in main
+    assert 'title: "智译字幕工坊 / CineSub Studio"' in main
     assert "contextIsolation: true" in main
     assert "nodeIntegration: false" in main
     assert 'preload: path.join(__dirname, "preload.js")' in main

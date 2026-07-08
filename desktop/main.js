@@ -174,7 +174,7 @@ function createWindow(port) {
     height: 900,
     minWidth: 1100,
     minHeight: 720,
-    title: "CineSub Studio",
+    title: "智译字幕工坊 / CineSub Studio",
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -219,7 +219,7 @@ function stopBackend() {
 
 function showStartupError(message) {
   dialog.showErrorBox(
-    "CineSub Studio startup failed",
+    "智译字幕工坊 / CineSub Studio startup failed",
     `${message}\n\nPossible causes:\n- Python environment is unavailable\n- Port is already in use\n- Dependencies are not installed\n- Backend startup failed\n\nCheck console logs or run:\n.\\start_web.ps1 -Smoke -NoBrowser -NonInteractive`
   );
 }
@@ -242,7 +242,7 @@ async function main() {
   if (!python) {
     dialog.showErrorBox(
       "Python runtime not found",
-      "CineSub Studio could not find Python. Create the project .venv first, or use a future bundled runtime build."
+      "智译字幕工坊 / CineSub Studio could not find Python. Create the project .venv first, or use a future bundled runtime build."
     );
     app.quit();
     return;
@@ -251,7 +251,7 @@ async function main() {
   const portState = await checkPortState(port);
   if (portState === "cinesub") {
     dialog.showErrorBox(
-      "CineSub Studio is already running",
+      "智译字幕工坊 / CineSub Studio is already running",
       `http://127.0.0.1:${port}/ already returns the CineSub homepage. Close the existing service before starting the desktop shell.`
     );
     app.quit();

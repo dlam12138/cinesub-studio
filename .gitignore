@@ -103,6 +103,7 @@ acceptance/*
 !acceptance/v0_2_premium_ui_refresh.md
 !acceptance/v0_3_electron_desktop_shell_mvp.md
 !acceptance/v0_3_2_electron_folder_picker.md
+!acceptance/v0_3_3_brand_rename.md
 acceptance/screenshots/
 acceptance/tmp/
 data/

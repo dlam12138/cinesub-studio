@@ -2,7 +2,8 @@
   "name": "cinesub-studio-desktop",
   "version": "0.3.0",
   "private": true,
-  "description": "Electron desktop shell for CineSub Studio",
+  "productName": "智译字幕工坊 / CineSub Studio",
+  "description": "Electron desktop shell for 智译字幕工坊 / CineSub Studio",
   "main": "main.js",
   "scripts": {
     "start": "electron ."

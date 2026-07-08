@@ -1,12 +1,12 @@
-# CineSub Studio
+# 智译字幕工坊 / CineSub Studio
 
-CineSub Studio 是一个 Windows 本地影视字幕工具：把视频或音频转写为 SRT 字幕，可调用 OpenAI-compatible 翻译接口生成中文字幕或双语字幕，并输出基础质量报告和 `review_needed.srt`。
+智译字幕工坊 / CineSub Studio 是一个 Windows 本地影视字幕工具：把视频或音频转写为 SRT 字幕，可调用 OpenAI-compatible 翻译接口生成中文字幕或双语字幕，并输出基础质量报告和 `review_needed.srt`。
 
 当前版本面向本机使用。它不要求修改系统 PATH，也不要求安装前端构建工具、npm、CDN 或浏览器插件。
 
 ## 1. 选择运行方式
 
-CineSub Studio 当前支持两种运行方式。Portable RC 面向试用交付，源码开发版面向继续开发和本地调试。
+智译字幕工坊 / CineSub Studio 当前支持两种运行方式。Portable RC 面向试用交付，源码开发版面向继续开发和本地调试。
 
 ### 方式 A：Portable RC
 

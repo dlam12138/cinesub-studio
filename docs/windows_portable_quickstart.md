@@ -1,4 +1,4 @@
-# Windows Portable Quickstart
+# 智译字幕工坊 / CineSub Studio Windows Portable Quickstart
 
 This quickstart describes the M14 staged portable folder. It is not an official release package and it is not fully standalone.
 

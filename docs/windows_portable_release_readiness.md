@@ -1,4 +1,4 @@
-# Windows Portable Release Readiness
+# 智译字幕工坊 / CineSub Studio Windows Portable Release Readiness
 
 M14 defines a repeatable Windows portable staging workflow. It is release-readiness work, not an official release.
 

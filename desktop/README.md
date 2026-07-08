@@ -1,12 +1,12 @@
-# CineSub Studio Desktop Shell
+# 智译字幕工坊 / CineSub Studio Desktop Shell
 
-This directory contains the v0.3 Electron desktop shell for CineSub Studio.
+This directory contains the v0.3 Electron desktop shell for 智译字幕工坊 / CineSub Studio.
 
 ## What It Does
 
 - Starts the existing Python Web launcher from the repository root.
 - Waits until the local Web server is ready.
-- Opens the existing CineSub Studio Web UI in an Electron window.
+- Opens the existing 智译字幕工坊 / CineSub Studio Web UI in an Electron window.
 - Stops the child Python backend process when the Electron app exits.
 
 The Python Web app remains the source of truth. Electron does not duplicate backend APIs.
