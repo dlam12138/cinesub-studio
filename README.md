@@ -42,6 +42,8 @@ models/
 
 外部试用前请先阅读 [TRIAL.md](TRIAL.md)，其中包含普通测试者的启动步骤、已知限制、反馈模板和 API key 安全提醒。
 
+> **v0.4 Desktop Preview 测试者**：如果你使用的是带 Electron 的桌面预览版本，请参阅 [v0.4 Desktop Preview 测试者快速上手](docs/v0_4_desktop_preview_tester_onboarding.md)。
+
 ### 方式 B：源码开发版
 
 适用于从 Git checkout 直接运行源码。建议使用 Windows 10/11、PowerShell，以及 Python 3.10-3.12。首次运行前确认项目目录可写，尤其是：
