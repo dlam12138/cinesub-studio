@@ -233,8 +233,8 @@ def check_source_srt(
                     suggestion="建议人工抽查确认语言正确性",
                 ))
         # 源语言不匹配检查
-        if forced and detected:
-            detected_lang = lang_json.get("source_language", "")
+        detected_lang = lang_json.get("source_language", "")
+        if forced and detected_lang:
             if detected_lang and detected_lang != forced:
                 report.issues.append(QualityIssue(
                     index=0, type="source_language_mismatch", severity="warning",
