@@ -3,6 +3,11 @@
 .tmp/
 dist/
 release/
+desktop/node_modules/
+desktop/dist/
+desktop/out/
+desktop/.vite/
+desktop/*.log
 *.portable.zip
 CineSubStudio-portable/
 .claude/
@@ -96,6 +101,7 @@ acceptance/*
 !acceptance/m14_windows_portable_release_readiness.md
 !acceptance/v0_1_internal_preview_validation.md
 !acceptance/v0_2_premium_ui_refresh.md
+!acceptance/v0_3_electron_desktop_shell_mvp.md
 acceptance/screenshots/
 acceptance/tmp/
 data/

@@ -1,0 +1,13 @@
+{
+  "name": "cinesub-studio-desktop",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Electron desktop shell for CineSub Studio",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "43.0.0"
+  }
+}
