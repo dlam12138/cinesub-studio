@@ -1435,7 +1435,7 @@
       min-height: 44px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      justify-content: flex-start;
       padding: 10px 12px;
       border: 1px solid transparent;
       border-radius: var(--radius);
@@ -1443,19 +1443,6 @@
       color: var(--muted);
       text-align: left;
       font-weight: 750;
-    }
-
-    .rail-nav .tab-btn span {
-      width: 30px;
-      height: 24px;
-      display: inline-grid;
-      place-items: center;
-      border-radius: 6px;
-      color: #708198;
-      background: rgba(255, 255, 255, .045);
-      font-size: 11px;
-      font-weight: 900;
-      font-family: "Consolas", "Cascadia Mono", monospace;
     }
 
     .rail-nav .tab-btn:hover {
@@ -1470,11 +1457,6 @@
       background: linear-gradient(90deg, rgba(99, 179, 255, .18), rgba(73, 209, 141, .075));
       color: var(--ink);
       box-shadow: 0 12px 30px rgba(20, 80, 140, .22);
-    }
-
-    .rail-nav .tab-btn.active span {
-      color: #d8efff;
-      background: rgba(99, 179, 255, .22);
     }
 
     .rail-note {
@@ -1790,12 +1772,11 @@
         height: auto;
         padding: 14px;
       }
-      .rail-nav { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .rail-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .rail-nav .tab-btn {
         justify-content: center;
         font-size: 13px;
       }
-      .rail-nav .tab-btn span,
       .rail-note { display: none; }
       .topbar {
         position: relative;
@@ -1836,11 +1817,12 @@
       <span class="version-chip">v0.2 Preview</span>
     </div>
     <nav class="tabs rail-nav">
-      <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')"><span>01</span>开始处理</button>
-      <button class="tab-btn" data-tab="jobs" onclick="switchTab('jobs')"><span>02</span>最近任务</button>
-      <button class="tab-btn" data-tab="runtime" onclick="switchTab('runtime')"><span>03</span>运行环境</button>
-      <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')"><span>04</span>翻译接口</button>
-      <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')"><span>05</span>语言风格</button>
+      <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">批量处理</button>
+      <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">单个处理</button>
+      <button class="tab-btn" data-tab="jobs" onclick="switchTab('jobs')">最近任务</button>
+      <button class="tab-btn" data-tab="runtime" onclick="switchTab('runtime')">运行环境</button>
+      <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">翻译接口</button>
+      <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')">语言风格</button>
     </nav>
     <div class="rail-note">本地优先处理，模型、缓存和字幕产物保持在项目目录内。</div>
   </aside>
@@ -2082,12 +2064,23 @@
           <h3>Python / 应用运行时</h3>
           <div id="runtime-python-section" class="placeholder">等待诊断结果...</div>
         </div>
+        <div class="runtime-section">
+          <h3>缺失组件处理</h3>
+          <div class="placeholder">
+            <strong>模型或 FFmpeg 缺失时：</strong>
+            <ul>
+              <li>FFmpeg：放入 tools/ffmpeg/，或配置 CINESUB_FFMPEG / FFMPEG_PATH。</li>
+              <li>ASR 模型：放入 models/，或使用项目内 Hugging Face cache。</li>
+              <li>单个处理的高级识别参数里可以选择模型下载源，也可以启用“只使用本地已下载模型”。这里仅提供处理指引，不执行网络动作。</li>
+            </ul>
+          </div>
+        </div>
       </section>
     </div>
   </div>
 
   <!-- ═══════════════ Transcribe Tab ═══════════════ -->
-  <div id="tab-transcribe" class="tab-content active">
+  <div id="tab-transcribe" class="tab-content">
     <div class="transcribe-layout">
       <section>
         <h2>语音识别与翻译</h2>
@@ -4617,6 +4610,7 @@ function switchTab(name) {
   var activeTabs = {};
   if (name === 'pipeline') {
     activeTabs['tab-pipeline'] = true;
+  } else if (name === 'transcribe') {
     activeTabs['tab-transcribe'] = true;
   } else {
     activeTabs['tab-' + name] = true;
@@ -4629,7 +4623,7 @@ function switchTab(name) {
   if (name === 'jobs') loadJobQueue();
   if (name === 'langprofiles') loadLangProfiles();
   if (name === 'runtime') loadRuntimeDiagnostics();
-  if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); loadProviderSelect(); loadLangProfileSelect(); }
+  if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); }
 }
 
 async function loadProviders() {

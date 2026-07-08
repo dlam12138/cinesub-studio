@@ -21,25 +21,50 @@ def _section(html: str, start: str, end: str) -> str:
 
 def test_premium_app_shell_and_sidebar_navigation_exist():
     html = _read_index_html()
+    sidebar_nav = _section(html, '<nav class="tabs rail-nav">', "</nav>")
     assert 'data-refresh="v0.2-premium-ui-refresh"' in html
     assert "CineSub Studio" in html
     assert "字幕工坊" in html
     assert "Local Web App" in html
     assert "v0.2 Preview" in html
-    for label in ("开始处理", "最近任务", "运行环境", "翻译接口", "语言风格"):
-        assert label in html
+    for label in ("批量处理", "单个处理", "最近任务", "运行环境", "翻译接口", "语言风格"):
+        assert label in sidebar_nav
+    assert "开始处理" not in sidebar_nav
+    for number in ("01", "02", "03", "04", "05"):
+        assert number not in sidebar_nav
 
 
 def test_start_workspace_keeps_batch_and_single_file_entrypoints_separate():
     html = _read_index_html()
     assert 'id="tab-pipeline"' in html
-    assert 'id="tab-transcribe" class="tab-content active"' in html
+    assert 'id="tab-pipeline" class="tab-content active"' in html
+    assert 'id="tab-transcribe" class="tab-content">' in html
     assert "pipelineAction('run')" in html
     assert 'id="btn-run"' in html
     assert 'id="jobForm"' in html
     assert 'id="startBtn"' in html
     assert 'fetch("/api/jobs"' in html
     assert "fetch('/api/pipeline/" in html
+
+
+def test_pipeline_and_transcribe_tabs_activate_independently():
+    html = _read_index_html()
+    switch_tab = _section(html, "function switchTab(name)", "async function loadProviders()")
+    pipeline_branch = _section(
+        switch_tab,
+        "if (name === 'pipeline')",
+        "} else if (name === 'transcribe')",
+    )
+    transcribe_branch = _section(
+        switch_tab,
+        "} else if (name === 'transcribe')",
+        "} else {",
+    )
+    assert "activeTabs['tab-pipeline'] = true;" in pipeline_branch
+    assert "activeTabs['tab-transcribe'] = true;" not in pipeline_branch
+    assert "activeTabs['tab-transcribe'] = true;" in transcribe_branch
+    assert "if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); loadJobQueue(); }" in switch_tab
+    assert "if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); }" in switch_tab
 
 
 def test_workflow_controls_and_status_surfaces_remain_present():
@@ -77,6 +102,24 @@ def test_recent_jobs_runtime_provider_and_profile_sections_exist():
     assert "语音识别默认值" in html
 
 
+def test_runtime_has_read_only_missing_component_guidance():
+    html = _read_index_html()
+    runtime_section = _section(html, 'id="tab-runtime"', 'id="tab-transcribe"')
+    assert "缺失组件处理" in runtime_section
+    assert "tools/ffmpeg/" in runtime_section
+    assert "CINESUB_FFMPEG" in runtime_section
+    assert "FFMPEG_PATH" in runtime_section
+    assert "models/" in runtime_section
+    assert "Hugging Face cache" in runtime_section
+    assert "模型下载源" in runtime_section
+    assert "只使用本地已下载模型" in runtime_section
+    assert "download_model_file.py" not in runtime_section
+    assert "model hub" not in runtime_section.lower()
+    assert "自动修复" not in runtime_section
+    guidance_section = runtime_section[runtime_section.find("缺失组件处理") :]
+    assert "<button" not in guidance_section
+
+
 def test_provider_ui_remains_llm_only():
     html = _read_index_html()
     provider_section = _section(html, 'id="tab-providers"', 'id="tab-langprofiles"')
@@ -109,6 +152,9 @@ def test_no_unfinished_or_external_project_ui_was_introduced():
         "tts",
         "voice clone",
         "lip.sync",
+        "auto-fix",
+        "automatic repair",
+        "自动修复",
         "配音",
         "语音克隆",
         "口型",

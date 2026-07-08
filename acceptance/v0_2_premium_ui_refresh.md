@@ -19,9 +19,11 @@ WhisperSubTranslate was used only as product-experience inspiration for local-fi
   - `CineSub Studio / 字幕工坊`
   - `Local Web App`
   - `v0.2 Preview`
-  - Sidebar navigation for `开始处理`, `最近任务`, `运行环境`, `翻译接口`, `语言风格`
-- Kept batch processing and single-file subtitles as separate behavior paths while showing both inside the `开始处理` workspace.
+  - Sidebar navigation for `批量处理`, `单个处理`, `最近任务`, `运行环境`, `翻译接口`, `语言风格`
+- Removed the old sidebar step numbers (`01` through `05`) so the rail reads as feature navigation rather than a numbered workflow.
+- Split batch processing and single-file subtitles into independent sidebar entries; `批量处理` activates only the pipeline workspace, and `单个处理` activates only the single-file workspace.
 - Moved recent jobs into a dedicated `最近任务` workspace without duplicating the original `jobQueuePanel` / `jobQueueList` DOM IDs.
+- Added a read-only `缺失组件处理` guidance card to the runtime page for FFmpeg/model placement and environment-variable options.
 - Polished runtime diagnostics, Provider settings, Language Profile settings, cards, badges, tables, progress surfaces, empty states, and inline/toast feedback.
 - Fixed user-visible Chinese mojibake in `web/index.html` only.
 
@@ -42,6 +44,7 @@ WhisperSubTranslate was used only as product-experience inspiration for local-fi
 - No Electron/Tauri.
 - No frontend framework, npm build, CDN, React, Vue, Svelte, or Tailwind.
 - No model downloader.
+- No runtime downloader, model hub, automatic repair, or install button was added; missing components are documented as guidance only.
 - No database.
 - No installer/release work.
 - No TTS, dubbing, voice clone, model hub, or model management UI.
