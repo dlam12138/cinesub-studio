@@ -91,10 +91,11 @@ def test_main_terminates_backend_on_quit_without_process_scanning():
     main = _read(MAIN_JS)
     assert "let backendProcess = null;" in main
     assert "function stopBackend()" in main
+    assert 'spawnSync("taskkill", ["/pid", String(backendProcess.pid), "/T", "/F"]' in main
     assert "backendProcess.kill();" in main
     assert 'app.on("before-quit"' in main
     assert 'app.on("window-all-closed"' in main
-    forbidden = ["taskkill", "wmic", "Get-Process", "pkill", "killall"]
+    forbidden = ["wmic", "Get-Process", "pkill", "killall"]
     for marker in forbidden:
         assert marker not in main
 

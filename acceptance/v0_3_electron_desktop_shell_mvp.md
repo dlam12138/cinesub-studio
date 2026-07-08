@@ -25,7 +25,7 @@
 - Port behavior: default `7860`, with `CINESUB_DESKTOP_PORT` override. If the port already returns the CineSub homepage, Electron treats it as occupied and does not reuse it. If another process occupies the port, Electron shows a port occupied error. No silent fallback port is used.
 - Server readiness behavior: Electron polls `http://127.0.0.1:<port>/` for HTTP 200 for up to 30 seconds before loading the window.
 - Window behavior: `1440x900`, minimum `1100x720`, title `CineSub Studio`, `contextIsolation: true`, `nodeIntegration: false`, and local Web UI loaded from `127.0.0.1`.
-- Backend shutdown behavior: Electron stores only its child process handle and calls `child.kill()` during app quit/window close. It does not kill unrelated Python processes.
+- Backend shutdown behavior: Electron stores only its child process handle. On Windows it terminates that recorded backend PID tree with `taskkill /pid <pid> /T /F` during app quit/window close; on other platforms it calls `child.kill()`. It does not scan for or kill unrelated Python processes.
 - Electron resolved version: `43.0.0` in `desktop/package-lock.json`.
 
 ## Manual Electron smoke result
@@ -44,6 +44,50 @@ Result:
 - No pipeline, Web UI, ASR, translation, Provider/Profile, launcher semantics, or runtime downloader behavior was changed to work around the local Electron binary download failure.
 - No Electron or project backend process remained after the failed manual attempt.
 - `desktop/node_modules/`, `desktop/dist/`, `desktop/out/`, `.vite`, and desktop log outputs are ignored and were not staged.
+
+## v0.3.1 Electron Runtime Availability Rerun
+
+Starting commit:
+
+- `85fbc24 v0.3: add electron desktop shell`
+
+Scope:
+
+- Only Electron runtime binary availability and desktop shell rerun were checked.
+- No backend, Web UI, pipeline, ASR, translation, Provider/Profile, installer, electron-builder, Python bundling, FFmpeg bundling, or model bundling work was done.
+
+Runtime availability:
+
+- `cd desktop`
+- `npm install` succeeded with `electron@43.0.0` kept unchanged.
+- Default Electron install script had previously left `node_modules/electron/dist/electron.exe` missing. Running Electron's install script with a temporary process environment succeeded:
+  - `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
+  - npm proxy and HTTP(S) proxy variables cleared for that command only.
+- No mirror, proxy, or cache setting was written into production code or project config.
+- `desktop/node_modules/electron/dist/electron.exe --version` returned `v43.0.0`.
+
+Manual desktop rerun:
+
+- `npm start` opened the Electron window.
+- Main window title observed: `字幕工坊 — 视频字幕生成器`.
+- Homepage loaded from `http://127.0.0.1:7860/` with HTTP 200 and `CineSub Studio` present.
+- Runtime diagnostics API loaded: `GET /api/runtime/diagnostics` HTTP 200.
+- Recent tasks / pipeline status API loaded: `GET /api/pipeline/status` HTTP 200.
+- Language style/profile API loaded: `GET /api/language-profiles` HTTP 200.
+- Provider/translation settings API loaded: `GET /api/providers` HTTP 200.
+- Homepage contained the expected navigation text for `运行环境`, `最近任务`, `翻译`, and `语言风格`.
+
+Shutdown rerun:
+
+- First rerun found a real desktop shell lifecycle bug: closing Electron stopped the direct `start_app.py` child, but the launched Web backend process tree remained alive and continued serving port 7860.
+- Fix applied in `desktop/main.js`: on Windows, `stopBackend()` now terminates the recorded backend PID tree with `taskkill /pid <pid> /T /F`; it still does not scan for unrelated Python processes.
+- After the fix, closing Electron made `http://127.0.0.1:7860/` unreachable and left no active listener on port 7860.
+
+Artifact hygiene:
+
+- `desktop/node_modules/` remained ignored and was not staged.
+- Electron runtime binary, cache, `dist/`, `out/`, and release artifacts were not staged.
+- Code changes were limited to the desktop shell shutdown fix and its readiness test.
 
 ## Tests Run
 

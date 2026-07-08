@@ -206,7 +206,14 @@ function stopBackend() {
     backendProcess = null;
     return;
   }
-  backendProcess.kill();
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(backendProcess.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore"
+    });
+  } else {
+    backendProcess.kill();
+  }
   backendProcess = null;
 }
 
