@@ -215,29 +215,18 @@ def translate_srt(
             continue
 
         print(f"Translating batch {batch_index}/{total_batches}")
-        request_body = _build_request_body(
+        translations = _translate_batch_with_structured_retry(
             batch=batch,
+            expected_ids=expected_ids,
+            batch_index=batch_index,
+            total_batches=total_batches,
             effective_prompt=effective_prompt,
-            effective_model=llm_model,
+            llm_model=llm_model,
             temperature=temperature,
-            api_provider=api_provider,
-        )
-        response_text = _call_llm_api(
             api_provider=api_provider,
             api_base=api_base,
             api_key=api_key,
-            body=request_body,
         )
-        parsed = _parse_api_response(api_provider, response_text)
-        # Verify all batch items received translations
-        translations = _extract_translations(parsed, expected_ids=expected_ids)
-        batch_ids = set(expected_ids)
-        missing_ids = batch_ids - set(translations.keys())
-        if missing_ids:
-            raise RuntimeError(
-                f"Batch {batch_index}/{total_batches}: missing translations for ids: "
-                f"{sorted(missing_ids)}"
-            )
 
         # Apply translations to items
         for tid, text in translations.items():
@@ -257,6 +246,86 @@ def translate_srt(
 
     write_srt(items, output_path)
     print(f"Translation done: {output_path}")
+
+
+def _translate_batch_with_structured_retry(
+    *,
+    batch: dict,
+    expected_ids: list[int],
+    batch_index: int,
+    total_batches: int,
+    effective_prompt: str,
+    llm_model: str,
+    temperature: float,
+    api_provider: str,
+    api_base: str,
+    api_key: str,
+) -> dict[int, str]:
+    """Translate one batch and retry once if the model returns malformed structure."""
+    last_error: RuntimeError | None = None
+    batch_ids = set(expected_ids)
+
+    for attempt in range(1, 3):
+        prompt = effective_prompt
+        if attempt == 2:
+            print(
+                f"Provider returned invalid structured output for batch "
+                f"{batch_index}/{total_batches}; retrying once with stricter JSON instructions."
+            )
+            prompt = _build_structured_retry_prompt(effective_prompt, expected_ids)
+
+        request_body = _build_request_body(
+            batch=batch,
+            effective_prompt=prompt,
+            effective_model=llm_model,
+            temperature=temperature,
+            api_provider=api_provider,
+        )
+        response_text = _call_llm_api(
+            api_provider=api_provider,
+            api_base=api_base,
+            api_key=api_key,
+            body=request_body,
+        )
+        try:
+            parsed = _parse_api_response(api_provider, response_text)
+            translations = _extract_translations(parsed, expected_ids=expected_ids)
+        except RuntimeError as exc:
+            last_error = RuntimeError(
+                f"Batch {batch_index}/{total_batches}: Provider returned invalid "
+                f"translation JSON structure: {exc}"
+            )
+            if attempt == 1:
+                continue
+            raise last_error from exc
+
+        missing_ids = batch_ids - set(translations.keys())
+        if missing_ids:
+            last_error = RuntimeError(
+                f"Batch {batch_index}/{total_batches}: missing translations for ids: "
+                f"{sorted(missing_ids)}. Provider returned incomplete structured output."
+            )
+            if attempt == 1:
+                continue
+            raise last_error
+
+        return translations
+
+    raise last_error or RuntimeError(
+        f"Batch {batch_index}/{total_batches}: Provider returned invalid structured output."
+    )
+
+
+def _build_structured_retry_prompt(effective_prompt: str, expected_ids: list[int]) -> str:
+    expected = ", ".join(str(tid) for tid in expected_ids)
+    return (
+        f"{effective_prompt}\n\n"
+        "STRICT JSON RETRY:\n"
+        "- Return only valid JSON, no Markdown, no comments, no trailing commas.\n"
+        "- Return exactly this shape: {\"items\":[{\"id\":1,\"text\":\"...\"}]}.\n"
+        f"- Include every requested id exactly once. Required ids: {expected}.\n"
+        "- Do not include context ids. Do not omit empty or difficult subtitles."
+    )
 
 
 def _build_default_prompt(target_language: str) -> str:
@@ -471,10 +540,22 @@ def _extract_translations(text: str, expected_ids: list[int] | None = None) -> d
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Failed to parse model translation output as JSON. "
-            f"Raw output (first 500 chars): {text[:500]}"
-        ) from exc
+        repaired_text = _strip_json_line_comments(text)
+        if repaired_text != text:
+            try:
+                parsed = json.loads(repaired_text)
+            except json.JSONDecodeError:
+                raise RuntimeError(
+                    f"Failed to parse model translation output as JSON. "
+                    f"Provider output may contain invalid comments or trailing text. "
+                    f"Raw output (first 500 chars): {text[:500]}"
+                ) from exc
+        else:
+            raise RuntimeError(
+                f"Failed to parse model translation output as JSON. "
+                f"Provider output was not valid JSON. "
+                f"Raw output (first 500 chars): {text[:500]}"
+            ) from exc
 
     parsed = _normalize_translation_payload(parsed)
 
@@ -505,6 +586,45 @@ def _extract_translations(text: str, expected_ids: list[int] | None = None) -> d
         )
 
     return result
+
+
+def _strip_json_line_comments(text: str) -> str:
+    """Remove // comments outside JSON strings without accepting arbitrary JSON5."""
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+
+        if in_string:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if char == '"':
+            in_string = True
+            result.append(char)
+            index += 1
+            continue
+
+        if char == "/" and next_char == "/":
+            index += 2
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+
+        result.append(char)
+        index += 1
+
+    return "".join(result)
 
 
 def _normalize_translation_payload(parsed) -> list:
