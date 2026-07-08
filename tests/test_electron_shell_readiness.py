@@ -9,6 +9,7 @@ DESKTOP = ROOT / "desktop"
 PACKAGE_JSON = DESKTOP / "package.json"
 PACKAGE_LOCK = DESKTOP / "package-lock.json"
 MAIN_JS = DESKTOP / "main.js"
+LAUNCH_JS = DESKTOP / "launch.js"
 PRELOAD_JS = DESKTOP / "preload.js"
 README = DESKTOP / "README.md"
 GITIGNORE = ROOT / ".gitignore"
@@ -25,8 +26,8 @@ def test_desktop_package_has_minimal_electron_start_script():
     assert package["version"] == "0.3.0"
     assert package["private"] is True
     assert package["main"] == "main.js"
-    assert package["scripts"] == {"start": "electron ."}
-    assert package["devDependencies"]["electron"] == "43.0.0"
+    assert package["scripts"] == {"start": "node launch.js"}
+    assert package["devDependencies"]["electron"] == "37.10.3"
     forbidden_scripts = {"pack", "package", "dist", "release", "make", "publish"}
     assert not forbidden_scripts.intersection(package["scripts"])
     assert "electron-builder" not in json.dumps(package).lower()
@@ -35,7 +36,7 @@ def test_desktop_package_has_minimal_electron_start_script():
 def test_package_lock_exists_and_locks_electron():
     assert PACKAGE_LOCK.exists()
     lock = json.loads(_read(PACKAGE_LOCK))
-    assert lock["packages"][""]["devDependencies"]["electron"] == "43.0.0"
+    assert lock["packages"][""]["devDependencies"]["electron"] == "37.10.3"
     assert "node_modules/electron" in lock["packages"]
 
 
@@ -60,6 +61,7 @@ def test_main_and_preload_exist_with_only_folder_picker_bridge():
 def test_main_starts_existing_python_launcher_with_desktop_flags():
     main = _read(MAIN_JS)
     assert 'path.resolve(__dirname, "..")' in main
+    assert "CINESUB_REPO_ROOT" in main
     assert '".venv", "Scripts", "python.exe"' in main
     assert '".venv", "bin", "python"' in main
     assert 'commandWorks("python", ["--version"])' in main
@@ -70,6 +72,16 @@ def test_main_starts_existing_python_launcher_with_desktop_flags():
     assert '"--non-interactive"' in main
     assert '"--port"' in main
     assert '"src.web.web_server"' not in main
+
+
+def test_launch_stages_electron_app_outside_non_ascii_project_path():
+    assert LAUNCH_JS.exists()
+    launch = _read(LAUNCH_JS)
+    assert 'path.join(os.tmpdir(), "cinesub-studio-electron-app")' in launch
+    assert 'for (const fileName of ["main.js", "preload.js"])' in launch
+    assert 'CINESUB_REPO_ROOT: repoRoot' in launch
+    assert 'spawn(electronPath, [stagedAppDir]' in launch
+    assert 'stdio: "inherit"' in launch
 
 
 def test_main_port_handling_does_not_reuse_or_fallback_silently():

@@ -10,7 +10,9 @@ const DEFAULT_PORT = 7860;
 const READINESS_TIMEOUT_MS = 30000;
 const READINESS_INTERVAL_MS = 500;
 
-const repoRoot = path.resolve(__dirname, "..");
+const repoRoot = process.env.CINESUB_REPO_ROOT
+  ? path.resolve(process.env.CINESUB_REPO_ROOT)
+  : path.resolve(__dirname, "..");
 const appUrl = (port) => `http://127.0.0.1:${port}/`;
 
 let backendProcess = null;
