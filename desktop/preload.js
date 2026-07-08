@@ -1,3 +1,7 @@
 "use strict";
 
-// v0.3 intentionally exposes no Node APIs to the Web UI.
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("cineSubDesktop", {
+  selectDirectory: () => ipcRenderer.invoke("dialog:select-directory")
+});

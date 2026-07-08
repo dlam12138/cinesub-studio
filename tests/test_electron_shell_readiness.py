@@ -39,12 +39,19 @@ def test_package_lock_exists_and_locks_electron():
     assert "node_modules/electron" in lock["packages"]
 
 
-def test_main_and_preload_exist_with_no_node_api_exposure():
+def test_main_and_preload_exist_with_only_folder_picker_bridge():
     assert MAIN_JS.exists()
     assert PRELOAD_JS.exists()
     preload = _read(PRELOAD_JS)
-    assert "contextBridge" not in preload
-    assert "ipcRenderer" not in preload
+    assert 'contextBridge.exposeInMainWorld("cineSubDesktop"' in preload
+    assert "selectDirectory" in preload
+    assert 'ipcRenderer.invoke("dialog:select-directory")' in preload
+    assert "ipcRenderer.send" not in preload
+    assert "ipcRenderer.on" not in preload
+    assert "require(\"node:fs\")" not in preload
+    assert "require(\"node:child_process\")" not in preload
+    assert "require(\"fs\")" not in preload
+    assert "require(\"child_process\")" not in preload
     assert "api_key" not in preload.lower()
     assert "token" not in preload.lower()
     assert "secret" not in preload.lower()
@@ -159,6 +166,7 @@ def test_gitignore_keeps_desktop_runtime_artifacts_out_and_acceptance_in():
     ):
         assert marker in gitignore
     assert "!acceptance/v0_3_electron_desktop_shell_mvp.md" in gitignore
+    assert "!acceptance/v0_3_2_electron_folder_picker.md" in gitignore
 
 
 def test_acceptance_note_exists_with_required_evidence_sections():

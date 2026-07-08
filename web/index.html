@@ -350,6 +350,35 @@
       padding: 7px 9px;
     }
 
+    .directory-picker-row {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .directory-picker-row input {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .directory-picker-btn {
+      flex: 0 0 auto;
+      min-height: 36px;
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .directory-picker-btn:hover {
+      background: #eef2f6;
+    }
+
     .toolbar-actions {
       display: flex;
       gap: 8px;
@@ -1578,13 +1607,15 @@
     button,
     .secondary-btn,
     .settings-jump,
+    .directory-picker-btn,
     .dl-link {
       border-radius: var(--radius);
     }
 
     .actions button,
     .secondary-btn,
-    .settings-jump {
+    .settings-jump,
+    .directory-picker-btn {
       border-color: rgba(170, 188, 212, .23);
       background: rgba(255, 255, 255, .06);
       color: var(--text);
@@ -1592,7 +1623,8 @@
 
     .actions button:hover,
     .secondary-btn:hover,
-    .settings-jump:hover {
+    .settings-jump:hover,
+    .directory-picker-btn:hover {
       border-color: rgba(99, 179, 255, .42);
       background: rgba(99, 179, 255, .12);
     }
@@ -1793,6 +1825,8 @@
       .transcribe-layout { grid-template-columns: 1fr; }
       .toolbar { grid-template-columns: 1fr; }
       .toolbar .wide { grid-column: auto; }
+      .directory-picker-row { flex-direction: column; }
+      .directory-picker-btn { width: 100%; }
       .storage-grid { grid-template-columns: 1fr; }
       .runtime-diagnostics-layout { grid-template-columns: 1fr; }
       .asr-evidence-layout,
@@ -1853,7 +1887,10 @@
       <div class="toolbar">
       <div class="field wide option-card">
         <label for="pipelineInputDir">视频目录<span class="recommend-badge">可填绝对路径</span></label>
-        <input id="pipelineInputDir" type="text" value="input" placeholder="input 或 D:\Movies">
+        <div class="directory-picker-row">
+          <input id="pipelineInputDir" type="text" value="input" placeholder="input 或 D:\Movies">
+          <button id="pipelineDirectoryPickerBtn" class="directory-picker-btn" type="button" hidden disabled>选择文件夹</button>
+        </div>
         <span class="help-text">相对路径会从项目目录开始找；蓝光电影建议放在任意磁盘目录，然后填完整路径。</span>
       </div>
       <div class="field option-card">
@@ -4174,6 +4211,35 @@ function showToast(message, ok) {
 
 // ═══════════════════ Pipeline Selects ═══════════════════
 
+function setupDesktopDirectoryPicker() {
+  var btn = document.getElementById('pipelineDirectoryPickerBtn');
+  if (!btn) return;
+  if (!window.cineSubDesktop?.selectDirectory) {
+    btn.hidden = true;
+    btn.disabled = true;
+    return;
+  }
+
+  btn.hidden = false;
+  btn.disabled = false;
+  btn.addEventListener('click', async function() {
+    btn.disabled = true;
+    try {
+      var selectedPath = await window.cineSubDesktop.selectDirectory();
+      if (selectedPath) {
+        var inputDirEl = document.getElementById('pipelineInputDir');
+        if (inputDirEl) {
+          inputDirEl.value = selectedPath;
+        }
+      }
+    } catch (err) {
+      appendLog('选择文件夹失败: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 async function loadPipelineSelects() {
   // Load provider select
   var ps = document.getElementById('pipelineProviderSelect');
@@ -4501,6 +4567,7 @@ function onLangProfileSelect() {
 }
 
 // Load pipeline selects on page load
+setupDesktopDirectoryPicker();
 loadPipelineSelects();
 loadTopStatus();
 loadLangProfileSelect();

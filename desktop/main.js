@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const http = require("node:http");
 const net = require("node:net");
@@ -224,6 +224,18 @@ function showStartupError(message) {
   );
 }
 
+function registerDirectoryPicker() {
+  ipcMain.handle("dialog:select-directory", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openDirectory"]
+    });
+    if (result.canceled || !result.filePaths || !result.filePaths.length) {
+      return null;
+    }
+    return result.filePaths[0] || null;
+  });
+}
+
 async function main() {
   const port = parsePort();
   const python = resolvePython();
@@ -266,7 +278,10 @@ async function main() {
   }
 }
 
-app.whenReady().then(main);
+app.whenReady().then(() => {
+  registerDirectoryPicker();
+  return main();
+});
 
 app.on("before-quit", () => {
   isQuitting = true;
