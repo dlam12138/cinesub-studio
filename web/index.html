@@ -6,32 +6,39 @@
   <title>字幕工坊 — 视频字幕生成器</title>
   <style>
     :root {
-      color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --text: #1d232a;
-      --muted: #667085;
-      --line: #dde2e8;
-      --primary: #1f6feb;
-      --primary-dark: #174ea6;
-      --danger: #b42318;
-      --danger-dark: #912018;
-      --ok: #067647;
-      --ok-bg: #dcfae6;
-      --warn: #b54708;
-      --warn-bg: #fffaeb;
-      --err-bg: #fee4e2;
-      --info-bg: #eff6ff;
-      --ink: #0f172a;
-      --soft: #f8fafc;
+      color-scheme: dark;
+      --bg: #090d14;
+      --panel: #111823;
+      --panel-strong: #151f2d;
+      --panel-soft: #1b2736;
+      --text: #edf2f7;
+      --muted: #9aa8ba;
+      --line: rgba(170, 188, 212, .18);
+      --primary: #63b3ff;
+      --primary-dark: #3187d8;
+      --danger: #ff6b6b;
+      --danger-dark: #e14d4d;
+      --danger-bg: rgba(255, 107, 107, .15);
+      --ok: #49d18d;
+      --ok-bg: rgba(73, 209, 141, .14);
+      --warn: #f7b955;
+      --warn-bg: rgba(247, 185, 85, .14);
+      --err-bg: rgba(255, 107, 107, .15);
+      --info-bg: rgba(99, 179, 255, .13);
+      --ink: #f8fbff;
+      --soft: #0e1520;
       --radius: 8px;
+      --shadow: 0 20px 48px rgba(0, 0, 0, .28);
     }
 
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
-      background: var(--bg);
+      font-family: "Bahnschrift", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px) 0 0 / 34px 34px,
+        radial-gradient(circle at 20% 0%, rgba(77, 151, 255, .16), transparent 32%),
+        var(--bg);
       color: var(--text);
     }
 
@@ -1354,9 +1361,452 @@
     }
     .settings-jump:hover { background: #eef2f6; }
 
+    /* ── v0.2 Premium UI Refresh: cinema control-room shell ── */
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 264px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      padding: 22px 18px;
+      border-right: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .025)), #0b111b;
+      box-shadow: inset -1px 0 0 rgba(255, 255, 255, .04);
+    }
+
+    .brand-block {
+      padding: 14px 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, .045);
+    }
+
+    .brand-kicker,
+    .eyebrow {
+      display: block;
+      color: var(--primary);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .brand-block h1 {
+      margin: 10px 0 2px;
+      color: var(--ink);
+      font-size: 25px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .brand-block strong {
+      display: block;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .version-chip {
+      display: inline-flex;
+      margin-top: 14px;
+      padding: 4px 8px;
+      border: 1px solid rgba(99, 179, 255, .34);
+      border-radius: 999px;
+      color: #c7e4ff;
+      background: rgba(99, 179, 255, .12);
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .rail-nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .rail-nav .tab-btn {
+      width: 100%;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      font-weight: 750;
+    }
+
+    .rail-nav .tab-btn span {
+      width: 30px;
+      height: 24px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 6px;
+      color: #708198;
+      background: rgba(255, 255, 255, .045);
+      font-size: 11px;
+      font-weight: 900;
+      font-family: "Consolas", "Cascadia Mono", monospace;
+    }
+
+    .rail-nav .tab-btn:hover {
+      border-color: rgba(99, 179, 255, .22);
+      background: rgba(255, 255, 255, .055);
+      color: var(--text);
+    }
+
+    .rail-nav .tab-btn.active {
+      margin-bottom: 0;
+      border-color: rgba(99, 179, 255, .38);
+      background: linear-gradient(90deg, rgba(99, 179, 255, .18), rgba(73, 209, 141, .075));
+      color: var(--ink);
+      box-shadow: 0 12px 30px rgba(20, 80, 140, .22);
+    }
+
+    .rail-nav .tab-btn.active span {
+      color: #d8efff;
+      background: rgba(99, 179, 255, .22);
+    }
+
+    .rail-note {
+      margin-top: auto;
+      padding: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .app-main { min-width: 0; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: minmax(260px, .85fr) minmax(520px, 1.3fr);
+      gap: 22px;
+      align-items: center;
+      padding: 18px 28px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9, 13, 20, .92);
+      backdrop-filter: blur(16px);
+    }
+
+    .topbar h2 {
+      margin: 4px 0 0;
+      color: var(--ink);
+      font-size: 21px;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    main {
+      max-width: none;
+      padding: 24px 28px 34px;
+    }
+
+    .tab-content.active {
+      display: block;
+      animation: panelIn .18s ease-out;
+    }
+
+    @keyframes panelIn {
+      from { opacity: .75; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .status-strip {
+      grid-template-columns: repeat(4, minmax(130px, 1fr));
+      margin: 0;
+    }
+
+    .status-pill,
+    .settings-panel,
+    .card,
+    .runtime-section,
+    .settings-intro,
+    .provider-active-bar,
+    .option-card,
+    .jobs-workspace {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255, 255, 255, .072), rgba(255, 255, 255, .038));
+      box-shadow: var(--shadow);
+    }
+
+    .status-pill {
+      min-height: 60px;
+      border-radius: var(--radius);
+    }
+
+    .status-pill strong,
+    .settings-head h2,
+    .settings-head h3,
+    .card h2,
+    .runtime-section h3 {
+      color: var(--ink);
+    }
+
+    .settings-panel,
+    .card,
+    .settings-intro,
+    .provider-active-bar,
+    .jobs-workspace {
+      border-radius: var(--radius);
+    }
+
+    .option-card {
+      border-radius: var(--radius);
+      box-shadow: none;
+    }
+
+    input,
+    select,
+    textarea {
+      border-color: rgba(170, 188, 212, .24);
+      background: rgba(5, 9, 14, .46);
+      color: var(--text);
+    }
+
+    input:disabled,
+    button:disabled,
+    textarea:disabled {
+      background: rgba(255, 255, 255, .08);
+      color: #8190a4;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus,
+    button:focus-visible,
+    a:focus-visible {
+      outline: 2px solid rgba(99, 179, 255, .78);
+      outline-offset: 2px;
+    }
+
+    button,
+    .secondary-btn,
+    .settings-jump,
+    .dl-link {
+      border-radius: var(--radius);
+    }
+
+    .actions button,
+    .secondary-btn,
+    .settings-jump {
+      border-color: rgba(170, 188, 212, .23);
+      background: rgba(255, 255, 255, .06);
+      color: var(--text);
+    }
+
+    .actions button:hover,
+    .secondary-btn:hover,
+    .settings-jump:hover {
+      border-color: rgba(99, 179, 255, .42);
+      background: rgba(99, 179, 255, .12);
+    }
+
+    .actions button.primary,
+    .btn-full,
+    .btn-save {
+      border-color: rgba(99, 179, 255, .58);
+      background: linear-gradient(135deg, #4da3ff, #2d7ed1);
+      color: #fff;
+      box-shadow: 0 16px 34px rgba(45, 126, 209, .26);
+    }
+
+    .actions button.danger {
+      background: linear-gradient(135deg, #ff7b7b, #d94f4f);
+      border-color: rgba(255, 123, 123, .5);
+    }
+
+    .placeholder,
+    .log-panel,
+    .mini-log {
+      border-color: rgba(170, 188, 212, .16);
+      background: rgba(5, 9, 14, .42);
+      color: var(--muted);
+    }
+
+    .check,
+    .option-card.check.compact,
+    .file-source,
+    details,
+    details summary,
+    .inspect-result,
+    .diagnostics-summary,
+    .pipeline-stat,
+    .danger-zone {
+      border-color: rgba(170, 188, 212, .18);
+      background: rgba(255, 255, 255, .045);
+      color: var(--text);
+    }
+
+    details summary {
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+
+    .inspect-result.ok,
+    .diagnostics-summary.ok,
+    .pipeline-stat.done {
+      background: rgba(73, 209, 141, .11);
+      border-color: rgba(73, 209, 141, .34);
+    }
+
+    .inspect-result.warn,
+    .diagnostics-summary.warning,
+    .diagnostics-summary.not_configured,
+    .pipeline-stat.warning {
+      background: rgba(247, 185, 85, .12);
+      border-color: rgba(247, 185, 85, .34);
+    }
+
+    .inspect-result.err,
+    .diagnostics-summary.error,
+    .pipeline-stat.failed,
+    .danger-zone {
+      background: rgba(255, 107, 107, .1);
+      border-color: rgba(255, 107, 107, .3);
+    }
+
+    .jobs-workspace { padding: 18px; }
+    .job-queue-panel { margin-top: 14px; }
+    .job-queue-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .profile-scope-strip {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 12px 0;
+    }
+
+    .profile-scope-strip span {
+      padding: 7px 10px;
+      border: 1px solid rgba(170, 188, 212, .18);
+      border-radius: 999px;
+      color: #c5d2e2;
+      background: rgba(255, 255, 255, .05);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .empty-state {
+      min-height: 110px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+    }
+
+    .job-queue-item,
+    .task-row,
+    .storage-item,
+    .diagnostic-row {
+      border-color: rgba(170, 188, 212, .16);
+      background: rgba(255, 255, 255, .045);
+    }
+
+    .provider-table th,
+    .mini-table th,
+    .asr-sample-table th {
+      color: #b7c6d8;
+      border-color: rgba(170, 188, 212, .22);
+      background: rgba(255, 255, 255, .035);
+    }
+
+    .provider-table td,
+    .mini-table td,
+    .asr-sample-table td {
+      border-color: rgba(170, 188, 212, .13);
+    }
+
+    .provider-table tr:hover td,
+    .mini-table tr:hover td {
+      background: rgba(99, 179, 255, .08);
+    }
+
+    .provider-table .col-act button {
+      border-color: rgba(170, 188, 212, .24);
+      background: rgba(255, 255, 255, .06);
+      color: var(--text);
+    }
+
+    .modal {
+      border: 1px solid var(--line);
+      background: #111823;
+      color: var(--text);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .45);
+    }
+
+    .toast-layer {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      z-index: 1000;
+      display: grid;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .toast {
+      max-width: 360px;
+      padding: 11px 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(17, 24, 35, .96);
+      color: var(--text);
+      box-shadow: var(--shadow);
+      font-size: 13px;
+      line-height: 1.45;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+
+    .toast.ok { border-color: rgba(73, 209, 141, .42); }
+    .toast.err { border-color: rgba(255, 107, 107, .46); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .tab-content.active { animation: none; }
+    }
+
+    @media (max-width: 1100px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar {
+        position: relative;
+        height: auto;
+        padding: 14px;
+      }
+      .rail-nav { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .rail-nav .tab-btn {
+        justify-content: center;
+        font-size: 13px;
+      }
+      .rail-nav .tab-btn span,
+      .rail-note { display: none; }
+      .topbar {
+        position: relative;
+        grid-template-columns: 1fr;
+      }
+    }
+
     @media (max-width: 900px) {
+      .rail-nav { grid-template-columns: 1fr 1fr; }
+      .topbar { padding: 16px; }
       main { padding: 14px; }
-      header { padding: 18px 14px 0; }
       .status-strip { grid-template-columns: 1fr; }
       .cards { grid-template-columns: 1fr; }
       .transcribe-layout { grid-template-columns: 1fr; }
@@ -1377,23 +1827,37 @@
 </head>
 <body>
 
-<header>
-  <h1>CineSub Studio Pipeline</h1>
-  <p class="sub">选择视频 → 语音识别 → 翻译 → 获取字幕</p>
-  <div class="status-strip">
-    <div class="status-pill"><span>翻译接口</span><strong id="statusProvider">读取中...</strong></div>
-    <div class="status-pill"><span>语言风格</span><strong id="statusProfile">auto-detect</strong></div>
-    <div class="status-pill"><span>临时空间</span><strong id="statusTempSpace">读取中...</strong></div>
-    <div class="status-pill"><span>模型缓存</span><strong id="statusModelCache">项目内 .cache / models</strong></div>
-  </div>
-  <nav class="tabs">
-    <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">📁 批量处理</button>
-    <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">🎬 单文件字幕</button>
-    <button class="tab-btn" data-tab="runtime" onclick="switchTab('runtime')">运行环境</button>
-    <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">🔑 翻译接口</button>
-    <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')">🌐 语言风格</button>
-  </nav>
-</header>
+<div class="app-shell" data-refresh="v0.2-premium-ui-refresh">
+  <aside class="sidebar" aria-label="主导航">
+    <div class="brand-block">
+      <span class="brand-kicker">Local Web App</span>
+      <h1>CineSub Studio</h1>
+      <strong>字幕工坊</strong>
+      <span class="version-chip">v0.2 Preview</span>
+    </div>
+    <nav class="tabs rail-nav">
+      <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')"><span>01</span>开始处理</button>
+      <button class="tab-btn" data-tab="jobs" onclick="switchTab('jobs')"><span>02</span>最近任务</button>
+      <button class="tab-btn" data-tab="runtime" onclick="switchTab('runtime')"><span>03</span>运行环境</button>
+      <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')"><span>04</span>翻译接口</button>
+      <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')"><span>05</span>语言风格</button>
+    </nav>
+    <div class="rail-note">本地优先处理，模型、缓存和字幕产物保持在项目目录内。</div>
+  </aside>
+
+  <div class="app-main">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Cinema subtitle control room</p>
+        <h2>选择视频 → 语音识别 → 翻译 → 输出字幕</h2>
+      </div>
+      <div class="status-strip">
+        <div class="status-pill"><span>翻译接口</span><strong id="statusProvider">读取中...</strong></div>
+        <div class="status-pill"><span>语言风格</span><strong id="statusProfile">auto-detect</strong></div>
+        <div class="status-pill"><span>临时空间</span><strong id="statusTempSpace">读取中...</strong></div>
+        <div class="status-pill"><span>模型缓存</span><strong id="statusModelCache">项目内 .cache / models</strong></div>
+      </div>
+    </header>
 
 <main>
   <!-- ═══════════════ Pipeline Tab ═══════════════ -->
@@ -1594,7 +2058,7 @@
     </div>
     <div class="runtime-diagnostics-layout">
       <section class="card">
-        <h2>环境检查</h2>
+        <h2>总体状态</h2>
         <div id="diagnostics-result" class="placeholder">正在读取运行环境诊断...</div>
       </section>
       <section class="runtime-sections">
@@ -1623,7 +2087,7 @@
   </div>
 
   <!-- ═══════════════ Transcribe Tab ═══════════════ -->
-  <div id="tab-transcribe" class="tab-content">
+  <div id="tab-transcribe" class="tab-content active">
     <div class="transcribe-layout">
       <section>
         <h2>语音识别与翻译</h2>
@@ -1954,18 +2418,27 @@
         </div>
         <pre id="log" class="log-panel">等待任务开始。</pre>
 
-        <div id="jobQueuePanel" style="margin-top:18px">
-          <h3 style="font-size:15px;margin:0 0 10px">📋 最近任务</h3>
-          <div id="jobQueueActions" style="margin-bottom:10px">
-            <button type="button" class="secondary-btn" onclick="loadJobQueue()">刷新</button>
-            <span class="help-text" style="margin-left:6px">自动刷新会在有运行中任务时开启。</span>
-          </div>
-          <div id="jobQueueList">
-            <div class="placeholder">暂无任务记录。</div>
-          </div>
-        </div>
       </section>
     </div>
+  </div>
+
+  <!-- ═══════════════ Recent Jobs Tab ═══════════════ -->
+  <div id="tab-jobs" class="tab-content">
+    <section class="jobs-workspace">
+      <div class="settings-head">
+        <h2>最近任务</h2>
+        <p class="panel-copy">查看本次本地服务会话中的字幕任务、进度、输出文件和失败复核入口。</p>
+      </div>
+      <div id="jobQueuePanel" class="job-queue-panel">
+        <div id="jobQueueActions" class="job-queue-toolbar">
+          <button type="button" class="secondary-btn" onclick="loadJobQueue()">刷新</button>
+          <span class="help-text">自动刷新会在有运行中任务时开启。</span>
+        </div>
+        <div id="jobQueueList">
+          <div class="placeholder empty-state">还没有任务，先选择一个视频开始处理</div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- ═══════════════ Provider Tab ═══════════════ -->
@@ -1998,6 +2471,13 @@
     <div class="settings-intro">
       <strong>语言风格管理 ASR 默认值、翻译偏好和术语表。</strong>
       Provider 不参与识别参数；任务页显式填写的 ASR 参数仍然优先于这里的默认值。
+    </div>
+    <div class="profile-scope-strip" aria-label="语言风格配置范围">
+      <span>基本信息</span>
+      <span>语音识别默认值</span>
+      <span>翻译风格</span>
+      <span>术语表</span>
+      <span>字幕输出</span>
     </div>
     <div class="provider-active-bar" id="lpActiveBar">
       <span>当前默认：</span>
@@ -2143,6 +2623,9 @@
   </div>
 
 </main>
+  </div>
+</div>
+<div id="toastLayer" class="toast-layer" aria-live="polite"></div>
 
 <script>
 // ═══════════════════ Pipeline API ═══════════════════
@@ -3483,6 +3966,7 @@ function showSettingsNotice(id, message, ok) {
   if (!el) return;
   el.textContent = message;
   el.className = 'settings-notice ' + (ok ? 'ok' : 'err');
+  showToast(message, ok);
 }
 
 function clearSettingsNotice(id) {
@@ -3490,6 +3974,22 @@ function clearSettingsNotice(id) {
   if (!el) return;
   el.textContent = '';
   el.className = 'settings-notice';
+}
+
+function showToast(message, ok) {
+  var layer = document.getElementById('toastLayer');
+  if (!layer || !message) return;
+  var item = document.createElement('div');
+  item.className = 'toast ' + (ok ? 'ok' : 'err');
+  item.textContent = message;
+  layer.appendChild(item);
+  window.setTimeout(function() {
+    item.style.opacity = '0';
+    item.style.transform = 'translateY(6px)';
+    window.setTimeout(function() {
+      if (item.parentNode) item.parentNode.removeChild(item);
+    }, 220);
+  }, 2600);
 }
 
 // ═══════════════════ Transcribe Tab (preserved from original) ═══════════
@@ -4114,14 +4614,22 @@ function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(function(b) {
     b.classList.toggle('active', b.dataset.tab === name);
   });
+  var activeTabs = {};
+  if (name === 'pipeline') {
+    activeTabs['tab-pipeline'] = true;
+    activeTabs['tab-transcribe'] = true;
+  } else {
+    activeTabs['tab-' + name] = true;
+  }
   document.querySelectorAll('.tab-content').forEach(function(c) {
-    c.classList.toggle('active', c.id === 'tab-' + name);
+    c.classList.toggle('active', !!activeTabs[c.id]);
   });
   if (name === 'providers') loadProviders();
   if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); loadJobQueue(); }
+  if (name === 'jobs') loadJobQueue();
   if (name === 'langprofiles') loadLangProfiles();
   if (name === 'runtime') loadRuntimeDiagnostics();
-  if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); }
+  if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); loadProviderSelect(); loadLangProfileSelect(); }
 }
 
 async function loadProviders() {
@@ -4151,7 +4659,7 @@ function renderProviderList() {
     el.innerHTML = '<div class="placeholder">暂无接口配置。点击"+ 新增接口"添加 DeepSeek。</div>';
     return;
   }
-  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>协议</th><th>API 地址</th><th>模型</th><th>Key</th><th>启用</th><th>备注</th><th class="col-act">操作</th></tr></thead><tbody>';
+  var html = '<table class="provider-table"><thead><tr><th>名称</th><th>接口类型</th><th>API 地址</th><th>模型</th><th>API Key 状态</th><th>启用状态</th><th>备注</th><th class="col-act">操作</th></tr></thead><tbody>';
   for (var i = 0; i < providerCache.length; i++) {
     var p = providerCache[i];
     var keyStatus = p.api_key_masked || '<span style="color:var(--danger)">未设置</span>';

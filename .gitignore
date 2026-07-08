@@ -95,6 +95,7 @@ acceptance/*
 !acceptance/m13_local_launcher_readiness.md
 !acceptance/m14_windows_portable_release_readiness.md
 !acceptance/v0_1_internal_preview_validation.md
+!acceptance/v0_2_premium_ui_refresh.md
 acceptance/screenshots/
 acceptance/tmp/
 data/
