@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import provider_store
 import runtime_api
@@ -25,6 +26,19 @@ def _patch_runtime(monkeypatch, tmp_path, *, python_minor=13):
     venv_python = project_root / ".venv" / "Scripts" / "python.exe"
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("fake", encoding="utf-8")
+    base_python = project_root / f"Python3{python_minor}" / "python.exe"
+    base_python.parent.mkdir(parents=True)
+    base_python.write_text("fake", encoding="utf-8")
+    (project_root / ".venv" / "pyvenv.cfg").write_text(
+        "\n".join(
+            [
+                f"home = {base_python.parent}",
+                f"executable = {base_python}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(runtime_env, "PROJECT_ROOT", project_root)
     monkeypatch.setattr(runtime_env, "TOOLS_DIR", project_root / "tools")
@@ -39,7 +53,8 @@ def _patch_runtime(monkeypatch, tmp_path, *, python_minor=13):
     monkeypatch.setattr(runtime_env, "LOGS_DIR", project_root / "logs")
     monkeypatch.setattr(runtime_env.sys, "executable", str(venv_python))
     monkeypatch.setattr(runtime_env.sys, "prefix", str(project_root / ".venv"))
-    monkeypatch.setattr(runtime_env.sys, "base_prefix", str(project_root / f"Python3{python_minor}"))
+    monkeypatch.setattr(runtime_env.sys, "base_prefix", str(base_python.parent))
+    monkeypatch.setattr(runtime_env.sys, "_base_executable", str(base_python))
     monkeypatch.setattr(
         runtime_env.sys,
         "version_info",
@@ -78,6 +93,8 @@ def test_runtime_diagnostics_preserves_old_fields_and_adds_user_readable_items(m
     assert payload["ffmpeg_ok"] is True
     assert payload["cuda_ready"] is True
     assert payload["ffmpeg_source"] == "bundled"
+    assert payload["venv_config_ok"] is True
+    assert payload["venv_config_issues"] == []
     assert payload["diagnostic_summary"]["status"] == "warning"
     assert isinstance(payload["diagnostic_items"], list)
     assert set(payload["diagnostic_summary"]) >= {"status", "title", "message"}
@@ -87,6 +104,7 @@ def test_runtime_diagnostics_preserves_old_fields_and_adds_user_readable_items(m
     python_item = _item(payload, "python")
     assert python_item["status"] == "warning"
     assert python_item["blocking"] is False
+    assert _item(payload, "venv_config")["status"] == "ok"
 
     assert _item(payload, "output_dir")["status"] == "ok"
     assert _item(payload, "work_dir")["status"] == "ok"
@@ -101,6 +119,59 @@ def test_runtime_diagnostics_missing_model_cache_is_not_error(monkeypatch, tmp_p
     model_item = _item(payload, "model_cache")
     assert model_item["status"] == "not_configured"
     assert model_item["blocking"] is False
+
+
+def test_runtime_diagnostics_reports_mismatched_venv_config_as_non_blocking_warning(
+    monkeypatch,
+    tmp_path,
+):
+    _patch_runtime(monkeypatch, tmp_path, python_minor=12)
+    config = tmp_path / ".venv" / "pyvenv.cfg"
+    config.write_text(
+        "home = C:\\broken\nexecutable = C:\\broken\\python.exe\n",
+        encoding="utf-8",
+    )
+
+    payload = runtime_env.runtime_diagnostics()
+
+    assert payload["venv_config_ok"] is False
+    assert payload["venv_config_issues"]
+    item = _item(payload, "venv_config")
+    assert item["status"] == "warning"
+    assert item["blocking"] is False
+    assert "RepairVenvConfig" in item["suggestion"]
+
+
+def test_module_status_isolates_native_import_in_subprocess(monkeypatch):
+    monkeypatch.setattr(runtime_env.importlib.util, "find_spec", lambda _name: object())
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(runtime_env.subprocess, "run", fake_run)
+
+    assert runtime_env._module_status("ctranslate2") == (True, "")
+    assert captured["command"][-1] == "ctranslate2"
+    assert captured["command"][0] == runtime_env.sys.executable
+    assert captured["kwargs"]["timeout"] == 15
+
+
+def test_module_status_reports_subprocess_failure_without_importing_in_process(monkeypatch):
+    monkeypatch.setattr(runtime_env.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(
+        runtime_env.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=-1073741819,
+            stdout="",
+            stderr="native import failed",
+        ),
+    )
+
+    assert runtime_env._module_status("ctranslate2") == (False, "native import failed")
 
 
 def test_runtime_directory_diagnostics_probe_existing_dirs_and_delete_temp_files(

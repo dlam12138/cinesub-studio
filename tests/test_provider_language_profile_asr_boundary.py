@@ -74,6 +74,7 @@ def test_legacy_provider_asr_fields_are_ignored_when_resolving(isolated_provider
         "api_base": "https://example.invalid/v1",
         "api_key": "sk-test",
         "llm_model": "llm-test",
+        "translation_quality_model": "llm-test",
     }
 
 
@@ -86,6 +87,7 @@ def test_upsert_provider_scrubs_legacy_asr_fields(isolated_provider_store):
             "api_base": "https://example.invalid/v1",
             "api_key": "sk-test",
             "model": "llm-test",
+            "translation_quality_model": "llm-quality",
             "whisper_model": "provider-small",
             "whisper_device": "cuda",
             "enabled": True,
@@ -98,6 +100,10 @@ def test_upsert_provider_scrubs_legacy_asr_fields(isolated_provider_store):
     assert "whisper_device" not in saved
     assert "whisper_model" not in raw_text
     assert "whisper_device" not in raw_text
+    assert saved["translation_quality_model"] == "llm-quality"
+    assert provider_store.resolve_provider_config("clean-main")[
+        "translation_quality_model"
+    ] == "llm-quality"
 
 
 def test_provider_example_config_does_not_expose_asr_fields():

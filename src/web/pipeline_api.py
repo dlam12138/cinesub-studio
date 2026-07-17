@@ -14,6 +14,7 @@ from process_env import build_child_process_env, redact_project_path
 from runtime_paths import resolve_runtime_paths
 from segment_asr_routing_integration import DEFAULT_APPLY_WINDOW_SECONDS, DEFAULT_MAX_APPLY_WINDOWS
 from subtitle_model import ASS_RESERVED_MESSAGE, DEFAULT_ASS_STYLE_ID, normalize_subtitle_formats
+from task_state import is_valid_output_file, recovery_state as shared_recovery_state
 
 
 PATHS = resolve_runtime_paths()
@@ -213,6 +214,10 @@ def start_pipeline_background(
     language: str = "",
     hf_endpoint: str = "",
     local_files_only: bool = False,
+    asr_experiment_mode: str = "off",
+    asr_candidate_id: str = "",
+    translation_reliability_mode: str | None = None,
+    translation_max_extra_requests: int | None = None,
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
     segment_asr_routing: str = "off",
@@ -250,6 +255,10 @@ def start_pipeline_background(
             "language": language,
             "hf_endpoint": hf_endpoint,
             "local_files_only": local_files_only,
+            "asr_experiment_mode": asr_experiment_mode,
+            "asr_candidate_id": asr_candidate_id,
+            "translation_reliability_mode": translation_reliability_mode,
+            "translation_max_extra_requests": translation_max_extra_requests,
             "subtitle_formats": subtitle_formats,
             "ass_style_id": ass_style_id,
             "segment_asr_routing": segment_asr_routing,
@@ -279,6 +288,10 @@ def run_pipeline_background(
     language: str = "",
     hf_endpoint: str = "",
     local_files_only: bool = False,
+    asr_experiment_mode: str = "off",
+    asr_candidate_id: str = "",
+    translation_reliability_mode: str | None = None,
+    translation_max_extra_requests: int | None = None,
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
     segment_asr_routing: str = "off",
@@ -303,6 +316,10 @@ def run_pipeline_background(
         translate_enabled=translate_enabled,
         language=language,
         local_files_only=local_files_only,
+        asr_experiment_mode=asr_experiment_mode,
+        asr_candidate_id=asr_candidate_id,
+        translation_reliability_mode=translation_reliability_mode,
+        translation_max_extra_requests=translation_max_extra_requests,
         subtitle_formats=subtitle_formats_list,
         ass_style_id=ass_style_id,
         segment_asr_routing=segment_asr_routing,
@@ -600,69 +617,11 @@ def _classify_review_result(payload: dict) -> None:
 
 
 def _recovery_state(raw: dict, effective_status: str) -> dict:
-    if effective_status == "failed":
-        return _recovery("retry_failed", True)
-    if effective_status == "stale":
-        return _recovery("stale_running_warning", False)
-    if effective_status == "completed":
-        if _completed_state_outputs_valid(raw):
-            return _recovery("skip_completed", False)
-        return _recovery("not_recoverable", False)
-    if effective_status == "pending" and _has_reusable_outputs(raw):
-        return _recovery("reuse_outputs", True)
-    return _recovery("none", False)
-
-
-def _recovery(action: str, recoverable: bool) -> dict:
-    labels = {
-        "none": "无恢复操作",
-        "retry_failed": "可重试失败任务",
-        "skip_completed": "已完成且产物有效，将跳过",
-        "reuse_outputs": "可复用已有中间产物",
-        "stale_running_warning": "可能中断，需人工确认",
-        "not_recoverable": "状态与产物不一致",
-    }
-    return {
-        "recovery_action": action,
-        "recoverable": recoverable,
-        "recovery_label": labels.get(action, action),
-    }
-
-
-def _completed_state_outputs_valid(raw: dict) -> bool:
-    paths = _state_output_paths(raw)
-    if not paths:
-        return False
-    return all(_is_valid_file(path) for path in paths)
-
-
-def _has_reusable_outputs(raw: dict) -> bool:
-    paths = [
-        raw.get("audio_path", ""),
-        raw.get("source_srt", ""),
-        raw.get("translated_srt", ""),
-        raw.get("bilingual_srt", ""),
-        raw.get("quality_report", ""),
-    ]
-    return any(_is_valid_file(path) for path in paths)
-
-
-def _state_output_paths(raw: dict) -> list[str]:
-    paths = [raw.get("source_srt", "")]
-    paths.extend(path for path in [raw.get("translated_srt", ""), raw.get("bilingual_srt", "")] if path)
-    if raw.get("quality_report"):
-        paths.append(raw.get("quality_report", ""))
-    return [path for path in paths if path]
+    return shared_recovery_state(raw, effective_status)
 
 
 def _is_valid_file(path: str) -> bool:
-    if not path:
-        return False
-    try:
-        file_path = Path(path)
-        return file_path.is_file() and file_path.stat().st_size > 0
-    except OSError:
-        return False
+    return bool(path) and is_valid_output_file(Path(path))
 
 
 def _build_background_command(
@@ -679,6 +638,10 @@ def _build_background_command(
     local_files_only: bool,
     subtitle_formats: list[str],
     ass_style_id: str,
+    asr_experiment_mode: str = "off",
+    asr_candidate_id: str = "",
+    translation_reliability_mode: str | None = None,
+    translation_max_extra_requests: int | None = None,
     segment_asr_routing: str = "off",
     segment_routing_confidence_threshold: float = 0.70,
     segment_routing_min_segments: int = 1,
@@ -721,6 +684,14 @@ def _build_background_command(
         command += ["--language", language]
     if local_files_only:
         command += ["--local-files-only"]
+    if asr_experiment_mode and asr_experiment_mode != "off":
+        command += ["--asr-experiment-mode", asr_experiment_mode]
+    if asr_candidate_id:
+        command += ["--asr-candidate-id", asr_candidate_id]
+    if translation_reliability_mode is not None:
+        command += ["--translation-reliability-mode", translation_reliability_mode]
+    if translation_max_extra_requests is not None:
+        command += ["--translation-max-extra-requests", str(translation_max_extra_requests)]
     if not translate_enabled:
         command += ["--no-translate"]
     command += ["--subtitle-formats", ",".join(subtitle_formats)]

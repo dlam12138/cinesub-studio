@@ -23,14 +23,19 @@ def _read(path: Path) -> str:
 def test_desktop_package_has_minimal_electron_start_script():
     package = json.loads(_read(PACKAGE_JSON))
     assert package["name"] == "cinesub-studio-desktop"
-    assert package["version"] == "0.3.0"
+    assert package["version"] == "0.6.1"
     assert package["private"] is True
     assert package["main"] == "main.js"
-    assert package["scripts"] == {"start": "node launch.js"}
+    assert package["scripts"]["start"] == "node launch.js"
+    assert package["scripts"]["pack:win"] == "electron-builder --win --dir"
+    assert package["scripts"]["dist:win"] == "electron-builder --win nsis"
     assert package["devDependencies"]["electron"] == "37.10.3"
-    forbidden_scripts = {"pack", "package", "dist", "release", "make", "publish"}
-    assert not forbidden_scripts.intersection(package["scripts"])
-    assert "electron-builder" not in json.dumps(package).lower()
+    assert "electron-builder" in json.dumps(package).lower()
+    assert package["build"]["win"]["target"] == "nsis"
+    assert package["build"]["productName"] == "智译字幕工坊"
+    assert package["build"]["appId"] == "studio.cinesub.app"
+    # No auto-update / publish for preview
+    assert package["build"].get("publish") is None
 
 
 def test_package_lock_exists_and_locks_electron():
@@ -72,6 +77,11 @@ def test_main_starts_existing_python_launcher_with_desktop_flags():
     assert '"--non-interactive"' in main
     assert '"--port"' in main
     assert '"src.web.web_server"' not in main
+    # v0.5 packaged mode
+    assert "app.isPackaged" in main
+    assert "resolvePackagedPaths" in main
+    assert 'path.join(process.resourcesPath, "app")' in main
+    assert "CINESUB_PACKAGED_ROOT" in main
 
 
 def test_launch_stages_electron_app_outside_non_ascii_project_path():
@@ -128,16 +138,18 @@ def test_main_uses_secure_browser_window_and_external_link_handling():
     assert 'title: "智译字幕工坊 / CineSub Studio"' in main
     assert "contextIsolation: true" in main
     assert "nodeIntegration: false" in main
+    assert "sandbox: true" in main
     assert 'preload: path.join(__dirname, "preload.js")' in main
     assert "setWindowOpenHandler" in main
     assert "will-navigate" in main
     assert "shell.openExternal" in main
+    assert 'parsed.protocol === "https:"' in main
+    assert main.count("shell.openExternal(") == 1
 
 
 def test_no_raw_api_keys_or_future_media_features_in_desktop_shell():
     combined = (_read(MAIN_JS) + "\n" + _read(PRELOAD_JS) + "\n" + _read(README)).lower()
     forbidden = [
-        "sk-",
         "raw api key",
         "download_model_file",
         "model hub",
@@ -151,6 +163,8 @@ def test_no_raw_api_keys_or_future_media_features_in_desktop_shell():
     ]
     for marker in forbidden:
         assert marker not in combined
+    assert "redactbackendtext" in combined
+    assert "sk-***" in combined
 
 
 def test_readme_documents_setup_and_limitations():
@@ -158,10 +172,8 @@ def test_readme_documents_setup_and_limitations():
     assert ".\\start_web.ps1 -Smoke -NoBrowser -NonInteractive" in readme
     assert "npm install" in readme
     assert "npm start" in readme
-    assert "Python and the project `.venv` are still required." in readme
-    assert "FFmpeg is not bundled." in readme
-    assert "Models are not bundled." in readme
-    assert "There is no installer yet." in readme
+    # v0.5 adds packaged mode but keeps dev workflow
+    assert "Python and the project `.venv` are still required" in readme
     assert "There is no code signing." in readme
     assert "There is no auto-update." in readme
     assert "This is not an official release package." in readme

@@ -11,13 +11,17 @@ RELEASE_MARKER = ".portable-layout"
 
 @dataclass(frozen=True)
 class RuntimePaths:
-    """Resolved roots for source and future portable release layouts.
+    """Resolved roots for source, release, and packaged installer layouts.
 
     project_root is the writable runtime root that owns input/output/work/logs,
     models, .cache, and tools. app_root is the code root that owns src, web,
-    config, and scripts. In a source checkout these roots are the same path.
-    In a future release, project_root is the release root and app_root is
-    release_root/app.
+    config, and scripts.
+
+    - In a source checkout: project_root == app_root.
+    - In a release layout: project_root is the release root; app_root is
+      release_root/app.
+    - In a packaged layout: project_root is the user-writable data root;
+      app_root is the bundled read-only code root under the install directory.
     """
 
     layout: str
@@ -28,13 +32,64 @@ class RuntimePaths:
 
     @property
     def tools_dir(self) -> Path:
+        if self.layout == "packaged":
+            return self._packaged_root / "tools"
         return self.project_root / "tools"
 
     @property
     def python_runtime_dir(self) -> Path:
+        if self.layout == "packaged":
+            return self._packaged_root / "python"
         if self.layout == "release":
             return self.runtime_root / "python"
         return self.tools_dir / "python"
+
+    @property
+    def config_root(self) -> Path:
+        if self.layout == "packaged":
+            appdata = Path(
+                os.environ.get("APPDATA")
+                or Path.home() / "AppData" / "Roaming"
+            )
+            return (appdata / "CineSubStudio" / "config").resolve()
+        return self.project_root / "config"
+
+    @property
+    def models_dir(self) -> Path:
+        return self.project_root / "models"
+
+    @property
+    def output_dir(self) -> Path:
+        return self.project_root / "output"
+
+    @property
+    def work_dir(self) -> Path:
+        return self.project_root / "work"
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.project_root / "logs"
+
+    @property
+    def cache_dir(self) -> Path:
+        return self.project_root / ".cache"
+
+    @property
+    def tmp_dir(self) -> Path:
+        return self.project_root / ".tmp"
+
+    @property
+    def uploads_dir(self) -> Path:
+        return self.project_root / "uploads"
+
+    @property
+    def _packaged_root(self) -> Path:
+        """Return the packaged install root (bundled read-only resources)."""
+        if self.layout == "packaged":
+            env = os.environ.get("CINESUB_PACKAGED_ROOT")
+            if env:
+                return Path(env).resolve()
+        return self.project_root
 
     @property
     def pythonpath_entries(self) -> tuple[Path, ...]:
@@ -50,7 +105,33 @@ def resolve_runtime_paths(anchor: Path | str | None = None) -> RuntimePaths:
     The default anchor is this module file. Tests and controlled callers may
     pass an explicit file or directory anchor to simulate source or release
     layouts. This function is intentionally read-only.
+
+    Packaged layout (v0.5+ Windows installer) is triggered by the
+    CINESUB_PACKAGED_ROOT environment variable set by the Electron shell.
     """
+
+    # Packaged layout takes priority (set by Electron installer shell)
+    packaged_root_env = os.environ.get("CINESUB_PACKAGED_ROOT")
+    if packaged_root_env:
+        packaged_root = Path(packaged_root_env).resolve()
+        app_root = packaged_root / "backend"
+        src_root = app_root / "src"
+        local_appdata = Path(
+            os.environ.get("LOCALAPPDATA")
+            or Path.home() / "AppData" / "Local"
+        )
+        user_data = Path(
+            os.environ.get("CINESUB_USER_DATA_ROOT")
+            or (local_appdata / "CineSubStudio")
+        ).expanduser().resolve()
+        runtime_root = user_data / "runtime"
+        return RuntimePaths(
+            layout="packaged",
+            project_root=user_data,
+            app_root=app_root,
+            src_root=src_root,
+            runtime_root=runtime_root,
+        )
 
     anchor_path = Path(anchor).resolve() if anchor is not None else Path(__file__).resolve()
     src_root = _find_src_root(anchor_path)

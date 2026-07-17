@@ -44,7 +44,8 @@ def test_desktop_branding_surfaces_use_new_display_name():
     assert display_brand in main
     assert f'title: "{display_brand}"' in main
     assert package["name"] == "cinesub-studio-desktop"
-    assert package["productName"] == display_brand
+    # v0.5 installer preview uses Chinese-only productName for Windows UI
+    assert package["productName"] == "智译字幕工坊"
     assert display_brand in package["description"]
     assert display_brand in readme
 

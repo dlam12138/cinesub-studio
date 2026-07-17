@@ -15,7 +15,7 @@ from typing import Any
 
 from ffmpeg_locator import find_ffmpeg_info
 from runtime_paths import resolve_runtime_paths
-
+from venv_config import inspect_venv_config
 
 PATHS = resolve_runtime_paths()
 PROJECT_ROOT = PATHS.project_root
@@ -26,12 +26,12 @@ TOOLS_DIR = PATHS.tools_dir
 CUDA_DIR = TOOLS_DIR / "cuda"
 PYTHON_DIR = PATHS.python_runtime_dir
 WHEELHOUSE_DIR = TOOLS_DIR / "wheelhouse"
-MODEL_DIR = PROJECT_ROOT / "models"
-CACHE_DIR = PROJECT_ROOT / ".cache"
-TMP_DIR = PROJECT_ROOT / ".tmp"
-OUTPUT_DIR = PROJECT_ROOT / "output"
-WORK_DIR = PROJECT_ROOT / "work"
-LOGS_DIR = PROJECT_ROOT / "logs"
+MODEL_DIR = PATHS.models_dir
+CACHE_DIR = PATHS.cache_dir
+TMP_DIR = PATHS.tmp_dir
+OUTPUT_DIR = PATHS.output_dir
+WORK_DIR = PATHS.work_dir
+LOGS_DIR = PATHS.logs_dir
 
 ALLOWED_OFFLINE_ROOTS = (
     Path("tools/python"),
@@ -163,8 +163,18 @@ def runtime_diagnostics() -> dict[str, Any]:
     in_project_venv = str(executable).lower().startswith(str(project_venv).lower())
     python_prefix = Path(sys.prefix).resolve()
     python_base_prefix = Path(sys.base_prefix).resolve()
+    active_base_executable_text = str(getattr(sys, "_base_executable", "") or "")
+    active_base_executable = (
+        Path(active_base_executable_text).resolve(strict=False)
+        if active_base_executable_text
+        else None
+    )
     portable_python = PYTHON_DIR / ("python.exe" if sys.platform == "win32" else "python")
     venv_base_executable = _venv_base_executable(project_venv)
+    venv_config = inspect_venv_config(
+        project_venv,
+        expected_base_python=active_base_executable if in_project_venv else None,
+    )
     portable_root_text = str(PYTHON_DIR.resolve()).lower()
     base_prefix_text = str(python_base_prefix).lower()
     base_executable_text = str(venv_base_executable).lower() if venv_base_executable else ""
@@ -173,7 +183,10 @@ def runtime_diagnostics() -> dict[str, Any]:
         or base_executable_text.startswith(portable_root_text)
         or str(executable).lower().startswith(portable_root_text)
     )
-    if portable_base:
+    if PATHS.layout == "packaged":
+        python_source = "packaged-python"
+        in_project_venv = False
+    elif portable_base:
         python_source = "project-portable-python"
     elif in_project_venv:
         python_source = "project-venv-system-base"
@@ -221,6 +234,7 @@ def runtime_diagnostics() -> dict[str, Any]:
         project_venv=str(project_venv),
         python_source=python_source,
         portable_python_exists=portable_python.exists(),
+        venv_config=venv_config,
         ffmpeg_info=ffmpeg_info,
         ffmpeg_version_info=ffmpeg_version_info,
         known_models=known_models,
@@ -251,6 +265,9 @@ def runtime_diagnostics() -> dict[str, Any]:
         "portable_python": str(portable_python),
         "portable_python_exists": portable_python.exists(),
         "portable_python_recommended": not portable_base,
+        "venv_config_ok": bool(venv_config["ok"]),
+        "venv_config_path": str(venv_config["config_path"]),
+        "venv_config_issues": list(venv_config["issues"]),
         "faster_whisper_ok": faster_whisper_ok,
         "faster_whisper_error": faster_whisper_error,
         "ctranslate2_ok": ctranslate2_ok,
@@ -300,6 +317,7 @@ def _runtime_diagnostic_items(
     project_venv: str,
     python_source: str,
     portable_python_exists: bool,
+    venv_config: dict[str, Any],
     ffmpeg_info: dict[str, Any],
     ffmpeg_version_info: dict[str, Any],
     known_models: list[str],
@@ -356,6 +374,34 @@ def _runtime_diagnostic_items(
                 else "建议通过 start_web.ps1 或 .venv\\Scripts\\python.exe 启动。"
             ),
             False,
+        ),
+        _diagnostic_item(
+            "venv_config",
+            "虚拟环境配置",
+            "ok" if (venv_config["ok"] or not in_project_venv) else "warning",
+            str(venv_config["config_path"]),
+            (
+                "pyvenv.cfg 与当前基础解释器一致。"
+                if venv_config["ok"]
+                else (
+                    "当前运行方式不依赖项目 .venv。"
+                    if not in_project_venv
+                    else "pyvenv.cfg 缺失、不可读，或与当前基础解释器不一致。"
+                )
+            ),
+            (
+                "无需操作。"
+                if (venv_config["ok"] or not in_project_venv)
+                else "请运行 install.ps1 -RepairVenvConfig；该操作只修复配置，不重建 .venv。"
+            ),
+            False,
+            details={
+                "exists": bool(venv_config["exists"]),
+                "home": str(venv_config["home"]),
+                "executable": str(venv_config["executable"]),
+                "expected_base_executable": str(venv_config["expected_base_executable"]),
+                "issues": list(venv_config["issues"]),
+            },
         ),
         _diagnostic_item(
             "ffmpeg",
@@ -818,11 +864,32 @@ def _is_allowed_offline_path(path: Path) -> bool:
 def _module_status(name: str) -> tuple[bool, str]:
     if importlib.util.find_spec(name) is None:
         return False, "module not found"
+    env = os.environ.copy()
+    add_project_cuda_to_env(env)
     try:
-        __import__(name)
-        return True, ""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                "import importlib, sys; importlib.import_module(sys.argv[1])",
+                name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "module import probe timed out"
     except Exception as exc:
-        return False, str(exc)
+        return False, f"module import probe failed: {exc}"
+    if result.returncode == 0:
+        return True, ""
+    message = (result.stderr or result.stdout or f"import exited {result.returncode}").strip()
+    return False, message[:300]
 
 
 def _nvidia_driver_info() -> dict[str, Any]:
@@ -857,6 +924,16 @@ def _known_models() -> list[str]:
 
 
 def main() -> int:
+    # Windows PowerShell and packaged launchers do not always agree on the
+    # inherited console code page. The CLI contract is UTF-8 JSON regardless
+    # of the machine locale; the Web API calls runtime_diagnostics() directly.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
     parser = argparse.ArgumentParser(description="CineSub runtime environment helper.")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("diagnostics")

@@ -90,3 +90,24 @@ def test_resolve_runtime_paths_has_no_directory_creation_side_effects(tmp_path):
     assert paths.layout == "source"
     for name in ("runtime", "input", "output", "work", "logs"):
         assert not (tmp_path / name).exists()
+
+
+def test_resolve_runtime_paths_uses_packaged_code_and_user_roots(monkeypatch, tmp_path):
+    packaged_root = (tmp_path / "installed" / "app").resolve()
+    user_root = (tmp_path / "local" / "CineSubStudio").resolve()
+    monkeypatch.setenv("CINESUB_PACKAGED_ROOT", str(packaged_root))
+    monkeypatch.setenv("CINESUB_USER_DATA_ROOT", str(user_root))
+
+    paths = runtime_paths.resolve_runtime_paths(tmp_path / "unrelated.py")
+
+    assert paths.layout == "packaged"
+    assert paths.project_root == user_root
+    assert paths.app_root == packaged_root / "backend"
+    assert paths.src_root == packaged_root / "backend" / "src"
+    assert paths.python_runtime_dir == packaged_root / "python"
+    assert paths.tools_dir == packaged_root / "tools"
+    assert paths.models_dir == user_root / "models"
+    assert paths.output_dir == user_root / "output"
+    assert paths.logs_dir == user_root / "logs"
+    assert paths.cache_dir == user_root / ".cache"
+    assert paths.uploads_dir == user_root / "uploads"

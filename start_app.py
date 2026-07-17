@@ -11,7 +11,6 @@ import sys
 import time
 import webbrowser
 from pathlib import Path
-from tkinter import Button, Label, Tk
 from urllib.request import urlopen
 
 BOOTSTRAP_APP_ROOT = Path(__file__).resolve().parent
@@ -177,6 +176,11 @@ def _run_console_until_stopped(port: int) -> None:
 
 
 def _run_gui(port: int) -> None:
+    # Tk is optional for smoke, packaged readiness, and console-only startup.
+    # Import it only when the interactive status window is actually requested;
+    # this avoids loading Tcl/Tk DLLs in headless and subprocess smoke runs.
+    from tkinter import Button, Label, Tk
+
     root = Tk()
     root.title("CineSub Studio")
     root.geometry("360x150")

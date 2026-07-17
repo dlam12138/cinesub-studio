@@ -3,8 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/assets/brand-mark.png" type="image/png">
   <title>智译字幕工坊 — AI 字幕生成器</title>
   <style>
+    @font-face {
+      font-family: "CineSub Display";
+      src: url("/assets/fonts/BarlowCondensed-SemiBold.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 600;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "CineSub Sans";
+      src: url("/assets/fonts/NotoSansSC-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
     :root {
       color-scheme: dark;
       --bg: #090d14;
@@ -34,7 +49,7 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Bahnschrift", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+      font-family: "CineSub Sans", "Microsoft YaHei UI", sans-serif;
       background:
         linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px) 0 0 / 34px 34px,
         radial-gradient(circle at 20% 0%, rgba(77, 151, 255, .16), transparent 32%),
@@ -1587,6 +1602,59 @@
       background: rgba(5, 9, 14, .46);
       color: var(--text);
     }
+    .pipeline-stat,
+    .task-filter-bar button,
+    .task-row,
+    .job-queue-item,
+    .asr-report-button {
+      border-color: rgba(170, 188, 212, .18);
+      background: rgba(255, 255, 255, .045);
+      color: var(--text);
+    }
+    .pipeline-stat.failed,
+    .task-row.failed,
+    .task-row.stale,
+    .job-queue-item.failed {
+      border-color: rgba(255, 107, 107, .34);
+      background: rgba(255, 107, 107, .09);
+    }
+    .pipeline-stat.completed,
+    .task-row.completed,
+    .job-queue-item.done {
+      border-color: rgba(73, 209, 141, .3);
+      background: rgba(73, 209, 141, .075);
+    }
+    .pipeline-stat.running,
+    .job-queue-item.running {
+      border-color: rgba(99, 179, 255, .34);
+      background: rgba(99, 179, 255, .09);
+    }
+    .pipeline-stat.warning {
+      border-color: rgba(247, 185, 85, .34);
+      background: rgba(247, 185, 85, .09);
+    }
+    .task-filter-bar button { color: var(--muted); }
+    .task-filter-bar button:hover,
+    .task-filter-bar button.active,
+    .asr-report-button:hover,
+    .asr-report-button.active {
+      border-color: rgba(99, 179, 255, .45);
+      background: rgba(99, 179, 255, .12);
+      color: var(--ink);
+    }
+    .badge-pending,
+    .badge-status {
+      background: rgba(170, 188, 212, .12);
+      color: #c5d2e2;
+    }
+    .badge-running,
+    .badge-status.running {
+      background: rgba(99, 179, 255, .14);
+      color: #a9d6ff;
+    }
+    .progress-meta,
+    .task-sub,
+    .diagnostic-row span { color: var(--muted); }
 
     input:disabled,
     button:disabled,
@@ -1838,17 +1906,413 @@
       .inline-field select { width: 100%; }
       .modal { width: 95vw; }
     }
+
+    /* ── v0.6 Stage 2: operational readiness and unified states ── */
+    .brand-lockup {
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+    }
+    .brand-mark {
+      width: 46px;
+      height: 46px;
+      border: 1px solid rgba(99, 179, 255, .34);
+      border-radius: 10px;
+      box-shadow: 0 10px 28px rgba(49, 135, 216, .2);
+    }
+    .brand-block h1,
+    .topbar h2,
+    .progress-header strong,
+    .readiness-step strong {
+      font-family: "CineSub Display", "Microsoft YaHei UI", sans-serif;
+      letter-spacing: .015em;
+    }
+    .build-chip {
+      display: inline-flex;
+      margin-left: 6px;
+      padding: 3px 7px;
+      border: 1px solid rgba(73, 209, 141, .32);
+      border-radius: 999px;
+      color: var(--ok);
+      background: rgba(73, 209, 141, .08);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .readiness-panel,
+    .pipeline-overview {
+      margin-bottom: 18px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(99, 179, 255, .09), rgba(17, 24, 35, .86) 42%, rgba(73, 209, 141, .05));
+      box-shadow: var(--shadow);
+    }
+    .readiness-head,
+    .overview-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    .readiness-head h2,
+    .overview-head h2 { margin: 0; font-size: 17px; }
+    .readiness-head p,
+    .overview-head p { margin: 0; color: var(--muted); font-size: 12px; }
+    .readiness-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--line);
+    }
+    .readiness-step {
+      min-width: 0;
+      padding: 13px;
+      background: rgba(9, 13, 20, .88);
+    }
+    .readiness-step .step-index {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--primary);
+      font-family: "CineSub Display", sans-serif;
+      font-size: 18px;
+    }
+    .readiness-step strong { display: block; color: var(--ink); font-size: 15px; }
+    .readiness-step span:not(.step-index) { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .readiness-step.ok { box-shadow: inset 0 3px 0 var(--ok); }
+    .readiness-step.warning { box-shadow: inset 0 3px 0 var(--warn); }
+    .readiness-step.error { box-shadow: inset 0 3px 0 var(--danger); }
+    .readiness-step button { margin-top: 9px; }
+    .async-state {
+      min-height: 96px;
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(5, 9, 14, .42);
+    }
+    .async-state-icon {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-family: "CineSub Display", sans-serif;
+      font-weight: 800;
+    }
+    .async-state strong { display: block; color: var(--ink); font-size: 14px; }
+    .async-state p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .async-state.loading { color: var(--primary); }
+    .async-state.empty { color: var(--muted); }
+    .async-state.success { color: var(--ok); background: var(--ok-bg); }
+    .async-state.warning { color: var(--warn); background: var(--warn-bg); }
+    .async-state.error { color: var(--danger); background: var(--danger-bg); }
+    .async-state.loading .async-state-icon { animation: statusPulse 1.2s ease-in-out infinite; }
+    @keyframes statusPulse { 50% { opacity: .42; transform: scale(.88); } }
+    .progress-track {
+      position: relative;
+      overflow: hidden;
+      background-color: rgba(99, 179, 255, .09);
+      background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), rgba(237, 242, 247, .13) 10%);
+    }
+    .progress-fill {
+      background: linear-gradient(90deg, var(--primary-dark), var(--primary) 66%, var(--ok));
+      box-shadow: 0 0 18px rgba(99, 179, 255, .32);
+      transition: width .35s ease;
+    }
+    .option-card,
+    .status-pill,
+    .settings-intro,
+    .inspect-result,
+    details.advanced-settings,
+    .settings-notice {
+      background: rgba(255, 255, 255, .045);
+      border-color: var(--line);
+      color: var(--text);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .async-state.loading .async-state-icon { animation: none; }
+      .progress-fill { transition: none; }
+    }
+    @media (max-width: 1100px) {
+      .readiness-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 700px) {
+      .readiness-grid { grid-template-columns: 1fr; }
+      .readiness-head,
+      .overview-head { align-items: flex-start; flex-direction: column; }
+      .async-state { grid-template-columns: 32px 1fr; }
+      .async-state button { grid-column: 1 / -1; }
+    }
+
+    /* ── Stage 6: task-focused operations desk ── */
+    .ui-language-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.045);
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .ui-language-switch button {
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 11px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .ui-language-switch button.active {
+      background: var(--info-bg);
+      color: var(--primary);
+    }
+    .ui-language-switch button[aria-disabled="true"] { opacity: .72; }
+    .stage6-pipeline-shell { display: grid; gap: 14px; }
+    .stage6-stage-ribbon {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(5,9,14,.5);
+      box-shadow: var(--shadow);
+    }
+    .stage6-stage {
+      position: relative;
+      min-width: 0;
+      padding: 10px 13px 11px;
+      border-right: 1px solid var(--line);
+    }
+    .stage6-stage:last-child { border-right: 0; }
+    .stage6-stage::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 2px;
+      background: var(--line);
+    }
+    .stage6-stage.active::after { background: var(--primary); box-shadow: 0 0 12px var(--primary); }
+    .stage6-stage.done::after { background: var(--ok); }
+    .stage6-stage span { display: block; color: var(--primary); font-family: "CineSub Display", sans-serif; font-size: 12px; }
+    .stage6-stage strong { display: block; margin-top: 2px; color: var(--ink); font-size: 12px; }
+    .stage6-stage small { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .stage6-pipeline-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 14px;
+      align-items: start;
+    }
+    .pipeline-task-desk {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(17,24,35,.76);
+      box-shadow: var(--shadow);
+    }
+    .pipeline-desk-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .pipeline-desk-head h2 { margin: 0; color: var(--ink); font-size: 17px; }
+    .pipeline-desk-head p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+    .readiness-compact { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+    .readiness-compact .readiness-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .readiness-compact .readiness-step { padding: 9px 10px; }
+    .readiness-compact .readiness-step .step-index { display: inline; margin: 0 6px 0 0; font-size: 12px; }
+    .readiness-compact .readiness-step strong { display: inline; font-size: 12px; }
+    .readiness-compact .readiness-step span:not(.step-index) { margin-top: 3px; font-size: 10px; }
+    .stage6-progress-host { padding: 14px; }
+    .stage6-progress-host .task-list { max-height: none; overflow: visible; }
+    .stage6-progress-host .progress-panel { gap: 12px; }
+    .stage6-progress-host .pipeline-stats { grid-template-columns: repeat(5,minmax(84px,1fr)); }
+    .task-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+    .task-table { width: 100%; min-width: 680px; border-collapse: collapse; }
+    .task-table th {
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(5,9,14,.65);
+      color: var(--muted);
+      font-size: 10px;
+      text-align: left;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      white-space: nowrap;
+    }
+    .task-table th:nth-child(1) { width: 42%; }
+    .task-table th:nth-child(2) { width: 92px; }
+    .task-table th:nth-child(3) { width: 104px; }
+    .task-table th:nth-child(4) { width: 78px; }
+    .task-table th:nth-child(5) { width: 145px; }
+    .task-table td { padding: 11px 12px; border-bottom: 1px solid rgba(170,188,212,.12); vertical-align: middle; }
+    .task-table tr:last-child td { border-bottom: 0; }
+    .task-table tbody tr { cursor: pointer; transition: background .14s ease; }
+    .task-table tbody tr:hover,
+    .task-table tbody tr:focus-visible { background: rgba(99,179,255,.085); outline: none; }
+    .task-table .task-name { max-width: 100%; }
+    .task-table-progress { display: grid; grid-template-columns: 38px minmax(80px,1fr); gap: 8px; align-items: center; }
+    .task-table-progress .progress-track { height: 6px; }
+    .pipeline-control-rail {
+      position: sticky;
+      top: 112px;
+      max-height: calc(100vh - 130px);
+      overflow-y: auto;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(11,17,27,.96);
+      box-shadow: var(--shadow);
+      scrollbar-width: thin;
+    }
+    .pipeline-control-rail .settings-head { margin-bottom: 12px; }
+    .pipeline-control-rail .settings-head h2 { margin: 0; font-size: 16px; }
+    .pipeline-control-rail .toolbar { grid-template-columns: 1fr; gap: 9px; }
+    .pipeline-control-rail .toolbar .wide { grid-column: auto; }
+    .pipeline-control-rail .option-card { padding: 10px; }
+    .pipeline-control-rail .help-text { font-size: 10px; line-height: 1.4; }
+    .pipeline-control-rail .settings-jump { width: 100%; }
+    .pipeline-control-actions { display: grid; gap: 8px; margin-bottom: 14px; }
+    .pipeline-control-actions .primary-action { min-height: 44px; }
+    .pipeline-control-actions .secondary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .pipeline-control-actions button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.06);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .pipeline-control-actions .primary-action { border-color: rgba(99,179,255,.58); background: linear-gradient(135deg,#4da3ff,#2d7ed1); color: white; }
+    .pipeline-control-actions .danger-action { color: var(--danger); border-color: rgba(255,107,107,.3); }
+    .pipeline-support { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 14px 14px; }
+    .pipeline-support details { min-width: 0; }
+    .runtime-operations-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+    .runtime-operations-grid > .card:last-child { grid-column: 1 / -1; }
+    .task-drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      background: rgba(0,0,0,.68);
+      backdrop-filter: blur(3px);
+    }
+    .task-drawer-backdrop[hidden] { display: none; }
+    .task-detail-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 81;
+      width: min(560px, 92vw);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid var(--line);
+      background: #0b111b;
+      box-shadow: -24px 0 70px rgba(0,0,0,.48);
+    }
+    .task-detail-drawer[hidden] { display: none; }
+    .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px; border-bottom: 1px solid var(--line); }
+    .drawer-head h2 { margin: 0; color: var(--ink); font-size: 18px; overflow-wrap: anywhere; }
+    .drawer-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+    .drawer-close { width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 50%; background: rgba(255,255,255,.05); color: var(--text); cursor: pointer; }
+    .drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px 24px; }
+    .drawer-section { margin-bottom: 18px; }
+    .drawer-section h3 { margin: 0 0 9px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    #taskDrawerSignals .task-sub { display: grid; gap: 6px; }
+    #taskDrawerSignals .badge { max-width: 100%; white-space: normal; line-height: 1.45; overflow-wrap: anywhere; }
+    .drawer-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .drawer-fact { padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.04); }
+    .drawer-fact span { display: block; color: var(--muted); font-size: 10px; }
+    .drawer-fact strong { display: block; margin-top: 3px; color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+    .artifact-switcher { display: flex; flex-wrap: wrap; gap: 6px; }
+    .artifact-switcher button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.045); color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+    .artifact-switcher button.active { border-color: rgba(99,179,255,.48); background: var(--info-bg); color: var(--primary); }
+    .subtitle-preview-list { display: grid; gap: 7px; }
+    .subtitle-preview-cue { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 11px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: rgba(5,9,14,.52); }
+    .subtitle-preview-cue.review { border-color: rgba(247,185,85,.4); background: var(--warn-bg); }
+    .cue-time { color: var(--primary); font-family: Consolas,"Courier New",monospace; font-size: 10px; line-height: 1.45; }
+    .cue-lines { min-width: 0; color: var(--text); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+    .cue-lines div + div { margin-top: 3px; color: #b9dfff; }
+    .preview-pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: var(--muted); font-size: 11px; }
+    .preview-pager button { min-height: 30px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 5px; background: rgba(255,255,255,.05); color: var(--text); cursor: pointer; }
+    body.drawer-open { overflow: hidden; }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .task-detail-drawer { animation: drawerIn .18s ease-out; }
+      @keyframes drawerIn { from { transform: translateX(20px); opacity: .72; } to { transform: translateX(0); opacity: 1; } }
+    }
+    @media (max-width: 1100px) {
+      .stage6-pipeline-layout { grid-template-columns: 1fr; }
+      .pipeline-control-rail { position: relative; top: auto; max-height: none; }
+      .pipeline-control-rail .toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .pipeline-control-rail .toolbar .wide { grid-column: 1 / -1; }
+    }
+    @media (max-width: 900px) {
+      .stage6-stage-ribbon { grid-template-columns: repeat(5, minmax(120px,1fr)); overflow-x: auto; }
+      .readiness-compact .readiness-grid { grid-template-columns: 1fr 1fr; }
+      .stage6-progress-host .pipeline-stats { grid-template-columns: repeat(2,minmax(90px,1fr)); }
+      .runtime-operations-grid { grid-template-columns: 1fr; }
+      .runtime-operations-grid > .card:last-child { grid-column: auto; }
+      .task-detail-drawer { width: 100vw; }
+    }
+    @media (max-width: 700px) {
+      .pipeline-control-rail .toolbar { grid-template-columns: 1fr; }
+      .pipeline-control-rail .toolbar .wide { grid-column: auto; }
+      .pipeline-support { grid-template-columns: 1fr; }
+      .readiness-compact .readiness-grid { grid-template-columns: 1fr; }
+      .drawer-facts { grid-template-columns: 1fr; }
+      .subtitle-preview-cue { grid-template-columns: 1fr; }
+      .ui-language-switch { width: 100%; justify-content: center; }
+    }
   </style>
 </head>
 <body>
 
-<div class="app-shell" data-refresh="v0.2-premium-ui-refresh">
+<div class="app-shell" data-refresh="v0.6-stage2-ui">
   <aside class="sidebar" aria-label="主导航">
-    <div class="brand-block">
-      <span class="brand-kicker">Local Web App</span>
-      <h1>智译字幕工坊</h1>
-      <strong>CineSub Studio</strong>
-      <span class="version-chip">v0.2 Preview</span>
+    <div class="brand-block" aria-label="Local workstation / 本地字幕工作站">
+      <div class="brand-lockup">
+        <img class="brand-mark" src="/assets/brand-mark.png" alt="" width="46" height="46">
+        <div>
+          <span class="brand-kicker">本地字幕工作站</span>
+          <h1>智译字幕工坊</h1>
+          <strong>CineSub Studio</strong>
+        </div>
+      </div>
+      <span id="appVersionChip" class="version-chip">读取版本...</span><span id="appFlavorChip" class="build-chip">development</span>
     </div>
     <nav class="tabs rail-nav">
       <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">批量处理</button>
@@ -1864,7 +2328,11 @@
   <div class="app-main">
     <header class="topbar">
       <div>
-        <p class="eyebrow">Cinema subtitle control room</p>
+        <div class="ui-language-switch" aria-label="界面语言">
+          <button id="localeZhButton" type="button" class="active" aria-pressed="true" onclick="setUiLocale('zh-CN')">简中</button>
+          <button id="localeEnButton" type="button" aria-pressed="false" aria-disabled="true" title="English interface is reserved for a future version" onclick="setUiLocale('en')">English</button>
+        </div>
+        <p class="eyebrow" style="margin-top:8px">本地字幕生产控制台</p>
         <h2>选择视频 → 语音识别 → 翻译 → 输出字幕</h2>
       </div>
       <div class="status-strip">
@@ -1878,13 +2346,50 @@
 <main>
   <!-- ═══════════════ Pipeline Tab ═══════════════ -->
   <div id="tab-pipeline" class="tab-content active">
+    <div class="stage6-pipeline-shell">
+      <section class="stage6-stage-ribbon" aria-label="字幕处理阶段" data-i18n-en="Subtitle timeline">
+        <div class="stage6-stage active" data-pipeline-stage="pending"><span>STG 01</span><strong>扫描文件</strong><small>识别输入目录中的媒体</small></div>
+        <div class="stage6-stage" data-pipeline-stage="extracting_audio"><span>STG 02</span><strong>提取音频</strong><small>生成项目内临时音轨</small></div>
+        <div class="stage6-stage" data-pipeline-stage="transcribing"><span>STG 03</span><strong>语音转写</strong><small>生成原文 SRT</small></div>
+        <div class="stage6-stage" data-pipeline-stage="translating"><span>STG 04</span><strong>字幕翻译</strong><small>按需调用当前翻译接口</small></div>
+        <div class="stage6-stage" data-pipeline-stage="quality_checking"><span>STG 05</span><strong>质检输出</strong><small>生成字幕与复核报告</small></div>
+      </section>
 
-    <div class="settings-panel">
-      <div class="settings-head">
-        <h2>流水线参数</h2>
-        <p class="panel-copy">将视频文件放入输入目录，点击"开始处理"即可批量生成字幕。系统会自动识别语音、翻译并质检。</p>
-      </div>
-      <div class="toolbar">
+      <div class="stage6-pipeline-layout">
+        <section class="pipeline-task-desk" aria-labelledby="pipeline-overview-title">
+          <div class="pipeline-desk-head">
+            <div><h2 id="pipeline-overview-title">批量任务</h2><p>选择任务可查看阶段、质检、产物和字幕预览。<span class="sr-only">运行环境 → 翻译接口 → 语言配置 → 开始任务</span></p></div>
+            <button type="button" onclick="loadPipelineProgress()">刷新任务</button>
+          </div>
+          <div class="readiness-compact" aria-labelledby="readiness-title">
+            <h2 id="readiness-title" class="sr-only">开始前检查</h2>
+            <div id="readinessChecklist" class="readiness-grid" aria-live="polite">
+              <div class="readiness-step"><span class="step-index">01</span><strong>正在检查</strong><span>读取本机环境。</span></div>
+              <div class="readiness-step"><span class="step-index">02</span><strong>翻译接口</strong><span>只转写时可稍后配置。</span></div>
+              <div class="readiness-step"><span class="step-index">03</span><strong>语言风格</strong><span>内置配置始终可用。</span></div>
+              <div class="readiness-step"><span class="step-index">04</span><strong>开始任务</strong><span>等待检查结果。</span></div>
+            </div>
+          </div>
+          <div id="status-result" class="stage6-progress-host"><div class="async-state empty"><span class="async-state-icon">—</span><div><strong>还没有任务状态</strong><p>扫描视频目录或开始处理后，这里会显示总体进度。</p></div></div></div>
+          <div class="pipeline-support">
+            <details><summary>待处理文件</summary><div id="scan-result" class="placeholder">点击“扫描文件”查看输入目录。</div></details>
+            <details><summary>异常复核摘要</summary><div id="review-result" class="placeholder">点击“异常复核”查看需人工关注的片段。</div></details>
+          </div>
+        </section>
+
+        <aside class="pipeline-control-rail" aria-label="流水线配置">
+          <div class="pipeline-control-actions">
+            <button onclick="pipelineAction('run')" id="btn-run" class="primary-action">开始批量处理</button>
+            <div class="secondary-actions">
+              <button onclick="pipelineAction('scan')" id="btn-scan">扫描文件</button>
+              <button onclick="pipelineAction('status')" id="btn-status">查看状态</button>
+              <button onclick="pipelineAction('review')" id="btn-review">异常复核</button>
+              <button onclick="refreshAll()" id="btn-refresh">刷新全部</button>
+              <button onclick="pipelineAction('retry')" id="btn-retry" class="danger-action">重试失败任务</button>
+            </div>
+          </div>
+          <div class="settings-head"><h2>流水线配置</h2><p class="panel-copy">常用参数集中在这里；不了解的选项保持默认。</p></div>
+          <div class="toolbar">
       <div class="field wide option-card">
         <label for="pipelineInputDir">视频目录<span class="recommend-badge">可填绝对路径</span></label>
         <div class="directory-picker-row">
@@ -1956,18 +2461,18 @@
         <span class="help-text">语言配置会带入识别、翻译风格和质检阈值；不懂就用 active profile。</span>
         <button type="button" class="settings-jump" onclick="switchTab('langprofiles')">管理语言风格</button>
       </div>
-      </div>
+          </div>
 
       <details class="advanced-settings experimental-routing">
-        <summary>实验性分段 ASR 路由（默认关闭）</summary>
-        <span class="help-text">Apply is experimental. It may fall back to normal ASR unless strict mode is enabled. Large runs are blocked unless allow large run is enabled.</span>
+        <summary>实验功能：分段 ASR 路由（默认关闭）</summary>
+        <span class="help-text" data-i18n-en="Apply is experimental. It may fall back to normal ASR unless strict mode is enabled.">当前生产默认值为关闭。仅在明确进行实验评测时使用；失败可能回退到普通 ASR。</span>
         <div class="row">
           <div class="option-card">
             <label for="pipelineSegmentAsrRouting">路由模式</label>
             <select id="pipelineSegmentAsrRouting">
-              <option value="off" selected>off - 不运行</option>
-              <option value="dry_run">dry_run - 只生成证据报告</option>
-              <option value="apply">apply - 实验性应用路由结果</option>
+              <option value="off" selected>关闭</option>
+              <option value="dry_run">仅生成证据报告</option>
+              <option value="apply">实验性应用路由结果</option>
             </select>
             <span class="help-text">实验能力只在显式选择后运行。dry_run 不改变字幕输出。</span>
           </div>
@@ -2006,62 +2511,8 @@
             <span class="help-text">只绕过窗口数上限，不绕过覆盖率和候选 SRT 校验。</span>
           </div>
         </div>
-      </details>
-    </div>
-
-    <div class="actions toolbar-actions">
-        <button onclick="pipelineAction('scan')" id="btn-scan">🔍 扫描文件</button>
-        <button onclick="pipelineAction('status')" id="btn-status">📊 查看状态</button>
-        <button onclick="pipelineAction('review')" id="btn-review">⚠️ 异常复核</button>
-        <button onclick="pipelineAction('run')" id="btn-run" class="primary">▶ 开始批量处理</button>
-        <span class="spacer"></span>
-        <button onclick="pipelineAction('retry')" id="btn-retry" class="danger">🔄 重试失败</button>
-        <button onclick="refreshAll()" id="btn-refresh">↻ 刷新全部</button>
-    </div>
-
-    <div class="cards">
-      <div class="card">
-        <h2>📁 待处理文件</h2>
-        <div id="scan-result" class="placeholder">点击"扫描"查看待处理文件</div>
-      </div>
-
-      <div class="card">
-        <h2>📊 任务状态</h2>
-        <div id="status-result" class="placeholder">点击"查看状态"查看所有任务进度</div>
-      </div>
-
-      <div class="card">
-        <h2>⚠️ 异常复核摘要</h2>
-        <div id="review-result" class="placeholder">点击"异常复核"查看需要人工关注的片段</div>
-      </div>
-
-      <div class="card full-width">
-        <h2>运行环境摘要</h2>
-        <div id="runtime-summary-result" class="placeholder">正在读取 Python、FFmpeg、模型缓存和目录状态...</div>
-      </div>
-
-      <div class="card full-width">
-        <h2>ASR Evidence Reports</h2>
-        <div class="help-text">Read-only mixed-language sampling reports from output/reports/asr_evidence/. This panel does not run Whisper or change pipeline state.</div>
-        <div id="asr-evidence-result" class="placeholder">Loading ASR evidence reports...</div>
-      </div>
-
-      <div class="card">
-        <h2>📋 操作日志</h2>
-        <pre id="pipeline-log" class="mini-log">就绪。点击上方按钮执行操作。</pre>
-      </div>
-
-      <div class="card full-width">
-        <h2>缓存与中间文件</h2>
-        <div id="storage-result" class="placeholder">中间音频写入 work/，旧上传副本写入 uploads/。停止服务不会自动删除缓存。</div>
-        <div class="danger-zone">
-          <strong>释放空间只会删除可再生成文件</strong>
-          <span class="help-text">只清理临时音频和小样本上传副本；不会删除 output 字幕成品、models 模型、.cache 模型缓存或翻译缓存。</span>
-        <div class="inline-actions">
-          <button type="button" onclick="loadStorageStatus()">刷新缓存状态</button>
-          <button type="button" onclick="cleanupTransientFiles()" class="danger">释放临时空间</button>
-        </div>
-        </div>
+          </details>
+        </aside>
       </div>
     </div>
   </div>
@@ -2074,6 +2525,35 @@
         <p class="help-text">只读检查本地 Python、FFmpeg、模型缓存、运行目录和设备状态；不会启动流水线，也不会下载模型。</p>
       </div>
       <button type="button" onclick="loadRuntimeDiagnostics()">刷新诊断</button>
+    </div>
+    <div class="runtime-operations-grid">
+      <section class="card">
+        <h2>运行环境摘要</h2>
+        <div id="runtime-summary-result" class="placeholder">正在读取 Python、FFmpeg、模型缓存和目录状态...</div>
+      </section>
+      <section class="card">
+        <h2>操作日志</h2>
+        <pre id="pipeline-log" class="mini-log">就绪。批量操作日志会显示在这里。</pre>
+      </section>
+      <section class="card">
+        <h2>缓存与中间文件</h2>
+        <div id="storage-result" class="placeholder">中间音频写入 work/，旧上传副本写入 uploads/。</div>
+        <div class="danger-zone">
+          <strong>释放空间只会删除可再生成文件</strong>
+          <span class="help-text">不会删除 output 字幕成品、models 模型或翻译缓存。</span>
+          <div class="inline-actions">
+            <button type="button" onclick="loadStorageStatus()">刷新缓存状态</button>
+            <button type="button" onclick="cleanupTransientFiles()" class="danger">释放临时空间</button>
+          </div>
+        </div>
+      </section>
+      <section class="card">
+        <details>
+          <summary>ASR 诊断证据（高级）</summary>
+          <p class="help-text">只读显示已有证据报告，不运行 Whisper，也不改变生产字幕。</p>
+          <div id="asr-evidence-result" class="placeholder">正在读取 ASR 证据报告...</div>
+        </details>
+      </section>
     </div>
     <div class="runtime-diagnostics-layout">
       <section class="card">
@@ -2125,7 +2605,7 @@
         <form id="jobForm">
           <div class="form-block settings-panel">
             <div class="settings-head">
-              <h3>Step 1 · 选择视频</h3>
+              <h3 data-i18n-en="Step 1 · Choose video">步骤 1 · 选择视频</h3>
               <p class="panel-copy">大电影不要上传，直接填本机路径。后台读取原片并抽音频到 work/，原片不会被复制。</p>
             </div>
             <div class="file-source">
@@ -2149,7 +2629,7 @@
 
           <div class="form-block settings-panel">
             <div class="settings-head">
-              <h3>Step 2 · 语音识别</h3>
+              <h3 data-i18n-en="Step 2 · Speech recognition">步骤 2 · 语音识别</h3>
               <p class="panel-copy">看不懂就保持默认：small + CPU + 自动语言，是最不容易翻车的组合。</p>
             </div>
             <div class="row">
@@ -2244,7 +2724,7 @@
               </div>
               <details class="advanced-settings experimental-routing">
                 <summary>实验性分段 ASR 路由（默认关闭）</summary>
-                <span class="help-text">Apply is experimental. It may fall back to normal ASR unless strict mode is enabled. Large runs are blocked unless allow large run is enabled.</span>
+                <span class="help-text">此功能仍处于实验阶段；失败时可能回退到普通 ASR。超大任务默认会被安全限制阻止。</span>
                 <div class="row">
                   <div class="option-card">
                     <label for="segment_asr_routing">路由模式</label>
@@ -2300,7 +2780,7 @@
 
           <div class="form-block settings-panel">
             <div class="settings-head">
-              <h3>Step 3 · 翻译设置</h3>
+              <h3 data-i18n-en="Step 3 · Translation">步骤 3 · 翻译设置</h3>
               <p class="panel-copy">语言配置管识别习惯、翻译风格和质检阈值；模型接口只管 API 和大模型名称。</p>
             </div>
             <div class="row">
@@ -2340,7 +2820,7 @@
               </div>
 
               <div id="effectiveConfigPreview" class="placeholder" style="margin:10px 0">
-                Effective translation config preview will appear after Provider/Profile selection.
+                选择翻译接口和语言配置后，这里会显示本次任务的有效配置。
               </div>
 
             <div class="row">
@@ -2440,7 +2920,7 @@
       </section>
 
       <section>
-        <h2>Step 4 · 任务状态与结果</h2>
+        <h2 data-i18n-en="Step 4 · Results">步骤 4 · 任务状态与结果</h2>
         <div class="job-status">
           <span id="badge" class="badge-status">idle</span>
           <a id="downloadSource" class="dl-link" href="#" hidden>下载原文 SRT</a>
@@ -2655,9 +3135,79 @@
 </main>
   </div>
 </div>
+
+<div id="taskDrawerBackdrop" class="task-drawer-backdrop" hidden onclick="closeTaskDrawer()"></div>
+<aside id="taskDrawer" class="task-detail-drawer" role="dialog" aria-modal="true" aria-labelledby="taskDrawerTitle" hidden>
+  <div class="drawer-head">
+    <div>
+      <h2 id="taskDrawerTitle">任务详情</h2>
+      <p id="taskDrawerSubtitle">选择任务后查看详细状态和字幕产物。</p>
+    </div>
+    <button id="taskDrawerClose" class="drawer-close" type="button" aria-label="关闭任务详情" onclick="closeTaskDrawer()">×</button>
+  </div>
+  <div class="drawer-body">
+    <section class="drawer-section">
+      <h3>任务概览</h3>
+      <div id="taskDrawerFacts" class="drawer-facts"></div>
+    </section>
+    <section class="drawer-section">
+      <h3>阶段与诊断</h3>
+      <div id="taskDrawerSignals" class="placeholder">暂无详细信号。</div>
+    </section>
+    <section class="drawer-section">
+      <h3>字幕与报告产物</h3>
+      <div id="taskDrawerArtifacts" class="artifact-switcher"></div>
+    </section>
+    <section class="drawer-section">
+      <h3>字幕预览</h3>
+      <div id="taskPreviewState" class="placeholder">选择可用的字幕产物开始预览。</div>
+      <div id="taskPreviewList" class="subtitle-preview-list" aria-live="polite"></div>
+      <div id="taskPreviewPager" class="preview-pager" hidden></div>
+    </section>
+  </div>
+</aside>
 <div id="toastLayer" class="toast-layer" aria-live="polite"></div>
 
 <script>
+/* Local mutation requests are protected by a per-process token. Keep the token
+   in memory only; never persist it in localStorage or include it in telemetry. */
+var nativeFetch = window.fetch.bind(window);
+var cineSubSessionTokenPromise = null;
+
+function getCineSubSessionToken() {
+  if (!cineSubSessionTokenPromise) {
+    cineSubSessionTokenPromise = nativeFetch('/api/session', { cache: 'no-store' })
+      .then(function(response) {
+        if (!response.ok) throw new Error('无法建立本地安全会话');
+        return response.json();
+      })
+      .then(function(payload) { return payload.token; })
+      .catch(function(error) {
+        cineSubSessionTokenPromise = null;
+        throw error;
+      });
+  }
+  return cineSubSessionTokenPromise;
+}
+
+window.fetch = function(input, init) {
+  var options = Object.assign({}, init || {});
+  var method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'POST' && method !== 'PUT' && method !== 'DELETE') {
+    return nativeFetch(input, options);
+  }
+  return getCineSubSessionToken().then(function(token) {
+    var headers = new Headers(options.headers || {});
+    headers.set('X-CineSub-Token', token);
+    if ((method === 'POST' || method === 'PUT') && options.body == null) {
+      headers.set('Content-Type', 'application/json');
+      options.body = '{}';
+    }
+    options.headers = headers;
+    return nativeFetch(input, options);
+  });
+};
+
 // ═══════════════════ Pipeline API ═══════════════════
 
 var pipelineLoading = {};
@@ -2666,6 +3216,262 @@ var pipelineCanRetryFailed = false;
 var pipelineCurrentFilter = 'all';
 var pipelineLastProgress = null;
 var asrEvidenceCurrentFile = '';
+var taskDrawerReturnFocus = null;
+var taskDrawerContext = null;
+var taskPreviewArtifact = '';
+var taskPreviewOffset = 0;
+var taskPreviewLimit = 60;
+
+function setUiLocale(locale) {
+  var zhButton = document.getElementById('localeZhButton');
+  var enButton = document.getElementById('localeEnButton');
+  if (locale !== 'zh-CN') {
+    showToast('English 界面已预留，将在后续版本完成；当前继续使用简体中文。', true);
+    if (zhButton) zhButton.focus();
+    return;
+  }
+  document.documentElement.lang = 'zh-CN';
+  if (zhButton) {
+    zhButton.classList.add('active');
+    zhButton.setAttribute('aria-pressed', 'true');
+  }
+  if (enButton) {
+    enButton.classList.remove('active');
+    enButton.setAttribute('aria-pressed', 'false');
+  }
+}
+
+function pipelineTaskById(taskId) {
+  var tasks = (pipelineLastProgress && pipelineLastProgress.tasks) || [];
+  for (var i = 0; i < tasks.length; i++) {
+    if (String(tasks[i].task_id || '') === String(taskId || '')) return tasks[i];
+  }
+  return null;
+}
+
+function drawerFact(label, value) {
+  return '<div class="drawer-fact"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(String(value || '—')) + '</strong></div>';
+}
+
+function previewArtifactLabel(kind) {
+  var labels = {source:'原文字幕', translated:'纯译文字幕', bilingual:'双语字幕', review_needed:'复核字幕'};
+  return labels[kind] || kind;
+}
+
+function openPipelineTaskDrawer(taskId, trigger) {
+  var task = pipelineTaskById(taskId);
+  if (!task) {
+    showToast('任务详情已更新，请刷新任务列表后重试。', false);
+    return;
+  }
+  taskDrawerReturnFocus = trigger || document.activeElement;
+  taskDrawerContext = {scope:'pipeline', id:task.task_id, task:task};
+  taskPreviewArtifact = '';
+  taskPreviewOffset = 0;
+  setStatusText('taskDrawerTitle', task.file || '任务详情');
+  setStatusText('taskDrawerSubtitle', (task.status_label || task.status || '未知状态') + ' · ' + (task.stage_label || task.stage || '等待阶段'));
+  var facts = '';
+  facts += drawerFact('任务状态', task.status_label || task.status);
+  facts += drawerFact('当前阶段', task.stage_label || task.stage);
+  facts += drawerFact('处理进度', String(task.progress || 0) + '%');
+  facts += drawerFact('恢复状态', recoveryActionLabel(task.recovery_action, task.recovery_label) || '无需恢复');
+  facts += drawerFact('识别语言', (task.language_detection || {}).source_language || '未记录');
+  facts += drawerFact('目标语言', task.target_language || '仅原文');
+  document.getElementById('taskDrawerFacts').innerHTML = facts;
+  var signalHtml = renderTaskSignals(task);
+  if (task.warning) signalHtml += '<div class="settings-notice warn">' + escapeHtml(task.warning) + '</div>';
+  if (task.error) signalHtml += '<details open><summary>失败详情</summary><pre class="mini-log">' + escapeHtml(task.error) + '</pre></details>';
+  document.getElementById('taskDrawerSignals').innerHTML = signalHtml || '<div class="placeholder">当前任务没有额外诊断信息。</div>';
+  renderDrawerArtifacts(task.artifacts || {});
+  document.getElementById('taskDrawerBackdrop').hidden = false;
+  document.getElementById('taskDrawer').hidden = false;
+  document.body.classList.add('drawer-open');
+  document.getElementById('taskDrawerClose').focus();
+}
+
+function renderDrawerArtifacts(artifacts) {
+  var host = document.getElementById('taskDrawerArtifacts');
+  var order = ['bilingual', 'translated', 'source', 'review_needed'];
+  var html = '';
+  var first = '';
+  for (var i = 0; i < order.length; i++) {
+    var kind = order[i];
+    var artifact = artifacts[kind];
+    if (!artifact || !artifact.downloadable) continue;
+    if (!first) first = kind;
+    html += '<button type="button" data-preview-artifact="' + kind + '" onclick="loadTaskPreview(\'' + kind + '\',0)">预览' + escapeHtml(previewArtifactLabel(kind)) + '</button>';
+    if (artifact.download_url) html += '<a class="dl-link" href="' + escapeHtml(artifact.download_url) + '">下载' + escapeHtml(previewArtifactLabel(kind)) + '</a>';
+  }
+  host.innerHTML = html || '<span class="placeholder">当前没有可预览的字幕产物。</span>';
+  document.getElementById('taskPreviewList').innerHTML = '';
+  document.getElementById('taskPreviewPager').hidden = true;
+  if (first) loadTaskPreview(first, 0);
+  else renderAsyncState('taskPreviewState', 'empty', '暂无字幕预览', '任务完成并生成 SRT 后可在这里预览。');
+}
+
+async function loadTaskPreview(artifact, offset) {
+  if (!taskDrawerContext) return;
+  taskPreviewArtifact = artifact;
+  taskPreviewOffset = Math.max(0, Number(offset || 0));
+  var buttons = document.querySelectorAll('[data-preview-artifact]');
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].classList.toggle('active', buttons[i].dataset.previewArtifact === artifact);
+  }
+  renderAsyncState('taskPreviewState', 'loading', '正在读取字幕', '只读取本地 SRT，不会启动识别或翻译。');
+  document.getElementById('taskPreviewList').innerHTML = '';
+  document.getElementById('taskPreviewPager').hidden = true;
+  var base = taskDrawerContext.scope === 'pipeline'
+    ? '/api/pipeline/preview?task=' + encodeURIComponent(taskDrawerContext.id)
+    : '/api/jobs/' + encodeURIComponent(taskDrawerContext.id) + '/preview?';
+  var joiner = base.indexOf('?') >= 0 && !base.endsWith('?') ? '&' : '';
+  var url = base + joiner + 'artifact=' + encodeURIComponent(artifact) + '&offset=' + taskPreviewOffset + '&limit=' + taskPreviewLimit;
+  try {
+    var response = await fetch(url);
+    var data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || '字幕预览读取失败');
+    renderTaskPreview(data);
+  } catch (error) {
+    renderAsyncState('taskPreviewState', 'error', '字幕预览不可用', safeUiText(error.message), {label:'重试', onclick:'loadTaskPreview(taskPreviewArtifact,taskPreviewOffset)'});
+  }
+}
+
+function renderTaskPreview(data) {
+  var state = document.getElementById('taskPreviewState');
+  var list = document.getElementById('taskPreviewList');
+  var cues = data.cues || [];
+  state.innerHTML = '';
+  if (!cues.length) {
+    renderAsyncState('taskPreviewState', 'empty', '这个字幕文件没有可显示条目', '仍可使用上方下载链接取得原文件。');
+  }
+  var html = '';
+  for (var i = 0; i < cues.length; i++) {
+    var cue = cues[i];
+    var reviewClass = data.artifact === 'review_needed' ? ' review' : '';
+    html += '<article class="subtitle-preview-cue' + reviewClass + '">';
+    html += '<div class="cue-time">#' + escapeHtml(String(cue.index)) + '<br>' + escapeHtml(cue.start) + '<br>' + escapeHtml(cue.end) + '</div>';
+    html += '<div class="cue-lines">';
+    var lines = cue.text_lines || [];
+    for (var j = 0; j < lines.length; j++) html += '<div>' + escapeHtml(lines[j]) + '</div>';
+    html += '</div></article>';
+  }
+  list.innerHTML = html;
+  var pager = document.getElementById('taskPreviewPager');
+  var previousOffset = Math.max(0, Number(data.offset || 0) - Number(data.limit || taskPreviewLimit));
+  var nextOffset = Number(data.offset || 0) + cues.length;
+  pager.innerHTML = '<button type="button" ' + (data.offset ? '' : 'disabled') + ' onclick="loadTaskPreview(taskPreviewArtifact,' + previousOffset + ')">上一页</button>' +
+    '<span>第 ' + (Number(data.offset || 0) + 1) + '–' + (Number(data.offset || 0) + cues.length) + ' 条，共 ' + Number(data.total || 0) + ' 条</span>' +
+    '<button type="button" ' + (data.has_more ? '' : 'disabled') + ' onclick="loadTaskPreview(taskPreviewArtifact,' + nextOffset + ')">下一页</button>';
+  pager.hidden = Number(data.total || 0) <= Number(data.limit || taskPreviewLimit);
+}
+
+function closeTaskDrawer() {
+  var drawer = document.getElementById('taskDrawer');
+  if (!drawer || drawer.hidden) return;
+  drawer.hidden = true;
+  document.getElementById('taskDrawerBackdrop').hidden = true;
+  document.body.classList.remove('drawer-open');
+  taskDrawerContext = null;
+  if (taskDrawerReturnFocus && typeof taskDrawerReturnFocus.focus === 'function') taskDrawerReturnFocus.focus();
+  taskDrawerReturnFocus = null;
+}
+
+document.addEventListener('keydown', function(event) {
+  var drawer = document.getElementById('taskDrawer');
+  if (!drawer || drawer.hidden) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeTaskDrawer();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  var focusable = drawer.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])');
+  if (!focusable.length) return;
+  var first = focusable[0];
+  var last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+});
+
+function safeUiText(value) {
+  return String(value || '')
+    .replace(/\bsk-[A-Za-z0-9_-]+\b/g, 'sk-***')
+    .replace(/((?:api[_-]?key|token|secret|authorization)\s*[:=]\s*)\S+/gi, '$1***')
+    .slice(0, 600);
+}
+
+function asyncStateMarkup(kind, title, detail, action) {
+  var icons = {loading:'…', empty:'—', success:'✓', warning:'!', error:'×'};
+  var safeKind = ['loading', 'empty', 'success', 'warning', 'error'].indexOf(kind) >= 0 ? kind : 'empty';
+  var html = '<div class="async-state ' + safeKind + '" role="' + (safeKind === 'error' ? 'alert' : 'status') + '">';
+  html += '<span class="async-state-icon" aria-hidden="true">' + icons[safeKind] + '</span>';
+  html += '<div><strong>' + escapeHtml(safeUiText(title)) + '</strong>';
+  if (detail) html += '<p>' + escapeHtml(safeUiText(detail)) + '</p>';
+  html += '</div>';
+  if (action && action.label && action.onclick) {
+    html += '<button type="button" class="secondary-btn" onclick="' + escapeHtml(action.onclick) + '">' + escapeHtml(action.label) + '</button>';
+  }
+  return html + '</div>';
+}
+
+function renderAsyncState(targetId, kind, title, detail, action) {
+  var el = document.getElementById(targetId);
+  if (el) el.innerHTML = asyncStateMarkup(kind, title, detail, action);
+}
+
+function readinessStep(index, title, status, detail, tab, actionLabel) {
+  var html = '<div class="readiness-step ' + escapeHtml(status) + '">';
+  html += '<span class="step-index">' + escapeHtml(index) + '</span><strong>' + escapeHtml(title) + '</strong>';
+  html += '<span>' + escapeHtml(detail) + '</span>';
+  if (tab && actionLabel) html += '<button type="button" class="settings-jump" onclick="switchTab(\'' + escapeJsString(tab) + '\')">' + escapeHtml(actionLabel) + '</button>';
+  return html + '</div>';
+}
+
+async function loadAppInfo() {
+  try {
+    var resp = await fetch('/api/app-info');
+    var data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.error || '应用信息不可用');
+    setStatusText('appVersionChip', 'v' + data.version);
+    setStatusText('appFlavorChip', data.build_flavor === 'gpu' ? 'GPU 版本' : (data.build_flavor === 'cpu' ? 'CPU / 自动版本' : '开发版本'));
+    document.documentElement.dataset.buildFlavor = data.build_flavor;
+    return data;
+  } catch (err) {
+    setStatusText('appVersionChip', '版本未知');
+    setStatusText('appFlavorChip', '离线');
+    return null;
+  }
+}
+
+async function loadReadinessChecklist() {
+  var el = document.getElementById('readinessChecklist');
+  if (!el) return;
+  try {
+    var responses = await Promise.all([
+      fetch('/api/runtime/diagnostics'),
+      fetch('/api/providers/active'),
+      fetch('/api/language-profiles/active')
+    ]);
+    var runtime = await responses[0].json();
+    var providerData = await responses[1].json();
+    var profileData = await responses[2].json();
+    var items = runtime.diagnostic_items || [];
+    var ffmpeg = items.find(function(item) { return item.id === 'ffmpeg'; }) || {};
+    var model = items.find(function(item) { return item.id === 'model_cache'; }) || {};
+    var runtimeError = !responses[0].ok || !runtime.ok || (runtime.diagnostic_summary || {}).status === 'error';
+    var provider = providerData.active;
+    var profile = profileData.active;
+    var modelCount = Number(((model.details || {}).known_model_count) || 0);
+    var canStart = ffmpeg.status === 'ok' && modelCount > 0;
+    var html = '';
+    html += readinessStep('01', '运行环境', runtimeError ? 'error' : 'ok', runtimeError ? '存在阻断项，先查看诊断。' : 'Python 与运行目录可用。', 'runtime', '查看诊断');
+    html += readinessStep('02', '翻译接口', provider ? 'ok' : 'warning', provider ? ('已选择 ' + (provider.name || provider.id || '接口')) : '未配置；只生成原文字幕仍可运行。', provider ? '' : 'providers', provider ? '' : '配置接口');
+    html += readinessStep('03', '语言配置', profile ? 'ok' : 'warning', profile ? ('当前 ' + (profile.name || profile.id || 'auto-detect')) : '将使用内置 auto-detect。', 'langprofiles', '查看配置');
+    html += readinessStep('04', '开始任务', canStart ? 'ok' : 'warning', canStart ? 'FFmpeg 与本地模型已就绪。' : (ffmpeg.status !== 'ok' ? '缺少 FFmpeg，媒体任务会失败。' : '尚未发现本地模型，不会自动下载。'), canStart ? '' : 'runtime', canStart ? '' : '处理缺失项');
+    el.innerHTML = html;
+  } catch (err) {
+    el.innerHTML = readinessStep('01', '检查失败', 'error', '无法读取本机状态：' + safeUiText(err.message), 'runtime', '打开诊断');
+  }
+}
 
 function setLoading(action, state) {
   pipelineLoading[action] = state;
@@ -3065,7 +3871,7 @@ function renderTextResult(targetId, data, emptyText) {
 }
 
 function renderScan(data) {
-  renderTextResult('scan-result', data, 'No input files found. Put videos in the input directory and scan again.');
+  renderTextResult('scan-result', data, '没有发现输入文件。请将视频放入目录后重新扫描。');
 }
 
 function statusBadgeClass(status) {
@@ -3150,7 +3956,8 @@ function renderTaskSignals(task) {
     var routingClass = task.segment_asr_routing_status === 'failed' ? 'badge-err' : (task.segment_asr_routing_status === 'fallback' ? 'badge-warn' : 'badge-pending');
     html += '<div class="task-sub"><span class="badge ' + routingClass + '">' + escapeHtml(routingText) + '</span></div>';
     if (task.segment_asr_routing_report) {
-      html += '<div class="task-sub"><span class="badge badge-pending">路由报告 ' + escapeHtml(task.segment_asr_routing_report) + '</span></div>';
+      var routingFile = String(task.segment_asr_routing_report).split(/[\\/]/).pop();
+      html += '<div class="task-sub"><span class="badge badge-pending">路由报告 ' + escapeHtml(routingFile) + '</span></div>';
     }
   }
   var issueTypes = qs.issue_types || {};
@@ -3221,13 +4028,27 @@ function renderTaskFilters(progress, counts) {
   return html;
 }
 
+function updatePipelineStageRibbon(progress) {
+  var stages = ['pending', 'extracting_audio', 'transcribing', 'translating', 'quality_checking'];
+  var currentStage = progress && progress.current ? progress.current.stage : 'pending';
+  var currentIndex = stages.indexOf(currentStage);
+  if (progress && progress.total && Number(progress.overall_progress || 0) >= 100) currentIndex = stages.length;
+  if (currentIndex < 0) currentIndex = 0;
+  var nodes = document.querySelectorAll('[data-pipeline-stage]');
+  for (var i = 0; i < nodes.length; i++) {
+    nodes[i].classList.toggle('done', i < currentIndex);
+    nodes[i].classList.toggle('active', i === currentIndex);
+  }
+}
+
 function renderPipelineProgress(progress) {
   pipelineLastProgress = progress || null;
+  updatePipelineStageRibbon(progress);
   var el = document.getElementById('status-result');
   if (!el) return;
   if (!progress || !progress.ok) {
     updateRetryButton(false);
-    el.innerHTML = '<div class="placeholder">任务状态读取失败。请查看操作日志或稍后重试。</div>';
+    renderAsyncState('status-result', 'error', '任务状态读取失败', '请查看操作日志或稍后重试。', {label:'重试', onclick:'loadPipelineProgress()'});
     return;
   }
 
@@ -3250,7 +4071,7 @@ function renderPipelineProgress(progress) {
     html += '<div class="hint">当前：' + escapeHtml(current.file || '-') + ' / ' + escapeHtml(current.stage_label || current.stage || '-') + '</div>';
   }
   if (!progress.total) {
-    html += '<div class="placeholder">暂无任务状态。先扫描或开始处理 input 目录。</div>';
+    html += asyncStateMarkup('empty', '暂无任务状态', '先扫描或开始处理视频目录。');
     html += '</div>';
     el.innerHTML = html;
     return;
@@ -3265,37 +4086,32 @@ function renderPipelineProgress(progress) {
   }
   html += '<div class="hint">语言提示：当前每个任务按一个主源语言处理。单语素材自动识别错误时可手动指定源语言；法英等混合语言素材不建议把一个全局源语言当成完整修复。</div>';
   html += renderTaskFilters(progress, counts);
-  html += '<div class="task-list">';
+  html += '<div class="task-table-wrap"><table class="task-table">';
+  html += '<thead><tr><th>文件名</th><th>任务状态</th><th>当前阶段</th><th>质检</th><th>处理进度</th></tr></thead><tbody>';
   var tasks = progress.tasks || [];
   var visibleTasks = tasks.filter(function(task) {
     return pipelineCurrentFilter === 'all' || task.status === pipelineCurrentFilter;
   });
   if (!visibleTasks.length) {
-    html += '<div class="placeholder">当前没有“' + escapeHtml(pipelineFilterLabel(pipelineCurrentFilter)) + '”状态的任务。</div>';
+    html += '<tr><td colspan="5"><div class="placeholder">当前没有“' + escapeHtml(pipelineFilterLabel(pipelineCurrentFilter)) + '”状态的任务。</div></td></tr>';
   }
   for (var i = 0; i < visibleTasks.length; i++) {
     var t = visibleTasks[i];
     var badgeClass = statusBadgeClass(t.status);
-    html += '<div class="task-row ' + escapeHtml(t.status || 'pending') + '">';
-    html += '<div>';
-    html += '<div class="task-name" title="' + escapeHtml(t.file || '') + '">' + escapeHtml(t.file || '-') + '</div>';
-    html += '<div class="task-sub">';
-    html += '<span class="badge ' + badgeClass + '">' + escapeHtml(t.status_label || t.status || '-') + '</span>';
-    html += '<span>' + escapeHtml(t.stage_label || t.stage || '-') + '</span>';
-    if (t.retry_count) html += '<span>重试 ' + escapeHtml(String(t.retry_count)) + '/' + escapeHtml(String(t.max_retries || 0)) + '</span>';
-    html += '</div>';
-    if (t.recovery_action && t.recovery_action !== 'none') {
-      html += '<div class="task-sub"><span class="badge badge-warn">' + escapeHtml(recoveryActionLabel(t.recovery_action, t.recovery_label)) + '</span></div>';
-    }
-    html += renderTaskSignals(t);
-    html += renderTaskArtifactChips(t);
-    if (t.warning) html += '<div class="task-sub"><span class="badge badge-warn">' + escapeHtml(t.warning) + '</span></div>';
-    if (t.error) html += '<div class="task-sub"><span class="badge badge-err">' + escapeHtml(t.error).slice(0, 160) + '</span></div>';
-    html += '</div>';
-    html += '<div class="task-progress"><span>' + (t.progress || 0) + '%</span>' + renderProgressBar(t.progress || 0) + '</div>';
-    html += '</div>';
+    var quality = t.quality_summary || {};
+    var qualityLabel = quality.status ? (quality.errors ? '有错误' : (quality.warnings ? '需复核' : '通过')) : '未生成';
+    var qualityClass = quality.errors ? 'badge-err' : (quality.warnings ? 'badge-warn' : (quality.status ? 'badge-ok' : 'badge-pending'));
+    html += '<tr class="' + escapeHtml(t.status || 'pending') + '" tabindex="0" aria-label="打开任务详情：' + escapeHtml(t.file || '') + '" onclick="openPipelineTaskDrawer(\'' + escapeJsString(t.task_id || '') + '\',this)" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openPipelineTaskDrawer(\'' + escapeJsString(t.task_id || '') + '\',this)}">';
+    html += '<td><div class="task-name" title="' + escapeHtml(t.file || '') + '">' + escapeHtml(t.file || '-') + '</div>';
+    if (t.retry_count) html += '<div class="task-sub">已重试 ' + escapeHtml(String(t.retry_count)) + '/' + escapeHtml(String(t.max_retries || 0)) + '</div>';
+    html += '</td>';
+    html += '<td><span class="badge ' + badgeClass + '">' + escapeHtml(t.status_label || t.status || '-') + '</span></td>';
+    html += '<td><span class="task-sub">' + escapeHtml(t.stage_label || t.stage || '-') + '</span></td>';
+    html += '<td><span class="badge ' + qualityClass + '">' + escapeHtml(qualityLabel) + '</span></td>';
+    html += '<td><div class="task-table-progress"><span>' + (t.progress || 0) + '%</span>' + renderProgressBar(t.progress || 0) + '</div></td>';
+    html += '</tr>';
   }
-  html += '</div>';
+  html += '</tbody></table></div>';
   html += '</div>';
   el.innerHTML = html;
 }
@@ -3305,7 +4121,7 @@ function renderStatus(data) {
     renderPipelineProgress(data.progress);
     return;
   }
-  renderTextResult('status-result', data, 'No task state yet.');
+  renderTextResult('status-result', data, '暂无任务状态。');
 }
 
 async function loadPipelineProgress() {
@@ -3321,8 +4137,7 @@ async function loadPipelineProgress() {
       pipelinePollTimer = setTimeout(loadPipelineProgress, 3000);
     }
   } catch (err) {
-    var el = document.getElementById('status-result');
-    if (el) el.innerHTML = '<div class="placeholder">进度读取失败: ' + escapeHtml(err.message) + '</div>';
+    renderAsyncState('status-result', 'error', '进度读取失败', err.message, {label:'重试', onclick:'loadPipelineProgress()'});
   }
 }
 
@@ -3338,7 +4153,7 @@ function renderReview(data) {
     el.innerHTML = html;
     return;
   }
-  renderTextResult('review-result', data, 'No quality report yet.');
+  renderTextResult('review-result', data, '暂无质检报告。');
 }
 
 function refreshAll() {
@@ -3349,6 +4164,8 @@ function refreshAll() {
   loadStorageStatus();
   loadAsrEvidenceReports();
   loadTopStatus();
+  loadAppInfo();
+  loadReadinessChecklist();
 }
 
 function formatBytes(bytes) {
@@ -3690,7 +4507,7 @@ function renderAsrEvidenceReports(data) {
   }
   var reports = data.reports || [];
   if (!reports.length) {
-    el.innerHTML = '<div class="placeholder">No ASR evidence reports yet. Run src/tools/mixed_language_asr_evidence.py to create JSON reports in output/reports/asr_evidence/.</div>';
+    renderAsyncState('asr-evidence-result', 'empty', '暂无 ASR 证据报告', '运行证据分析工具后，报告会出现在 output/reports/asr_evidence/。');
     return;
   }
   var hasCurrent = reports.some(function(report) { return report.file === asrEvidenceCurrentFile; });
@@ -3708,7 +4525,7 @@ function renderAsrEvidenceReports(data) {
     html += '</button>';
   }
   html += '</div>';
-  html += '<div id="asr-evidence-detail"><div class="placeholder">Loading selected report...</div></div>';
+  html += '<div id="asr-evidence-detail"><div class="placeholder">正在读取所选报告...</div></div>';
   html += '</div>';
   el.innerHTML = html;
   loadAsrEvidenceReport(asrEvidenceCurrentFile);
@@ -3733,7 +4550,7 @@ async function loadAsrEvidenceReport(file) {
     button.classList.toggle('active', button.getAttribute('data-file') === file);
   });
   var detail = document.getElementById('asr-evidence-detail');
-  if (detail) detail.innerHTML = '<div class="placeholder">Loading report...</div>';
+  if (detail) detail.innerHTML = '<div class="placeholder">正在读取报告...</div>';
   try {
     var resp = await fetch('/api/asr-evidence/report?file=' + encodeURIComponent(file));
     var data = await resp.json();
@@ -3759,7 +4576,7 @@ function renderAsrEvidenceDetail(report) {
   html += '<div class="storage-item"><strong>Low confidence</strong><span>' + escapeHtml(String(summary.low_confidence_count || 0)) + '</span></div>';
   html += '</div>';
   html += '<div class="hint">Input: ' + escapeHtml(metadata.input_path || '') + '<br>Model: ' + escapeHtml(metadata.model || '') + ' · ' + escapeHtml(metadata.device || '') + ' / ' + escapeHtml(metadata.compute_type || '') + ' · local-only=' + escapeHtml(String(metadata.local_files_only !== false)) + '</div>';
-  html += '<table class="asr-sample-table"><thead><tr><th>#</th><th>Time</th><th>Lang</th><th>Prob</th><th>Preview / Error</th></tr></thead><tbody>';
+  html += '<table class="asr-sample-table"><thead><tr><th>#</th><th>时间</th><th>语言</th><th>概率</th><th>预览 / 错误</th></tr></thead><tbody>';
   var samples = report.samples || [];
   for (var i = 0; i < samples.length; i++) {
     var sample = samples[i];
@@ -3852,6 +4669,7 @@ async function inspectInputFile() {
 
 var jobQueueTimer = null;
 var jobQueueLastActive = false;
+var jobQueueCache = {};
 
 function formatTime(ts) {
   if (!ts) return '-';
@@ -3886,22 +4704,22 @@ function renderJobQueueItem(job) {
     html += '<div class="job-queue-progress">' + renderProgressBar(job.progress) + '</div>';
   }
 
+  html += '<div class="job-queue-actions">';
+  html += '<button type="button" onclick="openJobTaskDrawer(\'' + escapeJsString(job.id) + '\',this)">查看详情</button>';
   if (job.status === 'done') {
-    html += '<div class="job-queue-actions">';
     if (job.source_output) html += '<a class="dl-link" href="/download?job=' + encodeURIComponent(job.id) + '&type=source">下载原文</a>';
     if (job.translated_output) html += '<a class="dl-link" href="/download?job=' + encodeURIComponent(job.id) + '&type=translated">下载双语</a>';
-    html += '</div>';
   } else if (job.status === 'failed') {
-    html += '<div class="job-queue-actions">';
     if (job.can_retry) {
       html += '<button class="primary" onclick="retryJob(\'' + escapeJsString(job.id) + '\')">重新提交</button>';
     } else {
       html += '<button disabled title="' + escapeHtml(job.retry_reason || '无法重试') + '">无法重试</button>';
     }
-    html += '</div>';
-    if (job.error_summary) {
-      html += '<details class="job-error-details"><summary>错误详情</summary>' + escapeHtml(job.error_summary) + '</details>';
-    }
+  }
+  html += '</div>';
+
+  if (job.status === 'failed' && job.error_summary) {
+    html += '<details class="job-error-details"><summary>错误详情</summary>' + escapeHtml(job.error_summary) + '</details>';
   }
 
   html += '</div>';
@@ -3915,6 +4733,8 @@ async function loadJobQueue() {
     var resp = await fetch('/api/jobs');
     var data = await resp.json();
     var jobs = data.jobs || [];
+    jobQueueCache = {};
+    for (var cacheIndex = 0; cacheIndex < jobs.length; cacheIndex++) jobQueueCache[jobs[cacheIndex].id] = jobs[cacheIndex];
     var active = false;
     if (!jobs.length) {
       el.innerHTML = '<div class="placeholder">暂无任务记录。</div>';
@@ -3934,6 +4754,46 @@ async function loadJobQueue() {
   }
 }
 
+async function openJobTaskDrawer(jobId, trigger) {
+  taskDrawerReturnFocus = trigger || document.activeElement;
+  try {
+    var response = await fetch('/api/jobs/' + encodeURIComponent(jobId));
+    var job = await response.json();
+    if (!response.ok) throw new Error(job.error || '任务详情读取失败');
+    taskDrawerContext = {scope:'job', id:jobId, task:job};
+    taskPreviewArtifact = '';
+    taskPreviewOffset = 0;
+    var filename = String(job.input || '').replace(/^.*[\\\/]/, '') || '单文件任务';
+    setStatusText('taskDrawerTitle', filename);
+    setStatusText('taskDrawerSubtitle', (job.status === 'done' ? '已完成' : (job.status === 'failed' ? '失败' : '处理中')) + ' · ' + (job.stage || '等待阶段'));
+    var facts = '';
+    facts += drawerFact('任务状态', job.status || '未知');
+    facts += drawerFact('当前阶段', job.stage || '等待');
+    facts += drawerFact('处理进度', String(job.progress || 0) + '%');
+    facts += drawerFact('更新时间', formatTime(job.updated_at));
+    document.getElementById('taskDrawerFacts').innerHTML = facts;
+    var signals = '';
+    if (job.segment_asr_routing_message) signals += '<div class="settings-notice warn">' + escapeHtml(job.segment_asr_routing_message) + '</div>';
+    if (job.error_summary) signals += '<details open><summary>失败详情</summary><pre class="mini-log">' + escapeHtml(job.error_summary) + '</pre></details>';
+    var logs = (job.logs || []).slice(-30).join('\n');
+    if (logs) signals += '<details><summary>最近日志</summary><pre class="mini-log">' + escapeHtml(logs) + '</pre></details>';
+    document.getElementById('taskDrawerSignals').innerHTML = signals || '<div class="placeholder">当前任务没有额外诊断信息。</div>';
+    var artifacts = {
+      source: {downloadable:!!job.source_output, download_url:'/download?job=' + encodeURIComponent(jobId) + '&type=source'},
+      translated: {downloadable:!!job.translated_output, download_url:'/download?job=' + encodeURIComponent(jobId) + '&type=translated'},
+      review_needed: {downloadable:!!job.review_needed, download_url:'/download?job=' + encodeURIComponent(jobId) + '&type=review_needed'}
+    };
+    renderDrawerArtifacts(artifacts);
+    document.getElementById('taskDrawerBackdrop').hidden = false;
+    document.getElementById('taskDrawer').hidden = false;
+    document.body.classList.add('drawer-open');
+    document.getElementById('taskDrawerClose').focus();
+  } catch (error) {
+    taskDrawerReturnFocus = null;
+    showToast('任务详情读取失败：' + safeUiText(error.message), false);
+  }
+}
+
 function _scheduleJobQueuePoll() {
   if (jobQueueTimer) {
     clearTimeout(jobQueueTimer);
@@ -3949,13 +4809,13 @@ async function retryJob(jobId) {
     var resp = await fetch('/api/jobs/' + encodeURIComponent(jobId) + '/retry', { method: 'POST' });
     var data = await resp.json();
     if (resp.ok && data.ok) {
-      alert('重试已创建: ' + (data.job && data.job.id ? data.job.id : ''));
+      showToast('重试已创建: ' + (data.job && data.job.id ? data.job.id : ''), true);
       loadJobQueue();
     } else {
-      alert('重试失败: ' + (data.error || '未知错误'));
+      showToast('重试失败: ' + safeUiText(data.error || '未知错误'), false);
     }
   } catch (err) {
-    alert('重试请求失败: ' + err.message);
+    showToast('重试请求失败: ' + safeUiText(err.message), false);
   }
 }
 
@@ -4120,7 +4980,7 @@ function showToast(message, ok) {
     var file = document.getElementById("file").files[0];
     var path = document.getElementById("path").value.trim();
     if (!file && !path) {
-      alert("请选择文件，或填写本机文件路径。");
+      showToast("请选择文件，或填写本机文件路径。", false);
       return;
     }
 
@@ -4129,9 +4989,9 @@ function showToast(message, ok) {
       var apiKey = document.getElementById("api_key").value.trim();
       var llmModel = document.getElementById("llm_model").value.trim();
       var savedProvider = document.getElementById("provider_select").value.trim();
-      if (!apiBase) { alert("翻译已启用，请填写 API Base URL。"); return; }
-      if (!apiKey && !savedProvider) { alert("翻译已启用，请填写 API Key，或选择已保存的模型接口配置。"); return; }
-      if (!llmModel) { alert("翻译已启用，请填写大模型名称。"); return; }
+      if (!apiBase) { showToast("翻译已启用，请填写 API Base URL。", false); return; }
+      if (!apiKey && !savedProvider) { showToast("翻译已启用，请填写 API Key，或选择已保存的模型接口配置。", false); return; }
+      if (!llmModel) { showToast("翻译已启用，请填写大模型名称。", false); return; }
     }
 
     startBtn.disabled = true;
@@ -4165,11 +5025,11 @@ function showToast(message, ok) {
     var file = fileEl && fileEl.files ? fileEl.files[0] : null;
     var path = pathEl ? pathEl.value.trim() : "";
     if (!file && !path) {
-      alert("请填写本机文件路径，或上传一个小样本。");
+      showToast("请填写本机文件路径，或上传一个小样本。", false);
       return;
     }
     if (file && file.size > 256 * 1024 * 1024) {
-      alert("上传入口只适合小样本。大文件请填写本机路径，后台会直接读取原文件，不复制原片。");
+      showToast("上传入口只适合小样本。大文件请填写本机路径，后台会直接读取原文件，不复制原片。", false);
       return;
     }
 
@@ -4178,9 +5038,9 @@ function showToast(message, ok) {
       var apiKey = document.getElementById("api_key").value.trim();
       var llmModel = document.getElementById("llm_model").value.trim();
       var savedProvider = document.getElementById("provider_select").value.trim();
-      if (!apiBase) { alert("翻译已启用，请选择有效的模型接口配置。"); return; }
-      if (!apiKey && !savedProvider) { alert("翻译已启用，请选择已保存的模型接口配置。"); return; }
-      if (!llmModel) { alert("翻译已启用，请选择或填写大模型名称。"); return; }
+      if (!apiBase) { showToast("翻译已启用，请选择有效的模型接口配置。", false); return; }
+      if (!apiKey && !savedProvider) { showToast("翻译已启用，请选择已保存的模型接口配置。", false); return; }
+      if (!llmModel) { showToast("翻译已启用，请选择或填写大模型名称。", false); return; }
     }
 
     startBtn.disabled = true;
@@ -4438,8 +5298,18 @@ async function saveLP() {
   var editId = document.getElementById('lpEditId').value;
   var isEdit = !!editId;
   var pid = document.getElementById('lpEditIdField').value.trim();
-  if (!pid) { alert('Profile ID 不能为空'); return; }
-  if (!document.getElementById('lpEditName').value.trim()) { alert('名称不能为空'); return; }
+  if (!pid) { showToast('Profile ID 不能为空', false); return; }
+  if (!document.getElementById('lpEditName').value.trim()) { showToast('名称不能为空', false); return; }
+
+  var existingReliability = { mode: 'off', max_extra_requests: 12 };
+  if (isEdit) {
+    for (var profileIndex = 0; profileIndex < langProfileCache.length; profileIndex++) {
+      if (langProfileCache[profileIndex].id === pid) {
+        existingReliability = langProfileCache[profileIndex].translation_reliability || existingReliability;
+        break;
+      }
+    }
+  }
 
   var data = {
     id: pid,
@@ -4467,6 +5337,8 @@ async function saveLP() {
       polish_translation: document.getElementById('lpEditPolish').checked,
     },
     translation_style: document.getElementById('lpEditStyle').value.trim(),
+    // Preview is intentionally hidden until manual A/B approval; preserve it when editing.
+    translation_reliability: existingReliability,
     glossary: parseGlossaryText(document.getElementById('lpEditGlossary').value),
   };
 
@@ -4485,14 +5357,15 @@ async function saveLP() {
       loadPipelineSelects();
       loadLangProfileSelect();
       loadTopStatus();
+      loadReadinessChecklist();
       loadEffectiveConfigPreview();
       showSettingsNotice('lpSettingsNotice', '语言风格已保存。', true);
     } else {
       showSettingsNotice('lpSettingsNotice', '保存失败: ' + (result.error || '未知错误'), false);
-      alert('保存失败: ' + (result.error || '未知错误'));
+      showToast('保存失败: ' + safeUiText(result.error || '未知错误'), false);
     }
   } catch (err) {
-    alert('请求失败: ' + err.message);
+    showToast('请求失败: ' + safeUiText(err.message), false);
   }
 }
 
@@ -4501,18 +5374,18 @@ async function deleteLP(id) {
   try {
     var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
-    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadTopStatus(); showSettingsNotice('lpSettingsNotice', '语言风格已删除；内置配置只会移除本地覆盖。', true); }
-    else { showSettingsNotice('lpSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); alert('删除失败: ' + (result.error || '未知错误')); }
-  } catch (err) { alert('请求失败: ' + err.message); }
+    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadTopStatus(); loadReadinessChecklist(); showSettingsNotice('lpSettingsNotice', '语言风格已删除；内置配置只会移除本地覆盖。', true); }
+    else { showSettingsNotice('lpSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); showToast('删除失败: ' + safeUiText(result.error || '未知错误'), false); }
+  } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
 
 async function setActiveLP(id) {
   try {
     var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
     var result = await resp.json();
-    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadTopStatus(); showSettingsNotice('lpSettingsNotice', '默认语言风格已更新。', true); }
-    else { showSettingsNotice('lpSettingsNotice', '设置失败: ' + (result.error || '未知错误'), false); alert('设置失败: ' + (result.error || '未知错误')); }
-  } catch (err) { alert('请求失败: ' + err.message); }
+    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadTopStatus(); loadReadinessChecklist(); showSettingsNotice('lpSettingsNotice', '默认语言风格已更新。', true); }
+    else { showSettingsNotice('lpSettingsNotice', '设置失败: ' + (result.error || '未知错误'), false); showToast('设置失败: ' + safeUiText(result.error || '未知错误'), false); }
+  } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
 
 // ── Transcribe Tab Language Profile Select ──
@@ -4876,8 +5749,8 @@ async function saveProvider() {
   var mi = document.getElementById('provModelInput');
   var model = (ms.style.display !== 'none') ? ms.value : mi.value.trim();
   var name = document.getElementById('provEditName').value.trim() || (tpl ? tpl.name : '');
-  if (!name) { alert('名称不能为空'); return; }
-  if (!model) { alert('模型不能为空'); return; }
+  if (!name) { showToast('名称不能为空', false); return; }
+  if (!model) { showToast('模型不能为空', false); return; }
 
   var data = {
     id: document.getElementById('provEditIdField').value.trim(),
@@ -4889,16 +5762,16 @@ async function saveProvider() {
     notes: document.getElementById('provEditNotes').value.trim(),
     enabled: document.getElementById('provEditEnabled').checked,
   };
-  if (!data.api_base) { alert('API Base 不能为空'); return; }
+  if (!data.api_base) { showToast('API Base 不能为空', false); return; }
 
   try {
     var method = isEdit ? 'PUT' : 'POST';
     var url = isEdit ? '/api/providers/' + encodeURIComponent(data.id || editId) : '/api/providers';
     var resp = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     var result = await resp.json();
-    if (resp.ok) { closeProviderModal(); loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadTopStatus(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '翻译接口已保存，API Key 仍只以脱敏状态显示。', true); }
-    else { showSettingsNotice('providerSettingsNotice', '保存失败: ' + (result.error || '未知错误'), false); alert('保存失败: ' + (result.error || '未知错误')); }
-  } catch (err) { alert('请求失败: ' + err.message); }
+    if (resp.ok) { closeProviderModal(); loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadTopStatus(); loadReadinessChecklist(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '翻译接口已保存，API Key 仍只以脱敏状态显示。', true); }
+    else { showSettingsNotice('providerSettingsNotice', '保存失败: ' + (result.error || '未知错误'), false); showToast('保存失败: ' + safeUiText(result.error || '未知错误'), false); }
+  } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
 
 async function deleteProvider(id) {
@@ -4906,17 +5779,17 @@ async function deleteProvider(id) {
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
-    if (resp.ok) { loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadTopStatus(); showSettingsNotice('providerSettingsNotice', '翻译接口已删除。', true); } else { showSettingsNotice('providerSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); alert('删除失败: ' + (result.error || '未知错误')); }
-  } catch (err) { alert('请求失败: ' + err.message); }
+    if (resp.ok) { loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadTopStatus(); loadReadinessChecklist(); showSettingsNotice('providerSettingsNotice', '翻译接口已删除。', true); } else { showSettingsNotice('providerSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); showToast('删除失败: ' + safeUiText(result.error || '未知错误'), false); }
+  } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
 
 async function setActiveProvider(id) {
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
     var result = await resp.json();
-    if (resp.ok) { loadProviders(); loadProviderSelect(); loadPipelineSelects(); loadTopStatus(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '默认翻译接口已更新。', true); }
-    else { showSettingsNotice('providerSettingsNotice', '设置失败: ' + (result.error || '未知错误'), false); alert('设置失败: ' + (result.error || '未知错误')); }
-  } catch (err) { alert('请求失败: ' + err.message); }
+    if (resp.ok) { loadProviders(); loadProviderSelect(); loadPipelineSelects(); loadTopStatus(); loadReadinessChecklist(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '默认翻译接口已更新。', true); }
+    else { showSettingsNotice('providerSettingsNotice', '设置失败: ' + (result.error || '未知错误'), false); showToast('设置失败: ' + safeUiText(result.error || '未知错误'), false); }
+  } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
 
 async function testProvider(id) {
@@ -4928,14 +5801,14 @@ async function testProvider(id) {
     var result = await resp.json();
     if (result.ok) {
       showSettingsNotice('providerSettingsNotice', '连接成功：' + result.latency_ms + 'ms，模型 ' + result.model, true);
-      alert('Connection OK\nLatency: ' + result.latency_ms + 'ms\nModel: ' + result.model);
+      showToast('连接成功 · ' + result.latency_ms + 'ms · ' + result.model, true);
     } else {
-      showSettingsNotice('providerSettingsNotice', '连接失败: ' + (result.error || 'unknown error'), false);
-      alert('Connection failed: ' + (result.error || 'unknown error'));
+      showSettingsNotice('providerSettingsNotice', '连接失败: ' + safeUiText(result.error || '未知错误'), false);
+      showToast('连接失败: ' + safeUiText(result.error || '未知错误'), false);
     }
   } catch (err) {
     showSettingsNotice('providerSettingsNotice', '测试失败: ' + err.message, false);
-    alert('Test failed: ' + err.message);
+    showToast('连接测试失败: ' + safeUiText(err.message), false);
   } finally {
     if (btn) { btn.textContent = origText; btn.disabled = false; }
   }
@@ -4946,9 +5819,9 @@ async function testActiveProvider() {
     var resp = await fetch('/api/providers/active');
     var data = await resp.json();
     if (data.active && data.active.id) testProvider(data.active.id);
-    else alert('No active provider is configured.');
+    else showToast('尚未配置默认翻译接口。', false);
   } catch (err) {
-    alert('Failed to get active provider: ' + err.message);
+    showToast('读取默认翻译接口失败: ' + safeUiText(err.message), false);
   }
 }
 
@@ -5007,7 +5880,7 @@ async function loadEffectiveConfigPreview() {
   if (!el) return;
   var translate = document.getElementById('translate_enabled');
   if (translate && !translate.checked) {
-    el.innerHTML = 'Translation disabled. Effective config preview is hidden until translation is enabled.';
+    el.innerHTML = '翻译已关闭；启用翻译后才会显示有效配置预览。';
     return;
   }
   var provider = document.getElementById('provider_select');
@@ -5023,17 +5896,53 @@ async function loadEffectiveConfigPreview() {
     var lp = data.language_profile || {};
     var q = lp.quality || {};
     var warnings = data.warnings || [];
-    var html = '<strong>Effective translation config</strong>';
-    html += '<div>Provider: ' + escapeHtml(p.name || p.id || '(none)') + ' / ' + escapeHtml(p.protocol || '-') + ' / ' + escapeHtml(p.model || '-') + '</div>';
-    html += '<div>API key: ' + (p.api_key_present ? 'configured ' + escapeHtml(p.api_key_masked || '') : 'not configured') + '</div>';
-    html += '<div>Profile: ' + escapeHtml(lp.name || lp.id || '(default)') + ' / ' + escapeHtml(lp.source_language || 'auto') + ' -> ' + escapeHtml(lp.target_language || 'zh-CN') + '</div>';
-    html += '<div>Style: ' + (lp.style_present ? 'yes' : 'no') + ' / Glossary: ' + (lp.glossary_count || 0) + ' term(s)</div>';
-    html += '<div>Quality: warn=' + escapeHtml(String(q.language_probability_warning || '-')) + ', error=' + escapeHtml(String(q.language_probability_error || '-')) + ', cps=' + escapeHtml(String(q.max_cps_zh || '-')) + ', source=' + escapeHtml(lp.quality_source || '-') + '</div>';
+    var html = '<strong>本次翻译有效配置</strong>';
+    html += '<div>接口：' + escapeHtml(p.name || p.id || '未配置') + ' / ' + escapeHtml(p.protocol || '-') + ' / ' + escapeHtml(p.model || '-') + '</div>';
+    html += '<div>API Key：' + (p.api_key_present ? '已配置 ' + escapeHtml(p.api_key_masked || '') : '未配置') + '</div>';
+    html += '<div>语言配置：' + escapeHtml(lp.name || lp.id || '默认') + ' / ' + escapeHtml(lp.source_language || 'auto') + ' → ' + escapeHtml(lp.target_language || 'zh-CN') + '</div>';
+    html += '<div>翻译风格：' + (lp.style_present ? '已配置' : '默认') + ' / 术语表：' + (lp.glossary_count || 0) + ' 条</div>';
+    html += '<div>质检：警告=' + escapeHtml(String(q.language_probability_warning || '-')) + '，错误=' + escapeHtml(String(q.language_probability_error || '-')) + '，CPS=' + escapeHtml(String(q.max_cps_zh || '-')) + '，来源=' + escapeHtml(lp.quality_source || '-') + '</div>';
     html += '<div>' + escapeHtml((data.cache_behavior || {}).note || '') + '</div>';
-    if (warnings.length) html += '<div style="color:var(--warn)">Warnings: ' + escapeHtml(warnings.join('; ')) + '</div>';
+    if (warnings.length) html += '<div style="color:var(--warn)">注意：' + escapeHtml(warnings.join('; ')) + '</div>';
     el.innerHTML = html;
   } catch (err) {
-    el.innerHTML = 'Effective config preview failed: ' + escapeHtml(String(err.message || err));
+    renderAsyncState('effectiveConfigPreview', 'error', '有效配置读取失败', err.message || err, {label:'重试', onclick:'loadEffectiveConfigPreview()'});
+  }
+}
+
+async function recoverCorruptConfig(store) {
+  if (!window.confirm('将先备份损坏的本地配置，再重置为空配置。此操作不会恢复 API Key。是否继续？')) return;
+  var response = await fetch('/api/config/recover', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ store: store, action: 'backup_and_reset' })
+  });
+  var payload = await response.json();
+  if (!response.ok) {
+    showToast(payload.error || '配置恢复失败', false);
+    return;
+  }
+  showToast('损坏配置已备份并安全重置', true);
+  loadConfigStatus();
+  loadProviderSelect();
+}
+
+async function loadConfigStatus() {
+  try {
+    var response = await fetch('/api/config/status');
+    var payload = await response.json();
+    var existing = document.getElementById('configRecoveryNotice');
+    if (existing) existing.remove();
+    var corrupt = (payload.stores || []).filter(function(item) { return item.status === 'config_error'; });
+    if (!corrupt.length) return;
+    var notice = document.createElement('div');
+    notice.id = 'configRecoveryNotice';
+    notice.style.cssText = 'position:fixed;left:24px;right:24px;bottom:24px;z-index:9999;padding:16px;background:#3b211f;color:#fff;border:1px solid #d76b5e;border-radius:10px';
+    notice.innerHTML = '<strong>本地配置无法安全读取</strong><div style="margin:6px 0">应用不会覆盖损坏文件。内置语言配置仍可只读使用；恢复前会保存原始字节备份。</div>' +
+      corrupt.map(function(item) { return '<button style="margin-right:8px" onclick="recoverCorruptConfig(\'' + item.store + '\')">备份并重置 ' + item.store + '</button>'; }).join('');
+    document.body.appendChild(notice);
+  } catch (error) {
+    /* Diagnostics remain available even if the status request itself fails. */
   }
 }
 
@@ -5041,6 +5950,10 @@ document.getElementById('api_key').addEventListener('focus', function() { /* man
 loadProviderSelect();
 loadEffectiveConfigPreview();
 loadJobQueue();
+loadAppInfo();
+loadReadinessChecklist();
+loadPipelineProgress();
+loadConfigStatus();
 </script>
 </body>
 </html>

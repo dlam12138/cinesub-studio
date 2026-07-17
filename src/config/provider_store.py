@@ -23,13 +23,13 @@ from urllib.parse import urlparse
 
 from encoding_utils import read_json, read_text as read_utf8_text, write_json, write_text
 from runtime_paths import resolve_runtime_paths
+from config_recovery import ConfigCorruptError
 
 
 def _resolve_provider_config_paths(anchor: Path | str | None = None) -> tuple[Path, Path, Path]:
     paths = resolve_runtime_paths(anchor or Path(__file__).resolve())
-    project_root = paths.project_root
-    config_dir = project_root / "config"
-    return project_root, config_dir, config_dir / "providers.local.json"
+    config_dir = paths.config_root
+    return paths.project_root, config_dir, config_dir / "providers.local.json"
 
 
 PROJECT_ROOT, CONFIG_DIR, CONFIG_PATH = _resolve_provider_config_paths()
@@ -61,6 +61,7 @@ def _migrate_provider(p: dict) -> dict:
     p.setdefault("template_id", "")
     p.setdefault("enabled", True)
     p.setdefault("translation_model", "")
+    p.setdefault("translation_quality_model", "")
     return p
 
 
@@ -90,10 +91,10 @@ def _load_raw() -> dict:
             _cache = data
             _cache_mtime = CONFIG_PATH.stat().st_mtime
             return _cache
-        except (OSError, json.JSONDecodeError, ValueError):
-            _cache = dict(DEFAULT_EMPTY_CONFIG)
+        except (OSError, json.JSONDecodeError, UnicodeError, ValueError, TypeError, AttributeError) as exc:
+            _cache = None
             _cache_mtime = 0.0
-            return _cache
+            raise ConfigCorruptError("providers") from exc
 
 
 def _save_raw(data: dict) -> None:
@@ -216,7 +217,10 @@ def set_active_provider(provider_id: str) -> None:
 
 # ── 增删改（简化版） ────────────────────────────────────────────────────
 
-PROVIDER_FIELDS = ["id", "name", "template_id", "protocol", "api_base", "api_key", "translation_model", "enabled", "notes"]
+PROVIDER_FIELDS = [
+    "id", "name", "template_id", "protocol", "api_base", "api_key",
+    "translation_model", "translation_quality_model", "enabled", "notes",
+]
 
 
 def _auto_id(template_id: str = "") -> str:
@@ -246,6 +250,7 @@ def upsert_provider(provider_data: dict) -> dict:
     api_base = (provider_data.get("api_base") or "").strip()
     api_key = provider_data.get("api_key", "")
     model = (provider_data.get("model") or provider_data.get("translation_model") or "").strip()
+    quality_model = str(provider_data.get("translation_quality_model") or "").strip()
     protocol = normalize_protocol((provider_data.get("protocol") or "openai-compatible").strip())
 
     # 模板模式：自动填充 api_base / protocol / model
@@ -273,6 +278,7 @@ def upsert_provider(provider_data: dict) -> dict:
         "api_base": api_base,
         "api_key": api_key,
         "translation_model": model,
+        "translation_quality_model": quality_model,
         "enabled": provider_data.get("enabled", True) is not False,
         "notes": (provider_data.get("notes") or "").strip(),
     }
@@ -332,6 +338,10 @@ def resolve_provider_config(provider_id: str | None = None) -> dict:
         "api_base": provider.get("api_base", ""),
         "api_key": provider.get("api_key", ""),
         "llm_model": provider.get("translation_model", ""),
+        "translation_quality_model": (
+            provider.get("translation_quality_model")
+            or provider.get("translation_model", "")
+        ),
     }
 
 

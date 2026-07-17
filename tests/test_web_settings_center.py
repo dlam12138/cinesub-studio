@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import json
-import threading
-import urllib.error
-import urllib.request
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import language_profile_store
 import provider_store
 import web_server
-
+from conftest import MemoryTestServer, json_test_handler
 
 HTML_PATH = Path(__file__).parent.parent / "web" / "index.html"
 SECRET = "sk-m12-secret-should-not-leak"
@@ -43,25 +39,30 @@ def _isolate_profile_store(monkeypatch, tmp_path):
 
 
 def _serve():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), web_server.Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server, f"http://127.0.0.1:{server.server_address[1]}"
+    server = MemoryTestServer()
+    return server, server
 
 
 def _request(base: str, method: str, path: str, body: dict | None = None):
     data = None if body is None else json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        base + path,
-        data=data,
+    headers = {"Content-Type": "application/json"}
+    if method in {"POST", "PUT", "DELETE"}:
+        _status, _session_headers, session = json_test_handler(
+            base,
+            web_server.Handler,
+            method="GET",
+            path="/api/session",
+        )
+        headers["X-CineSub-Token"] = session["token"]
+    status, _response_headers, payload = json_test_handler(
+        base,
+        web_server.Handler,
         method=method,
-        headers={"Content-Type": "application/json"},
+        path=path,
+        headers=headers,
+        body=data or b"",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode("utf-8"))
+    return status, payload
 
 
 def test_provider_settings_ui_exists_and_is_llm_only():

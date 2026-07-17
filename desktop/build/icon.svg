@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">CineSub Studio brand mark</title>
+  <desc id="desc">A film frame containing a C aperture and two subtitle lines.</desc>
+  <rect width="512" height="512" rx="88" fill="#090d14"/>
+  <path fill="#63b3ff" d="M61 61h390v31H61zm0 359h390v31H61z"/>
+  <path fill="#090d14" d="M92 61h18v61H92zm72 0h18v61h-18zm72 0h18v61h-18zm72 0h18v61h-18zm72 0h18v61h-18zM92 390h18v61H92zm72 0h18v61h-18zm72 0h18v61h-18zm72 0h18v61h-18zm72 0h18v61h-18z"/>
+  <path fill="#f8fbff" d="M102 133h236v46H154v154h184v46H102z"/>
+  <path fill="#49d18d" d="M215 220h195v36H215z"/>
+  <path fill="#63b3ff" d="M256 277h123v36H256z"/>
+</svg>

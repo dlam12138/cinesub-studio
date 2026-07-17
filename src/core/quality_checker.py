@@ -20,6 +20,7 @@ from pathlib import Path
 
 from encoding_utils import read_json, read_text as read_utf8_text, write_json
 from runtime_paths import resolve_runtime_paths
+from translation_reliability import LLM_BOILERPLATE_PATTERNS, UNTRANSLATED_INDICATORS
 
 
 PATHS = resolve_runtime_paths(Path(__file__).resolve())
@@ -78,30 +79,6 @@ MIN_DURATION_SECONDS = 0.5
 
 # 连续重复字幕超过此次数视为异常
 MAX_REPEAT_COUNT = 5
-
-# LLM 废话关键词（正则）
-LLM_BOILERPLATE_PATTERNS = [
-    r"(?:好的|当然)[，,\s]*(?:以下|下面)(?:是|为)?.*(?:翻译|字幕)",
-    r"(?:以下|下面)(?:是|为)?.*(?:翻译|字幕)",
-    r"这是.*翻译(?:结果|版本|内容)?",
-    r"翻译如下",
-    r"我(?:可以|来)?帮你.*翻译",
-    r"Here (?:is|are).*(?:translation|subtitle)",
-    r"I(?:'ve| have) translated",
-    r"Sure[!,\.\s]+here (?:is|are).*(?:translation|subtitle)",
-    r"Certainly[!,\.\s]+here (?:is|are).*(?:translation|subtitle)",
-    r"```",
-]
-
-# 常见未翻译语言的特征字符范围（Unicode 区块）
-UNTRANSLATED_INDICATORS: dict[str, str] = {
-    "ja": r"[぀-ゟ゠-ヿ]",     # 日文假名（当目标语言是中文时）
-    "ko": r"[가-힯]",                    # 韩文
-    "ar": r"[؀-ۿ]",                    # 阿拉伯文
-    "th": r"[฀-๿]",                    # 泰文
-    "ru": r"[Ѐ-ӿ]",                    # 西里尔字母
-}
-
 
 # ── SRT 解析（独立实现，不依赖 subtitle_translate） ──────────────────────
 

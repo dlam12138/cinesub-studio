@@ -13,6 +13,7 @@ param(
     [string]$Python = "python",
     [string[]]$PythonArgs = @(),
     [switch]$Recreate,
+    [switch]$RepairVenvConfig,
     [switch]$Offline,
     [string]$Wheelhouse = "tools\wheelhouse",
     [string]$IndexUrl = "https://pypi.org/simple"
@@ -98,6 +99,7 @@ $env:HF_HUB_CACHE = Join-Path $ProjectRoot ".cache\huggingface\hub"
 
 New-Item -ItemType Directory -Force -Path $env:PIP_CACHE_DIR, $env:HF_HOME, $env:HF_HUB_CACHE, (Join-Path $ProjectRoot "models"), (Join-Path $ProjectRoot "output"), (Join-Path $ProjectRoot "work"), (Join-Path $ProjectRoot "logs") | Out-Null
 
+$VenvCreated = $false
 if ($Recreate -and (Test-Path ".venv")) {
     $venvPath = Resolve-Path -LiteralPath ".venv"
     if (-not $venvPath.Path.StartsWith($ProjectRoot)) {
@@ -126,6 +128,28 @@ if (-not (Test-Path ".venv")) {
             $pipBootstrapArgs += @("-i", $IndexUrl, "--timeout", "100", "--retries", "10")
         }
         Invoke-Checked -FilePath $Python -Arguments ($PythonArgs + $pipBootstrapArgs)
+    }
+    $VenvCreated = $true
+}
+
+$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$VenvConfigTool = Join-Path $ProjectRoot "src\tools\venv_config.py"
+$VenvBasePython = (& $VenvPython -B -c "import sys; print(getattr(sys, '_base_executable', sys.executable))").Trim()
+if ($LASTEXITCODE -ne 0 -or -not $VenvBasePython) {
+    throw "Could not resolve the base interpreter used by .venv."
+}
+if ($VenvCreated -or $RepairVenvConfig) {
+    Write-Host "Normalizing .venv\pyvenv.cfg against: $VenvBasePython"
+    Invoke-Checked -FilePath $VenvPython -Arguments @(
+        "-B", $VenvConfigTool, "repair",
+        "--venv", (Join-Path $ProjectRoot ".venv"),
+        "--base-python", $VenvBasePython
+    )
+} else {
+    & $VenvPython -B $VenvConfigTool inspect --venv (Join-Path $ProjectRoot ".venv") --base-python $VenvBasePython
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning 'Existing .venv configuration needs attention. It was not modified.'
+        Write-Warning 'Run .\install.ps1 -RepairVenvConfig to repair pyvenv.cfg without rebuilding the environment.'
     }
 }
 

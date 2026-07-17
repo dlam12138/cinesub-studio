@@ -22,11 +22,12 @@ def _section(html: str, start: str, end: str) -> str:
 def test_premium_app_shell_and_sidebar_navigation_exist():
     html = _read_index_html()
     sidebar_nav = _section(html, '<nav class="tabs rail-nav">', "</nav>")
-    assert 'data-refresh="v0.2-premium-ui-refresh"' in html
+    assert 'data-refresh="v0.6-stage2-ui"' in html
     assert "CineSub Studio" in html
     assert "智译字幕工坊" in html
-    assert "Local Web App" in html
-    assert "v0.2 Preview" in html
+    assert "Local workstation" in html
+    assert 'id="appVersionChip"' in html
+    assert 'id="appFlavorChip"' in html
     for label in ("批量处理", "单个处理", "最近任务", "运行环境", "翻译接口", "语言风格"):
         assert label in sidebar_nav
     assert "开始处理" not in sidebar_nav

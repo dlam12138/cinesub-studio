@@ -13,7 +13,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_NAME = "cinesub-portable"
-DEFAULT_VERSION = "m6.7-rc1"
+DEFAULT_VERSION = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 RELEASE_MARKER = ".portable-layout"
 MANIFEST_NAME = "release_manifest.json"
 REPORT_NAME = "release_report.md"

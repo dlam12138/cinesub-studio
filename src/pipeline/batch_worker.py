@@ -20,13 +20,11 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 # Ensure src subdirectories are on sys.path for cross-module imports when run directly
@@ -36,10 +34,32 @@ for _sub in ("core", "pipeline", "config", "web", "tools"):
     if _subpath not in sys.path:
         sys.path.insert(0, _subpath)
 
-from encoding_utils import read_json, run_text, write_json
-from ffmpeg_locator import find_ffmpeg
+from encoding_utils import read_json
 from output_paths import pipeline_output_dirs, plan_pipeline_outputs
+from pipeline_stages import (
+    StageError,
+    TaskContext,
+    archive_stage,
+    extract_audio_stage,
+    quality_check_stage,
+    transcribe_stage,
+    translate_stage,
+)
+from pipeline_cli import build_pipeline_parser
+from pipeline_config import resolve_cli_config
+from pipeline_reporting import safe_console_print, show_review, show_review_detail, show_status
 from runtime_paths import resolve_runtime_paths
+from stage_event_log import write_stage_event
+from task_state import (
+    RetryPlan,
+    TaskStage,
+    TaskState,
+    completed_outputs_valid as validate_completed_outputs,
+    is_valid_output_file as _is_valid_output_file,
+    prepare_retry_failed_tasks,
+    required_final_outputs as plan_required_final_outputs,
+    set_state_root_provider,
+)
 from subtitle_model import (
     ASS_RESERVED_MESSAGE,
     DEFAULT_ASS_STYLE_ID,
@@ -68,17 +88,8 @@ DIR_OUTPUT = PROJECT_ROOT / "output"
 DIR_ARCHIVE = PROJECT_ROOT / "archive"
 DIR_FAILED = PROJECT_ROOT / "failed"
 DIR_MODELS = PROJECT_ROOT / "models"
-
-
-class TaskStage:
-    PENDING = "pending"
-    EXTRACTING_AUDIO = "extracting_audio"
-    TRANSCRIBING = "transcribing"
-    TRANSLATING = "translating"
-    QUALITY_CHECKING = "quality_checking"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
+STAGE_EVENT_LOG = PATHS.logs_dir / "pipeline.events.jsonl"
+set_state_root_provider(lambda: DIR_WORK_STATES)
 
 
 MAJOR_LANGUAGES = {"en", "ja", "ko", "zh", "fr", "de", "es", "ru", "pt", "it", "ar", "th", "vi"}
@@ -96,140 +107,6 @@ LOW_CONFIDENCE_EXTRA_PROMPT = (
 )
 
 LANG_CONFIDENCE_THRESHOLD = 0.7
-
-
-def _is_valid_output_file(path: Path) -> bool:
-    """Return True only for existing non-empty stage outputs."""
-    try:
-        return path.is_file() and path.stat().st_size > 0
-    except OSError:
-        return False
-
-
-
-@dataclass
-class TaskState:
-    """State for one input media task."""
-    file: str
-    input_path: str
-    stage: str = TaskStage.PENDING
-    status: str = "pending"      # pending | running | completed | failed
-    created_at: float = 0.0
-    updated_at: float = 0.0
-
-    audio_path: str = ""
-
-    language_detection: dict | None = None
-
-    source_srt: str = ""
-
-    translated_srt: str = ""
-    bilingual_srt: str = ""
-
-    quality_report: str = ""
-
-    segment_asr_routing_report: str = ""
-    segment_asr_routing_status: str = ""
-    segment_asr_routing_message: str = ""
-
-    error: str = ""
-    error_stage: str = ""
-    retry_count: int = 0
-    max_retries: int = 3
-
-    output_dir: str = ""
-
-    def to_dict(self) -> dict:
-        return {
-            "file": self.file,
-            "input_path": self.input_path,
-            "stage": self.stage,
-            "status": self.status,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "audio_path": self.audio_path,
-            "language_detection": self.language_detection,
-            "source_srt": self.source_srt,
-            "translated_srt": self.translated_srt,
-            "bilingual_srt": self.bilingual_srt,
-            "quality_report": self.quality_report,
-            "segment_asr_routing_report": self.segment_asr_routing_report,
-            "segment_asr_routing_status": self.segment_asr_routing_status,
-            "segment_asr_routing_message": self.segment_asr_routing_message,
-            "error": self.error,
-            "error_stage": self.error_stage,
-            "retry_count": self.retry_count,
-            "max_retries": self.max_retries,
-            "output_dir": self.output_dir,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "TaskState":
-        return cls(
-            file=data.get("file", ""),
-            input_path=data.get("input_path", ""),
-            stage=data.get("stage", TaskStage.PENDING),
-            status=data.get("status", "pending"),
-            created_at=data.get("created_at", 0.0),
-            updated_at=data.get("updated_at", 0.0),
-            audio_path=data.get("audio_path", ""),
-            language_detection=data.get("language_detection"),
-            source_srt=data.get("source_srt", ""),
-            translated_srt=data.get("translated_srt", ""),
-            bilingual_srt=data.get("bilingual_srt", ""),
-            quality_report=data.get("quality_report", ""),
-            segment_asr_routing_report=data.get("segment_asr_routing_report", ""),
-            segment_asr_routing_status=data.get("segment_asr_routing_status", ""),
-            segment_asr_routing_message=data.get("segment_asr_routing_message", ""),
-            error=data.get("error", ""),
-            error_stage=data.get("error_stage", ""),
-            retry_count=data.get("retry_count", 0),
-            max_retries=data.get("max_retries", 3),
-            output_dir=data.get("output_dir", ""),
-        )
-
-    def state_path(self) -> Path:
-        """Return the task state file path."""
-        stem = Path(self.file).stem
-        return DIR_WORK_STATES / f"{stem}.state.json"
-
-    def save(self) -> None:
-        """Save task state to JSON."""
-        self.updated_at = time.time()
-        path = self.state_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_json(path, self.to_dict())
-
-    @classmethod
-    def load(cls, state_path: Path) -> Optional["TaskState"]:
-        """Load task state from JSON."""
-        if not state_path.exists():
-            return None
-        try:
-            data = read_json(state_path)
-            return cls.from_dict(data)
-        except (OSError, json.JSONDecodeError):
-            return None
-
-
-
-@dataclass
-class RetryPlan:
-    """Structured result for failed-task retry preparation."""
-    reset_tasks: list[TaskState] = field(default_factory=list)
-    untouched_count: int = 0
-    selected_task_ids: list[str] = field(default_factory=list)
-
-    @property
-    def reset_count(self) -> int:
-        return len(self.reset_tasks)
-
-    def to_dict(self) -> dict:
-        return {
-            "reset_count": self.reset_count,
-            "untouched_count": self.untouched_count,
-            "selected_task_ids": list(self.selected_task_ids),
-        }
 
 
 VIDEO_EXTENSIONS = {
@@ -256,31 +133,6 @@ def discover_videos(input_dir: Path) -> list[Path]:
 
 
 
-def prepare_retry_failed_tasks(state_files: list[Path]) -> RetryPlan:
-    """Reset only failed tasks and leave every other state untouched."""
-    plan = RetryPlan()
-
-    for state_file in state_files:
-        task = TaskState.load(state_file)
-        if task is None:
-            continue
-
-        if task.status != "failed":
-            plan.untouched_count += 1
-            continue
-
-        task.status = "pending"
-        task.stage = TaskStage.PENDING
-        task.error = ""
-        task.error_stage = ""
-        task.retry_count = 0
-        task.save()
-        plan.reset_tasks.append(task)
-        plan.selected_task_ids.append(task.file)
-
-    return plan
-
-
 @dataclass
 class BatchConfig:
     """Batch processing configuration."""
@@ -296,18 +148,23 @@ class BatchConfig:
     beam_size: int = 5
     vad_filter: bool = True
     local_files_only: bool = False
+    asr_experiment_mode: str = "off"
+    asr_candidate_id: str = ""
 
     translate: bool = True
     api_provider: str = "openai-compatible"
     api_base: str = ""
     api_key: str = ""
     llm_model: str = ""
+    translation_quality_model: str = ""
     target_language: str = "zh-CN"
     translation_batch_size: int = 20
     translation_temperature: float = 0.2
     translation_mode: str = "bilingual"
     context_window: int = 3
     translation_prompt: str = ""
+    translation_reliability_mode: str = "off"
+    translation_max_extra_requests: int = 12
     subtitle_formats: list[str] = field(default_factory=lambda: ["srt"])
     ass_style_id: str = DEFAULT_ASS_STYLE_ID
     subtitle_style: dict | None = None
@@ -353,6 +210,50 @@ class BatchPipeline:
             self.config.model_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)
+
+    def _context(self, input_path: Path) -> TaskContext:
+        return TaskContext(
+            task_id=input_path.name,
+            input_path=input_path,
+            work_dir=self.config.work_dir,
+            output_dir=self.config.output_dir,
+        )
+
+    def _record_stage_result(self, context: TaskContext, result) -> None:
+        summary = ", ".join(path.name for path in result.outputs)
+        reliability = result.data.get("translation_reliability") if result.data else None
+        if reliability:
+            summary = f"{summary}; translation_reliability={json.dumps(reliability, sort_keys=True)}"
+        write_stage_event(
+            STAGE_EVENT_LOG,
+            task_id=context.task_id,
+            stage=result.stage,
+            event="reused" if result.reused else "completed",
+            status=result.status,
+            duration_seconds=result.duration_seconds,
+            summary=summary,
+        )
+
+    def _record_stage_started(self, context: TaskContext, stage: str) -> None:
+        write_stage_event(
+            STAGE_EVENT_LOG,
+            task_id=context.task_id,
+            stage=stage,
+            event="started",
+            status="running",
+        )
+
+    def _record_stage_error(self, context: TaskContext, stage: str, exc: BaseException) -> None:
+        write_stage_event(
+            STAGE_EVENT_LOG,
+            task_id=context.task_id,
+            stage=stage,
+            event="failed",
+            status="failed",
+            returncode=getattr(exc, "returncode", None),
+            error_category=type(exc).__name__,
+            summary=str(exc),
+        )
 
     def scan(self) -> list[TaskState]:
         """Scan the input directory and return pending tasks."""
@@ -635,87 +536,39 @@ class BatchPipeline:
 
     def required_final_outputs(self, task: TaskState) -> list[Path]:
         """Return final outputs required before a completed task can be skipped."""
-        input_path = Path(task.input_path or task.file)
-        outputs = plan_pipeline_outputs(
-            output_root=self.config.output_dir,
-            stem=input_path.stem,
-            model=self.config.model,
-            target_language=self.config.target_language,
-            translation_mode=self.config.translation_mode,
-        )
-        required = [outputs.source_srt]
-        if self.config.translate:
-            required.extend([outputs.translation_output, outputs.quality_report])
-        return required
+        return plan_required_final_outputs(task, self.config)
 
     def completed_outputs_valid(self, task: TaskState) -> bool:
         """Return True only when completed status and configured final outputs agree."""
-        if task.status != "completed":
-            return False
-        return all(_is_valid_output_file(path) for path in self.required_final_outputs(task))
+        return validate_completed_outputs(task, self.config)
 
 
     def _extract_audio(self, input_path: Path) -> Path:
         """Extract audio to a 16 kHz mono WAV file."""
-        audio_path = self.config.work_dir / f"{input_path.stem}.16k.wav"
-
-        if audio_path.exists() and audio_path.stat().st_size > 0:
-            return audio_path
-
-        suffix = input_path.suffix.lower()
-        if suffix == ".wav":
-            pass
-
-        ffmpeg = find_ffmpeg(PROJECT_ROOT)
-        if ffmpeg is None:
-            raise RuntimeError(
-                "ffmpeg was not found. Put ffmpeg.exe in tools/ffmpeg/bin/, "
-                "run src/tools/download_ffmpeg.py, or set CINESUB_FFMPEG."
-            )
-
-        command = [
-            ffmpeg, "-y", "-i", str(input_path),
-            "-vn", "-acodec", "pcm_s16le",
-            "-ar", "16000", "-ac", "1",
-            str(audio_path),
-        ]
-        result = run_text(command, capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg audio extraction failed: {result.stderr[:500]}")
-
-        if not audio_path.exists() or audio_path.stat().st_size == 0:
-            raise RuntimeError("Audio extraction failed: output file is empty.")
-
-        return audio_path
+        context = self._context(input_path)
+        self._record_stage_started(context, TaskStage.EXTRACTING_AUDIO)
+        try:
+            result = extract_audio_stage(context, project_root=PROJECT_ROOT)
+        except BaseException as exc:
+            self._record_stage_error(context, TaskStage.EXTRACTING_AUDIO, exc)
+            raise
+        self._record_stage_result(context, result)
+        return result.outputs[0]
 
     def _transcribe(self, audio_path: Path, srt_path: Path) -> dict | None:
         """Run Whisper transcription and return language detection details."""
-        from transcribe import transcribe_to_srt
-
-        lp_id = self.config.language_profile_id if hasattr(self.config, 'language_profile_id') else ""
-        lp_name = self.config.language_profile_name if hasattr(self.config, 'language_profile_name') else ""
-        lp_cond = True
-        if hasattr(self.config, 'lang_profile_config') and self.config.lang_profile_config:
-            lp_cfg = self.config.lang_profile_config
-            lp_id = lp_cfg.get('profile_id', lp_id)
-            lp_name = lp_cfg.get('profile_name', lp_name)
-
-        lang_info = transcribe_to_srt(
-            audio_path=audio_path,
-            srt_path=srt_path,
-            model_name=self.config.model,
-            model_dir=self.config.model_dir,
-            device=self.config.device,
-            compute_type=self.config.compute_type,
-            language=self.config.language,
-            beam_size=self.config.beam_size,
-            vad_filter=self.config.vad_filter,
-            local_files_only=self.config.local_files_only,
-            language_profile_id=lp_id,
-            language_profile_name=lp_name,
-            condition_on_previous_text=lp_cond,
-        )
-        return lang_info
+        input_path = Path(audio_path)
+        context = self._context(input_path)
+        self._record_stage_started(context, TaskStage.TRANSCRIBING)
+        try:
+            result = transcribe_stage(
+                context, audio_path=audio_path, srt_path=srt_path, config=self.config
+            )
+        except BaseException as exc:
+            self._record_stage_error(context, TaskStage.TRANSCRIBING, exc)
+            raise
+        self._record_stage_result(context, result)
+        return result.data.get("language_detection")
 
     def _translate(
         self,
@@ -724,22 +577,20 @@ class BatchPipeline:
         effective_prompt: str,
     ) -> None:
         """Run LLM subtitle translation."""
-        from subtitle_translate import translate_srt
-
-        translate_srt(
-            input_path=source_srt,
-            output_path=output_path,
-            api_provider=self.config.api_provider,
-            api_base=self.config.api_base,
-            api_key=self.config.api_key,
-            llm_model=self.config.llm_model,
-            target_language=self.config.target_language,
-            batch_size=self.config.translation_batch_size,
-            temperature=self.config.translation_temperature,
-            translation_mode=self.config.translation_mode,
-            system_prompt=effective_prompt,
-            context_window=self.config.context_window,
-        )
+        context = self._context(source_srt)
+        self._record_stage_started(context, TaskStage.TRANSLATING)
+        try:
+            result = translate_stage(
+                context,
+                source_srt=source_srt,
+                output_path=output_path,
+                config=self.config,
+                effective_prompt=effective_prompt,
+            )
+        except BaseException as exc:
+            self._record_stage_error(context, TaskStage.TRANSLATING, exc)
+            raise
+        self._record_stage_result(context, result)
 
     def _quality_check(
         self,
@@ -748,21 +599,20 @@ class BatchPipeline:
         report_path: Path,
     ) -> None:
         """Run quality checks using the active language profile thresholds."""
-        from quality_checker import run_quality_check
-
-        thresholds = {}
-        if self.config.lang_profile_config:
-            thresholds = self.config.lang_profile_config.get("quality_thresholds", {})
-            if not thresholds:
-                thresholds = {}
-
-        run_quality_check(
-            source_srt=source_srt,
-            translated_srt=translated_srt,
-            target_language=self.config.target_language,
-            output_dir=report_path.parent,
-            quality_thresholds=thresholds,
-        )
+        context = self._context(source_srt)
+        self._record_stage_started(context, TaskStage.QUALITY_CHECKING)
+        try:
+            result = quality_check_stage(
+                context,
+                source_srt=source_srt,
+                translated_srt=translated_srt,
+                report_path=report_path,
+                config=self.config,
+            )
+        except BaseException as exc:
+            self._record_stage_error(context, TaskStage.QUALITY_CHECKING, exc)
+            raise
+        self._record_stage_result(context, result)
 
     def _build_language_strategy(self, lang_detection: dict | None) -> str:
         """Build the translation strategy prompt from language detection."""
@@ -791,115 +641,21 @@ class BatchPipeline:
     def _archive_completed(self, task: TaskState) -> None:
         """Move a completed input file to the archive directory."""
         input_path = Path(task.input_path)
-        if not input_path.exists():
-            return
-
-        dest = DIR_ARCHIVE / input_path.name
-        if dest.exists():
-            dest = DIR_ARCHIVE / f"{input_path.stem}_{int(time.time())}{input_path.suffix}"
-
         try:
-            shutil.move(str(input_path), str(dest))
-            print(f"      archived: {dest.name}")
-        except OSError as exc:
+            context = self._context(input_path)
+            self._record_stage_started(context, "archiving")
+            result = archive_stage(context, archive_dir=DIR_ARCHIVE)
+            self._record_stage_result(context, result)
+            if result.outputs:
+                print(f"      archived: {result.outputs[0].name}")
+        except (OSError, StageError) as exc:
+            self._record_stage_error(self._context(input_path), "archiving", exc)
             print(f"      archive failed: {exc}")
 
 
 
 def main() -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="CineSub Studio batch subtitle pipeline",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=r"""
-Examples:
-  .\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --input input --model large-v3 --device cuda
-  .\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --input input --model small --no-translate
-  .\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --scan
-  .\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --status
-        """.strip(),
-    )
-
-    parser.add_argument("--input", default="input", help="Input media directory (default: input/)")
-    parser.add_argument("--output-dir", default="output", help="Output root directory (default: output/)")
-    parser.add_argument("--model-dir", default="models", help="Model directory (default: models/)")
-    parser.add_argument("--work-dir", default="work", help="Work directory (default: work/)")
-
-    parser.add_argument("--model", default="large-v3", help="Whisper model name (default: large-v3)")
-    parser.add_argument("--device", default="auto", choices=["cpu", "cuda", "auto"], help="Compute device")
-    parser.add_argument("--compute-type", default=None, help="Compute type, e.g. int8 or float16")
-    parser.add_argument("--language", default=None, help="Source language code; omit to auto-detect")
-    parser.add_argument("--beam-size", type=int, default=5, help="Beam size")
-    parser.add_argument("--no-vad", action="store_true", help="Disable VAD")
-    parser.add_argument("--local-files-only", action="store_true", help="Use local model files only")
-
-    parser.add_argument("--no-translate", action="store_true", help="Disable translation")
-    parser.add_argument("--provider", default=None, help="Provider ID from config/providers.local.json")
-    parser.add_argument("--language-profile", default=None, help="Language Profile ID")
-    parser.add_argument("--api-provider", default=None, choices=["openai-compatible", "anthropic"], help="LLM API provider")
-    parser.add_argument("--api-base", default=None, help="LLM API base URL")
-    parser.add_argument("--api-key", default=None, help="LLM API key")
-    parser.add_argument("--llm-model", default=None, help="LLM model name")
-    parser.add_argument("--target-language", default="zh-CN", help="Translation target language")
-    parser.add_argument("--translation-batch-size", type=int, default=20, help="Translation batch size")
-    parser.add_argument("--translation-temperature", type=float, default=0.2, help="Translation temperature")
-    parser.add_argument("--translation-mode", default="bilingual", choices=["bilingual", "translated"], help="Translation output mode")
-    parser.add_argument("--context-window", type=int, default=3, help="Translation context window")
-    parser.add_argument("--translation-prompt", default="", help="Custom translation prompt")
-    parser.add_argument("--subtitle-formats", default=None, help="Subtitle output formats. ASS is reserved, e.g. srt,ass.")
-    parser.add_argument("--ass-style-id", default=None, help="Reserved ASS style id. No .ass file is generated.")
-    parser.add_argument(
-        "--segment-asr-routing",
-        default="off",
-        choices=["off", "dry_run", "apply"],
-        help="Experimental segment ASR routing mode. Defaults to off.",
-    )
-    parser.add_argument(
-        "--segment-routing-confidence-threshold",
-        type=float,
-        default=0.70,
-        help="Confidence threshold for segment routing dry-run analysis.",
-    )
-    parser.add_argument(
-        "--segment-routing-min-segments",
-        type=int,
-        default=1,
-        help="Minimum segment count for usable segment routing evidence.",
-    )
-    parser.add_argument(
-        "--segment-routing-strict",
-        action="store_true",
-        help="Fail instead of falling back when experimental segment routing fails.",
-    )
-    parser.add_argument(
-        "--segment-routing-window-seconds",
-        type=float,
-        default=DEFAULT_APPLY_WINDOW_SECONDS,
-        help="Apply-only full-coverage routing window length in seconds.",
-    )
-    parser.add_argument(
-        "--segment-routing-max-windows",
-        type=int,
-        default=DEFAULT_MAX_APPLY_WINDOWS,
-        help="Apply-only maximum routed windows before fallback or strict failure.",
-    )
-    parser.add_argument(
-        "--segment-routing-allow-large-run",
-        action="store_true",
-        help="Allow apply to exceed --segment-routing-max-windows.",
-    )
-
-    parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries")
-    parser.add_argument("--no-skip-completed", action="store_true", help="Reprocess completed tasks")
-    parser.add_argument("--no-move-completed", action="store_true", help="Do not move completed inputs to archive/")
-
-    parser.add_argument("--scan", action="store_true", help="Scan pending files without processing")
-    parser.add_argument("--status", action="store_true", help="Show task status")
-    parser.add_argument("--retry-failed", action="store_true", help="Retry failed tasks")
-    parser.add_argument("--review", action="store_true", help="Show review summary from quality reports")
-    parser.add_argument("--review-file", default=None, help="Show details for one quality report")
-
+    parser = build_pipeline_parser()
     args = parser.parse_args()
     try:
         validate_segment_routing_options(
@@ -921,140 +677,61 @@ Examples:
 
     raw_argv = [arg.split("=", 1)[0] for arg in sys.argv[1:]]
 
-    def _explicit(*flags: str) -> bool:
-        return any(flag in raw_argv for flag in flags)
-
-    provider_config: dict = {}
-    if args.provider is not None or not args.no_translate:
-        try:
-            from provider_store import resolve_provider_config
-            provider_config = resolve_provider_config(args.provider)
-            if provider_config:
-                print(f"  [Provider] using config: {args.provider or '(active)'}")
-        except Exception as exc:
-            print(f"  [Provider] load failed: {exc}")
-
-    lang_profile_config: dict = {}
-    profile_id = args.language_profile or None
-    try:
-        from language_profile_store import resolve_language_profile_config
-        lang_profile_config = resolve_language_profile_config(profile_id)
-        if lang_profile_config:
-            print(
-                f"  [LangProfile] using config: "
-                f"{lang_profile_config.get('profile_id', '?')} ({lang_profile_config.get('profile_name', '?')})"
-            )
-    except Exception as exc:
-        print(f"  [LangProfile] load failed: {exc}")
-
-    def _first(*values):
-        """Return the first non-empty value."""
-        for v in values:
-            if v is not None and v != "":
-                return v
-        return ""
-
-    effective_api_provider = _first(args.api_provider, provider_config.get("api_provider"), "openai-compatible")
-    effective_api_base = _first(args.api_base, provider_config.get("api_base"), "")
-    effective_api_key = _first(args.api_key, provider_config.get("api_key"), "")
-    effective_llm_model = _first(args.llm_model, provider_config.get("llm_model"), "")
-
-    lp_asr = lang_profile_config.get("asr", {})
-    effective_model = _first(
-        args.model if _explicit("--model") else None,
-        lp_asr.get("whisper_model"),
-        "large-v3"
-    )
-    effective_device = _first(
-        args.device if _explicit("--device") else None,
-        lp_asr.get("whisper_device"),
-        "auto"
-    )
-    effective_compute_type = _first(
-        args.compute_type if _explicit("--compute-type") else None,
-        lp_asr.get("compute_type")
-    )
-    effective_language = _first(
-        args.language if _explicit("--language") else None,
-        lp_asr.get("language")
-    )
-    effective_vad = False if _explicit("--no-vad") else lp_asr.get("vad_filter", True)
-    effective_beam_size = args.beam_size if _explicit("--beam-size") else lp_asr.get("beam_size", 5)
-
-    effective_target_lang = _first(
-        args.target_language if _explicit("--target-language") else None,
-        lang_profile_config.get("target_language"),
-        "zh-CN"
-    )
-    from subtitle_translate import build_effective_translation_prompt
-
-    effective_translation_prompt = build_effective_translation_prompt(
-        style_prompt=lang_profile_config.get("translation_style", ""),
-        custom_prompt=args.translation_prompt,
-        glossary=lang_profile_config.get("glossary", []),
-    )
-    lp_subtitle_style = lang_profile_config.get("subtitle_style", {})
-    effective_subtitle_formats = normalize_subtitle_formats(
-        args.subtitle_formats if _explicit("--subtitle-formats") else lp_subtitle_style.get("formats", ["srt"])
-    )
-    effective_ass_style_id = _first(
-        args.ass_style_id if _explicit("--ass-style-id") else None,
-        lp_subtitle_style.get("ass_style_id"),
-        DEFAULT_ASS_STYLE_ID,
-    )
-
-    lang_profile_info = {
-        "profile_id": lang_profile_config.get("profile_id", ""),
-        "profile_name": lang_profile_config.get("profile_name", ""),
-        "source_language": lang_profile_config.get("source_language", "auto"),
-        "quality_thresholds": lang_profile_config.get("quality", {}),
-        "translation_style": lang_profile_config.get("translation_style", ""),
-        "glossary": lang_profile_config.get("glossary", []),
-        "subtitle_style": lang_profile_config.get("subtitle_style", {}),
-        "llm_stages": lang_profile_config.get("llm_stages", {}),
-    }
+    effective, config_messages = resolve_cli_config(args, raw_argv)
+    for message in config_messages:
+        print(message)
 
     if args.api_key:
         os.environ["SUBTITLE_LLM_API_KEY"] = args.api_key
-    elif effective_api_key:
-        os.environ["SUBTITLE_LLM_API_KEY"] = effective_api_key
+    elif effective["api_key"]:
+        os.environ["SUBTITLE_LLM_API_KEY"] = effective["api_key"]
 
     config = BatchConfig(
         input_dir=Path(args.input).resolve(),
         output_dir=Path(args.output_dir).resolve(),
         model_dir=Path(args.model_dir).resolve(),
         work_dir=Path(args.work_dir).resolve(),
-        model=effective_model,
-        device=effective_device,
-        compute_type=effective_compute_type,
-        language=effective_language,
-        beam_size=effective_beam_size,
-        vad_filter=effective_vad,
+        model=effective["model"],
+        device=effective["device"],
+        compute_type=effective["compute_type"],
+        language=effective["language"],
+        beam_size=effective["beam_size"],
+        vad_filter=effective["vad_filter"],
         local_files_only=args.local_files_only,
+        asr_experiment_mode=effective["asr_strategy"]["mode"],
+        asr_candidate_id=effective["asr_strategy"]["candidate_id"],
         translate=not args.no_translate,
-        api_provider=effective_api_provider,
-        api_base=effective_api_base,
-        api_key=effective_api_key,
-        llm_model=effective_llm_model,
-        target_language=effective_target_lang,
-        translation_prompt=effective_translation_prompt,
+        api_provider=effective["api_provider"],
+        api_base=effective["api_base"],
+        api_key=effective["api_key"],
+        llm_model=effective["llm_model"],
+        translation_quality_model=effective["translation_quality_model"],
+        target_language=effective["target_language"],
+        translation_prompt=effective["translation_prompt"],
         translation_batch_size=args.translation_batch_size,
         translation_temperature=args.translation_temperature,
         translation_mode=args.translation_mode,
         context_window=args.context_window,
-        subtitle_formats=effective_subtitle_formats,
-        ass_style_id=effective_ass_style_id,
-        subtitle_style=lp_subtitle_style,
-        segment_asr_routing=args.segment_asr_routing,
+        translation_reliability_mode=effective["translation_reliability"]["mode"],
+        translation_max_extra_requests=effective["translation_reliability"]["max_extra_requests"],
+        subtitle_formats=effective["subtitle_formats"],
+        ass_style_id=effective["ass_style_id"],
+        subtitle_style=effective["subtitle_style"],
+        segment_asr_routing=(
+            "dry_run"
+            if effective["asr_strategy"]["candidate_id"] == "mixed-route-v1"
+            and effective["asr_strategy"]["mode"] == "dry_run"
+            else args.segment_asr_routing
+        ),
         segment_routing_confidence_threshold=args.segment_routing_confidence_threshold,
         segment_routing_min_segments=args.segment_routing_min_segments,
         segment_routing_strict=args.segment_routing_strict,
         segment_routing_window_seconds=args.segment_routing_window_seconds,
         segment_routing_max_windows=args.segment_routing_max_windows,
         segment_routing_allow_large_run=args.segment_routing_allow_large_run,
-        language_profile_id=lang_profile_info.get("profile_id", ""),
-        language_profile_name=lang_profile_info.get("profile_name", ""),
-        lang_profile_config=lang_profile_info,
+        language_profile_id=effective["profile_info"].get("profile_id", ""),
+        language_profile_name=effective["profile_info"].get("profile_name", ""),
+        lang_profile_config=effective["profile_info"],
         max_retries=args.max_retries,
         skip_completed=not args.no_skip_completed,
         move_completed=not args.no_move_completed,
@@ -1074,18 +751,18 @@ Examples:
         return 0
 
     if args.status:
-        return _show_status()
+        return show_status(DIR_WORK_STATES)
 
     if args.retry_failed:
         return _retry_failed(pipeline)
 
     if args.review:
-        return _show_review(config.output_dir)
+        return show_review(config.output_dir)
 
     if args.review_file:
-        return _show_review_detail(Path(args.review_file))
+        return show_review_detail(Path(args.review_file))
 
-    api_key = effective_api_key or os.environ.get("SUBTITLE_LLM_API_KEY", "")
+    api_key = effective["api_key"] or os.environ.get("SUBTITLE_LLM_API_KEY", "")
     if config.translate and not api_key:
         print("Warning: translation is enabled but no API key is configured.")
         print("Set a provider, pass --api-key, set SUBTITLE_LLM_API_KEY, or use --no-translate.")
@@ -1096,31 +773,7 @@ Examples:
 
 
 def _show_status() -> int:
-    """Show all task states."""
-    if not DIR_WORK_STATES.exists():
-        print("No task records found.")
-        return 0
-
-    state_files = sorted(DIR_WORK_STATES.glob("*.state.json"))
-    if not state_files:
-        print("No task records found.")
-        return 0
-
-    print(f"\nTask status ({len(state_files)}):\n")
-    print(f"  {'file':<40} {'status':<12} {'stage':<20} {'retry'}")
-    print(f"  {'-' * 40} {'-' * 12} {'-' * 20} {'-' * 6}")
-
-    for state_file in state_files:
-        task = TaskState.load(state_file)
-        if task is None:
-            continue
-        retry = f"{task.retry_count}/{task.max_retries}" if task.retry_count > 0 else "-"
-        print(f"  {task.file:<40} {task.status:<12} {task.stage:<20} {retry}")
-        if task.error:
-            print(f"    error: {task.error[:100]}")
-
-    print()
-    return 0
+    return show_status(DIR_WORK_STATES)
 
 
 def _retry_failed(pipeline: BatchPipeline) -> int:
@@ -1168,136 +821,14 @@ def _retry_failed(pipeline: BatchPipeline) -> int:
 
 
 def _safe_console_print(text: str = "") -> None:
-    try:
-        print(text)
-    except UnicodeEncodeError:
-        encoding = sys.stdout.encoding or "utf-8"
-        safe = str(text).encode(encoding, errors="replace").decode(encoding, errors="replace")
-        print(safe)
+    safe_console_print(text)
 
 
 def _show_review(output_root: Path = DIR_OUTPUT) -> int:
-    """Show a summary of quality reports that need manual review."""
-    reports_dir = plan_pipeline_outputs(output_root, "", "", "", "bilingual").reports_dir
-    if not reports_dir.exists():
-        _safe_console_print("No quality reports found.")
-        return 0
-
-    report_files = sorted(reports_dir.glob("*.quality_report.json"))
-    if not report_files:
-        _safe_console_print("No quality reports found.")
-        return 0
-
-    _safe_console_print(f"\n{'=' * 70}")
-    _safe_console_print(f"  Review summary - {len(report_files)} report(s)")
-    _safe_console_print(f"{'=' * 70}\n")
-
-    total_issues = 0
-    total_errors = 0
-    total_warnings = 0
-
-    for report_file in report_files:
-        try:
-            data = read_json(report_file)
-        except (OSError, json.JSONDecodeError):
-            continue
-
-        status = data.get("status", "?")
-        summary = data.get("summary", {})
-        issues = data.get("issues", [])
-        if not issues:
-            continue
-
-        status_icon = {"pass": "OK", "warning": "WARN", "fail": "FAIL"}.get(status, "?")
-        video_name = report_file.stem.replace(".quality_report", "")
-        _safe_console_print(f"  {status_icon} {video_name}")
-        _safe_console_print(
-            f"    status: {status} | issues: {summary.get('total_issues', 0)} "
-            f"(errors: {summary.get('errors', 0)}, warnings: {summary.get('warnings', 0)})"
-        )
-
-        severity_order = {"error": 0, "warning": 1, "info": 2}
-        sorted_issues = sorted(issues, key=lambda item: severity_order.get(item.get("severity", "info"), 99))
-        for issue in sorted_issues[:10]:
-            icon = {"error": "ERROR", "warning": "WARN", "info": "INFO"}.get(issue.get("severity"), "?")
-            idx = issue.get("index", 0)
-            idx_str = f"#{idx}" if idx > 0 else "global"
-            snippet = issue.get("snippet", "")[:60]
-            _safe_console_print(f"    {icon} {idx_str} [{issue.get('type', '?')}] {issue.get('text', '')[:80]}")
-            if snippet and snippet != "(empty)":
-                _safe_console_print(f"       content: {snippet}")
-
-        if len(sorted_issues) > 10:
-            _safe_console_print(f"    ... {len(sorted_issues) - 10} more issue(s); use --review-file for details")
-
-        total_issues += summary.get("total_issues", 0)
-        total_errors += summary.get("errors", 0)
-        total_warnings += summary.get("warnings", 0)
-        _safe_console_print()
-
-    _safe_console_print(f"{'=' * 70}")
-    _safe_console_print(f"  Total: {total_issues} issue(s) ({total_errors} errors, {total_warnings} warnings)")
-    _safe_console_print(f"  Reports: {reports_dir}")
-    _safe_console_print(f"  Review subtitles: {reports_dir}/*.review_needed.srt")
-    _safe_console_print(f"{'=' * 70}")
-    _safe_console_print("\nTip: use --review-file <report path> for full details.\n")
-
-    return 0 if total_errors == 0 else 1
+    return show_review(output_root)
 
 def _show_review_detail(report_path: Path) -> int:
-    """Show details for one quality report."""
-    if not report_path.exists():
-        _safe_console_print(f"Report not found: {report_path}")
-        return 1
-
-    try:
-        data = read_json(report_path)
-    except (OSError, json.JSONDecodeError) as exc:
-        _safe_console_print(f"Could not read report: {exc}")
-        return 1
-
-    status = data.get("status", "?")
-    summary = data.get("summary", {})
-    issues = data.get("issues", [])
-
-    _safe_console_print(f"\n{'=' * 70}")
-    _safe_console_print(f"  Quality report: {report_path.name}")
-    _safe_console_print(f"{'=' * 70}")
-    _safe_console_print(f"  status: {status}")
-    _safe_console_print(f"  total entries: {data.get('total_entries', 0)}")
-    _safe_console_print(f"  source: {data.get('source_srt', '')}")
-    _safe_console_print(f"  translated: {data.get('translated_srt', '')}")
-    _safe_console_print(
-        f"  issues: {summary.get('total_issues', 0)} "
-        f"(errors: {summary.get('errors', 0)}, "
-        f"warnings: {summary.get('warnings', 0)}, "
-        f"info: {summary.get('info', 0)})"
-    )
-
-    issue_types = summary.get("issue_types", {})
-    if issue_types:
-        _safe_console_print("\n  issue types:")
-        for issue_type, count in sorted(issue_types.items(), key=lambda item: -item[1]):
-            _safe_console_print(f"    - {issue_type}: {count}")
-
-    if not issues:
-        _safe_console_print("\n  [OK] no issues")
-    else:
-        _safe_console_print(f"\n  all issues ({len(issues)}):")
-        severity_order = {"error": 0, "warning": 1, "info": 2}
-        sorted_issues = sorted(issues, key=lambda item: severity_order.get(item.get("severity", "info"), 99))
-        for issue in sorted_issues:
-            icon = {"error": "ERROR", "warning": "WARN", "info": "INFO"}.get(issue.get("severity"), "?")
-            idx = issue.get("index", 0)
-            idx_str = f"#{idx}" if idx > 0 else "global"
-            _safe_console_print(f"\n    {icon} {idx_str} [{issue.get('type', '?')}]")
-            _safe_console_print(f"       description: {issue.get('text', '')}")
-            snippet = issue.get("snippet", "")
-            if snippet and snippet != "(empty)":
-                _safe_console_print(f"       content: {snippet}")
-
-    _safe_console_print()
-    return 0 if status != "fail" else 1
+    return show_review_detail(report_path)
 
 if __name__ == "__main__":
     raise SystemExit(main())

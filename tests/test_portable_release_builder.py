@@ -123,7 +123,7 @@ def test_builder_manifest_and_report_use_release_relative_paths(tmp_path):
     report = result.report_path.read_text(encoding="utf-8")
 
     assert manifest["builder"] == "m6.7-release-candidate-packaging"
-    assert manifest["version"] == "m6.7-rc1"
+    assert manifest["version"] == "0.6.1"
     assert manifest["paths"] == {
         "output_root": ".",
         "app_root": "app",

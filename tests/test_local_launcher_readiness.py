@@ -33,6 +33,7 @@ def test_start_app_smoke_is_non_interactive_and_browser_can_be_disabled():
     assert "No browser was opened" in text
     assert "messagebox" not in text
     assert "askyesno" not in text
+    assert "from tkinter import Button, Label, Tk" not in text.split("def _run_gui", 1)[0]
 
 
 def test_ffmpeg_missing_message_mentions_supported_configuration_paths():

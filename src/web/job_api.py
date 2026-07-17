@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -31,6 +32,19 @@ WORK_DIR = PROJECT_ROOT / "work"
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 
+SECRET_PATTERNS = (
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{4,}\b", re.IGNORECASE), "sk-***"),
+    (
+        re.compile(
+            r"([\"']?(?:api[_-]?key|token|secret)[\"']?\s*[:=]\s*)"
+            r"[\"']?[^\"'\s,}]+[\"']?",
+            re.IGNORECASE,
+        ),
+        r"\1***",
+    ),
+    (re.compile(r"((?:authorization\s*[:=]\s*)?bearer\s+)\S+", re.IGNORECASE), r"\1***"),
+)
+
 
 def start_job(form: dict) -> dict:
     job = create_job(form)
@@ -53,6 +67,13 @@ def create_job(form: dict) -> dict:
     beam_size = get_text(form, "beam_size", "5")
     vad = get_text(form, "vad", "on") == "on"
     condition_on_previous_text = get_text(form, "condition_on_previous_text", "on") == "on"
+    asr_experiment_mode = get_text(form, "asr_experiment_mode", "off").strip() or "off"
+    asr_candidate_id = get_text(form, "asr_candidate_id", "").strip()
+    from asr_strategy import validate_strategy_config
+
+    asr_strategy = validate_strategy_config(
+        {"mode": asr_experiment_mode, "candidate_id": asr_candidate_id}, model=model
+    )
     segment_asr_routing = get_text(form, "segment_asr_routing", "off").strip() or "off"
     segment_threshold = get_text(form, "segment_routing_confidence_threshold", "0.70").strip() or "0.70"
     segment_min_segments = get_text(form, "segment_routing_min_segments", "1").strip() or "1"
@@ -98,12 +119,25 @@ def create_job(form: dict) -> dict:
     api_base = get_text(form, "api_base", "").strip()
     api_key = get_text(form, "api_key", "").strip()
     llm_model = get_text(form, "llm_model", "").strip()
+    translation_quality_model = get_text(
+        form, "translation_quality_model", ""
+    ).strip()
     target_language = get_text(form, "target_language", "zh-CN").strip()
     translation_batch_size = get_text(form, "translation_batch_size", "20")
     translation_temperature = get_text(form, "translation_temperature", "0.2")
     translation_mode = get_text(form, "translation_mode", "bilingual")
     context_window = get_text(form, "context_window", "3")
     translation_prompt = get_text(form, "translation_prompt", "")
+    reliability_mode_raw = get_text(form, "translation_reliability_mode", "").strip()
+    reliability_limit_raw = get_text(form, "translation_max_extra_requests", "").strip()
+    reliability = None
+    if reliability_mode_raw or reliability_limit_raw:
+        from translation_reliability import normalize_reliability_config
+
+        reliability = normalize_reliability_config(
+            reliability_mode_raw or "off",
+            max_extra_requests=reliability_limit_raw or 12,
+        )
     requested_formats = get_text(form, "subtitle_formats", "")
     if get_text(form, "format_ass", "") == "on":
         requested_formats = "srt,ass"
@@ -123,6 +157,11 @@ def create_job(form: dict) -> dict:
             api_base = api_base or provider_config.get("api_base", "")
             api_key = api_key or provider_config.get("api_key", "")
             llm_model = llm_model or provider_config.get("llm_model", "")
+            translation_quality_model = (
+                translation_quality_model
+                or provider_config.get("translation_quality_model", "")
+                or llm_model
+            )
         if not api_base:
             raise ValueError("Translation enabled but API Base is empty.")
         if not api_key:
@@ -179,12 +218,15 @@ def create_job(form: dict) -> dict:
             "beam_size": beam_size_int,
             "vad": vad,
             "condition_on_previous_text": condition_on_previous_text,
+            "asr_experiment_mode": asr_strategy["mode"],
+            "asr_candidate_id": asr_strategy["candidate_id"],
             "translate_enabled": translate_enabled,
             "provider_id": provider_select,
             "api_provider": api_provider,
             "api_base": api_base,
             "api_key_masked": mask_secret(api_key) if api_key else "",
             "llm_model": llm_model,
+            "translation_quality_model": translation_quality_model or llm_model,
             "target_language": target_language,
             "language_profile": language_profile,
             "translation_batch_size": translation_batch_size,
@@ -192,6 +234,8 @@ def create_job(form: dict) -> dict:
             "translation_mode": translation_mode,
             "context_window": context_window,
             "translation_prompt": translation_prompt,
+            "translation_reliability_mode": reliability["mode"] if reliability else None,
+            "translation_max_extra_requests": reliability["max_extra_requests"] if reliability else None,
             "subtitle_formats": subtitle_formats,
             "ass_style_id": ass_style_id,
             "subtitle_status": subtitle_status,
@@ -234,12 +278,36 @@ def resolve_input(form: dict) -> Path:
 
 
 def run_job(job_id: str) -> None:
+    try:
+        _run_job_impl(job_id)
+    except Exception as exc:
+        message = clean_log_line(str(exc)) or exc.__class__.__name__
+        logs = append_log(job_id, f"Job failed: {message}")
+        set_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            progress=100,
+            returncode=-1,
+            error_summary=message,
+            completed_at=time.time(),
+            logs=logs,
+        )
+    finally:
+        with JOBS_LOCK:
+            job_record = JOBS.get(job_id)
+            if job_record:
+                job_record.pop("_api_key", None)
+
+
+def _run_job_impl(job_id: str) -> None:
     with JOBS_LOCK:
         raw_job = JOBS.get(job_id)
     if raw_job is None:
         return
 
-    set_job(job_id, status="running", stage="transcribing", progress=10, logs=raw_job["logs"] + ["Starting transcription..."])
+    logs = list(raw_job.get("logs", [])) + ["Starting transcription..."]
+    set_job(job_id, status="running", stage="transcribing", progress=10, logs=logs)
 
     options = raw_job["options"]
     command = [
@@ -270,6 +338,10 @@ def run_job(job_id: str) -> None:
         command += ["--no-vad"]
     if not options.get("condition_on_previous_text", True):
         command += ["--no-condition-on-previous-text"]
+    if options.get("asr_experiment_mode", "off") != "off":
+        command += ["--asr-experiment-mode", str(options["asr_experiment_mode"])]
+    if options.get("asr_candidate_id"):
+        command += ["--asr-candidate-id", str(options["asr_candidate_id"])]
     command += ["--subtitle-formats", ",".join(options.get("subtitle_formats", ["srt"]))]
     command += ["--ass-style-id", str(options.get("ass_style_id", "clean-cn"))]
     segment_mode = str(options.get("segment_asr_routing", "off"))
@@ -311,6 +383,11 @@ def run_job(job_id: str) -> None:
             str(options.get("api_base", "")),
             "--llm-model",
             str(options.get("llm_model", "")),
+            "--translation-quality-model",
+            str(
+                options.get("translation_quality_model")
+                or options.get("llm_model", "")
+            ),
             "--target-language",
             str(options.get("target_language", "zh-CN")),
             "--translation-batch-size",
@@ -325,6 +402,12 @@ def run_job(job_id: str) -> None:
         prompt = str(options.get("translation_prompt", ""))
         if prompt:
             command += ["--translation-prompt", prompt]
+        reliability_mode = options.get("translation_reliability_mode")
+        reliability_limit = options.get("translation_max_extra_requests")
+        if reliability_mode is not None:
+            command += ["--translation-reliability-mode", str(reliability_mode)]
+        if reliability_limit is not None:
+            command += ["--translation-max-extra-requests", str(reliability_limit)]
 
     env = _job_env()
     if options["hf_endpoint"]:
@@ -344,10 +427,9 @@ def run_job(job_id: str) -> None:
         bufsize=1,
     )
 
-    logs = get_job(job_id)["logs"]
     assert process.stdout is not None
     for line in process.stdout:
-        logs = append_log(job_id, line.rstrip())
+        logs = append_log(job_id, line.rstrip(), logs)
         _infer_stage_from_logs(job_id, logs)
 
     returncode = process.wait()
@@ -384,13 +466,13 @@ def run_job(job_id: str) -> None:
                 )
                 quality_report = str(report_dir / f"{source_path.stem}.quality_report.json")
                 review_needed = str(report_dir / f"{source_path.stem}.review_needed.srt")
-                logs = append_log(job_id, "Quality check completed.")
+                logs = append_log(job_id, "Quality check completed.", logs)
         except Exception as exc:
-            logs = append_log(job_id, f"Quality check failed: {exc}")
+            logs = append_log(job_id, f"Quality check failed: {exc}", logs)
         if "ass" in options.get("subtitle_formats", []):
             from subtitle_model import ASS_RESERVED_MESSAGE
 
-            logs = append_log(job_id, f"ASS: {ASS_RESERVED_MESSAGE}")
+            logs = append_log(job_id, f"ASS: {ASS_RESERVED_MESSAGE}", logs)
 
         set_job(
             job_id,
@@ -427,12 +509,6 @@ def run_job(job_id: str) -> None:
             segment_asr_routing_message=routing_message,
             logs=logs + [f"Failed with code {returncode}."],
         )
-
-    with JOBS_LOCK:
-        job_record = JOBS.get(job_id)
-        if job_record:
-            job_record.pop("_api_key", None)
-
 
 def _infer_stage_from_logs(job_id: str, logs: list[str]) -> None:
     """Infer current stage from the most recent log lines."""
@@ -529,6 +605,7 @@ def _options_to_form(options: dict, input_path: str) -> dict:
         "api_provider": "api_provider",
         "api_base": "api_base",
         "llm_model": "llm_model",
+        "translation_quality_model": "translation_quality_model",
         "target_language": "target_language",
         "language_profile": "language_profile",
         "translation_batch_size": "translation_batch_size",
@@ -636,14 +713,21 @@ def set_job(job_id: str, **updates) -> None:
         job["updated_at"] = time.time()
 
 
-def append_log(job_id: str, line: str) -> list[str]:
+def append_log(job_id: str, line: str, fallback_logs: list[str] | None = None) -> list[str]:
+    cleaned = clean_log_line(line) if line else ""
     with JOBS_LOCK:
-        job = JOBS[job_id]
-        if line:
-            job["logs"].append(clean_log_line(line))
+        job = JOBS.get(job_id)
+        if job is not None:
+            if cleaned:
+                job["logs"].append(cleaned)
             job["logs"] = job["logs"][-300:]
-        job["updated_at"] = time.time()
-        return list(job["logs"])
+            job["updated_at"] = time.time()
+            return list(job["logs"])
+
+    logs = list(fallback_logs or [])
+    if cleaned:
+        logs.append(cleaned)
+    return logs[-300:]
 
 
 def list_jobs() -> list[dict]:
@@ -762,7 +846,10 @@ def mask_secret(value: str) -> str:
 
 
 def clean_log_line(line: str) -> str:
-    return redact_project_path(line, PROJECT_ROOT)
+    cleaned = redact_project_path(line, PROJECT_ROOT)
+    for pattern, replacement in SECRET_PATTERNS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
 
 
 def _job_env() -> dict[str, str]:

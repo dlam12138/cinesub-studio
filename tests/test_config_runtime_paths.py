@@ -59,3 +59,22 @@ def test_language_profile_config_path_uses_release_root_config(tmp_path):
     assert project_root == (tmp_path / "release").resolve()
     assert config_path == (tmp_path / "release" / "config" / "language_profiles.local.json").resolve()
     assert "app" not in config_path.relative_to((tmp_path / "release").resolve()).parts
+
+
+def test_packaged_provider_and_profile_config_use_roaming_appdata(monkeypatch, tmp_path):
+    packaged_root = tmp_path / "installed" / "app"
+    local_root = tmp_path / "local" / "CineSubStudio"
+    roaming_root = tmp_path / "roaming"
+    monkeypatch.setenv("CINESUB_PACKAGED_ROOT", str(packaged_root))
+    monkeypatch.setenv("CINESUB_USER_DATA_ROOT", str(local_root))
+    monkeypatch.setenv("APPDATA", str(roaming_root))
+
+    project_root, config_dir, provider_path = provider_store._resolve_provider_config_paths()
+    profile_root, profile_path = language_profile_store._resolve_language_profile_config_path()
+
+    expected_config = (roaming_root / "CineSubStudio" / "config").resolve()
+    assert project_root == local_root.resolve()
+    assert profile_root == local_root.resolve()
+    assert config_dir == expected_config
+    assert provider_path == expected_config / "providers.local.json"
+    assert profile_path == expected_config / "language_profiles.local.json"

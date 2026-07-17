@@ -1,14 +1,79 @@
 {
   "name": "cinesub-studio-desktop",
-  "version": "0.3.0",
+  "version": "0.6.1",
+  "cinesubBuildFlavor": "cpu",
   "private": true,
-  "productName": "智译字幕工坊 / CineSub Studio",
+  "productName": "智译字幕工坊",
   "description": "Electron desktop shell for 智译字幕工坊 / CineSub Studio",
   "main": "main.js",
   "scripts": {
-    "start": "node launch.js"
+    "start": "node launch.js",
+    "pack:win": "electron-builder --win --dir",
+    "dist:win": "electron-builder --win nsis"
   },
   "devDependencies": {
-    "electron": "37.10.3"
+    "electron": "37.10.3",
+    "electron-builder": "26.1.0"
+  },
+  "build": {
+    "productName": "智译字幕工坊",
+    "appId": "studio.cinesub.app",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "build/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "app/backend",
+        "filter": [
+          "src/**/*",
+          "web/**/*",
+          "config/**/*",
+          "start_app.py",
+          "start_web.ps1",
+          "run_transcribe.ps1",
+          "analyze_subtitles.ps1",
+          "install.ps1",
+          "requirements.txt",
+          "pyproject.toml",
+          "VERSION",
+          "README.md",
+          "AGENTS.md"
+        ]
+      },
+      {
+        "from": "../packaging/windows/runtime",
+        "to": "app",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../packaging/windows/THIRD_PARTY_NOTICES.md",
+        "to": "app/THIRD_PARTY_NOTICES.md"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "executableName": "CineSubStudio",
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "forceCodeSigning": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "智译字幕工坊"
+    },
+    "publish": null
   }
 }

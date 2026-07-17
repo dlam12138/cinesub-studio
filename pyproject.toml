@@ -1,6 +1,6 @@
 [project]
 name = "cinesub-studio"
-version = "0.1.0"
+version = "0.6.1"
 description = "Local subtitle transcription and translation studio"
 requires-python = ">=3.10,<3.14"
 

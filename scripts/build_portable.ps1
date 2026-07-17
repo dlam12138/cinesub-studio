@@ -20,6 +20,10 @@ try {
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $ScriptDir "..")).Path
+$VersionPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $VersionPython)) { throw "Missing project Python for version validation: $VersionPython" }
+& $VersionPython -B (Join-Path $ProjectRoot "src\tools\versioning.py") check
+if ($LASTEXITCODE -ne 0) { throw "Release version consumers do not match VERSION." }
 
 function Convert-ToRepoRelative {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -75,6 +79,7 @@ function Test-AllowedFile {
         "README.md",
         "requirements.txt",
         "pyproject.toml",
+        "VERSION",
         "start_app.py",
         "start_web.ps1",
         "install.ps1"

@@ -73,6 +73,12 @@ def import_uploaded_runtime_package(
     return import_offline_package(target)
 
 
+def create_runtime_diagnostic_bundle() -> dict:
+    from diagnostic_bundle import create_diagnostic_bundle
+
+    return create_diagnostic_bundle()
+
+
 def _provider_diagnostic_item() -> dict:
     try:
         from provider_store import get_active_provider, mask_api_key

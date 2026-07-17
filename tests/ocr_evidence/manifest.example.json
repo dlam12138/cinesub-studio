@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "samples": [
+    {
+      "id": "fr-interview",
+      "language": "fr",
+      "tags": ["interview", "noise"],
+      "ocr_srt": "work/ocr-evidence/fr-interview/fr-interview.burned-bilingual.ocr.srt",
+      "ocr_sidecar": "work/ocr-evidence/fr-interview/ocr-evidence.local.json",
+      "baseline": {
+        "source_srt": "output/source/fr-interview.small.srt",
+        "translation_srt": "output/bilingual/fr-interview.small.bilingual.zh-CN.srt"
+      },
+      "candidates": [
+        {
+          "id": "candidate-v1",
+          "source_srt": "work/ocr-evidence/fr-interview/candidate-v1.source.srt",
+          "translation_srt": "work/ocr-evidence/fr-interview/candidate-v1.zh.srt"
+        }
+      ]
+    }
+  ]
+}

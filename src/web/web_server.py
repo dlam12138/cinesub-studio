@@ -8,6 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from app_info import get_app_info
+from asr_evidence_api import get_asr_evidence_report, list_asr_evidence_reports
+from file_inspection_api import inspect_input_file
 from job_api import get_job, list_jobs, retry_job, sanitize_filename, start_job
 from pipeline_api import (
     get_pipeline_task,
@@ -17,7 +20,35 @@ from pipeline_api import (
     run_pipeline_command,
     start_pipeline_background,
 )
+from provider_profile_api import (
+    activate_profile_payload,
+    activate_provider_payload,
+    active_profile_payload,
+    active_provider_payload,
+    delete_profile_payload,
+    delete_provider_payload,
+    get_profile_payload,
+    get_provider_payload,
+    list_profile_payload,
+    list_provider_payload,
+    provider_templates_payload,
+    save_profile_payload,
+    save_provider_payload,
+    test_provider_payload,
+)
 from runtime_paths import resolve_runtime_paths
+from request_security import ensure_session_token, security_headers, validate_request
+from subtitle_preview_api import (
+    SubtitlePreviewError,
+    job_subtitle_preview,
+    pipeline_subtitle_preview,
+)
+from config_recovery import (
+    ConfigCorruptError,
+    ConfigRecoveryError,
+    all_config_status,
+    recover_store,
+)
 
 
 PATHS = resolve_runtime_paths()
@@ -25,12 +56,13 @@ PROJECT_ROOT = PATHS.project_root
 APP_ROOT = PATHS.app_root
 SRC_ROOT = PATHS.src_root
 WEB_ROOT = APP_ROOT / "web"
-UPLOAD_DIR = PROJECT_ROOT / "uploads"
-OUTPUT_DIR = PROJECT_ROOT / "output"
-MODEL_DIR = PROJECT_ROOT / "models"
-WORK_DIR = PROJECT_ROOT / "work"
+UPLOAD_DIR = PATHS.uploads_dir
+OUTPUT_DIR = PATHS.output_dir
+MODEL_DIR = PATHS.models_dir
+WORK_DIR = PATHS.work_dir
 ASR_EVIDENCE_DIR = OUTPUT_DIR / "reports" / "asr_evidence"
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+MAX_JSON_BYTES = 2 * 1024 * 1024
 SUPPORTED_MEDIA_EXTENSIONS = {
     ".mp4",
     ".mkv",
@@ -50,32 +82,17 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".wma",
 }
 
+
+class RequestBodyError(ValueError):
+    """A client-safe JSON body validation failure."""
+
+
 def redact_secret(value: str) -> str:
     if not value:
         return ""
     if len(value) <= 8:
         return "***"
     return value[:3] + "***" + value[-4:]
-
-
-def _sanitize_provider_test_result(result: dict, provider_id: str) -> dict:
-    payload = dict(result or {})
-    try:
-        from provider_store import get_provider, mask_api_key
-
-        provider = get_provider(provider_id)
-        api_key = str((provider or {}).get("api_key") or "")
-        if api_key:
-            error = str(payload.get("error") or "")
-            error = error.replace(api_key, "[redacted-api-key]")
-            masked = mask_api_key(api_key)
-            if masked:
-                error = error.replace(masked, "[redacted-api-key]")
-            payload["error"] = error[:300]
-    except Exception:
-        if "error" in payload:
-            payload["error"] = str(payload.get("error") or "")[:300]
-    return payload
 
 
 def _is_secret_like_key(key: object) -> bool:
@@ -103,6 +120,7 @@ def main() -> int:
         path.mkdir(parents=True, exist_ok=True)
 
     server = ThreadingHTTPServer((host, port), Handler)
+    ensure_session_token(server)
     print(f"Subtitle web UI: http://{host}:{port}")
     server.serve_forever()
     return 0
@@ -113,6 +131,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         self._log_request()
+        if not self._authorize_request():
+            return
         try:
             self._do_GET_impl()
         except Exception as exc:
@@ -120,12 +140,59 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_GET_impl(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/session":
+            self.send_json({"ok": True, "token": ensure_session_token(self.server)})
+            return
+
+        if parsed.path == "/api/config/status":
+            self.send_json(all_config_status())
+            return
         if parsed.path in ("/", "/index.html"):
             self.send_file(WEB_ROOT / "index.html", "text/html; charset=utf-8")
             return
 
+        if parsed.path == "/assets/brand-mark.png":
+            self.send_file(WEB_ROOT / "assets" / "brand-mark.png", "image/png")
+            return
+
+        if parsed.path == "/assets/fonts/BarlowCondensed-SemiBold.ttf":
+            self.send_file(
+                WEB_ROOT / "assets" / "fonts" / "BarlowCondensed-SemiBold.ttf",
+                "font/ttf",
+            )
+            return
+
+        if parsed.path == "/assets/fonts/NotoSansSC-Variable.ttf":
+            self.send_file(
+                WEB_ROOT / "assets" / "fonts" / "NotoSansSC-Variable.ttf",
+                "font/ttf",
+            )
+            return
+
+        if parsed.path == "/api/app-info":
+            self.send_json(get_app_info(PATHS))
+            return
+
         if parsed.path == "/api/jobs":
             self.send_json({"jobs": list_jobs()})
+            return
+
+        if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/preview"):
+            job_id = unquote(parsed.path[len("/api/jobs/"):-len("/preview")]).strip("/")
+            query = parse_qs(parsed.query)
+            try:
+                payload = job_subtitle_preview(
+                    job_id=job_id,
+                    artifact=(query.get("artifact") or [""])[0],
+                    offset=(query.get("offset") or [0])[0],
+                    limit=(query.get("limit") or [None])[0],
+                    job=get_job(job_id),
+                    output_dir=OUTPUT_DIR,
+                )
+            except SubtitlePreviewError as exc:
+                self.send_error_json(exc.status, str(exc))
+                return
+            self.send_json(payload)
             return
 
         if parsed.path.startswith("/api/jobs/"):
@@ -188,6 +255,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(pipeline_progress())
             return
 
+        if parsed.path == "/api/pipeline/preview":
+            query = parse_qs(parsed.query)
+            try:
+                payload = pipeline_subtitle_preview(
+                    task_id=(query.get("task") or [""])[0].strip(),
+                    artifact=(query.get("artifact") or [""])[0].strip(),
+                    offset=(query.get("offset") or [0])[0],
+                    limit=(query.get("limit") or [None])[0],
+                    resolver=resolve_pipeline_artifact,
+                )
+            except SubtitlePreviewError as exc:
+                self.send_error_json(exc.status, str(exc))
+                return
+            self.send_json(payload)
+            return
+
         if parsed.path == "/api/pipeline/artifact":
             query = parse_qs(parsed.query)
             task_id = (query.get("task") or [""])[0].strip()
@@ -227,18 +310,29 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_runtime_download_plan(components))
             return
 
+        if parsed.path == "/api/runtime/diagnostic-bundle/download":
+            from diagnostic_bundle import resolve_diagnostic_bundle
+
+            file_name = (parse_qs(parsed.query).get("file") or [""])[0]
+            bundle = resolve_diagnostic_bundle(file_name)
+            if bundle is None:
+                self.send_error_json(404, "Diagnostic bundle not found")
+            else:
+                self.send_file(bundle, "application/zip", download_name=bundle.name)
+            return
+
         if parsed.path == "/api/storage/status":
             self.send_json(_storage_status())
             return
 
         if parsed.path == "/api/asr-evidence/reports":
-            self.send_json(_asr_evidence_reports())
+            self.send_json(list_asr_evidence_reports(ASR_EVIDENCE_DIR, _format_bytes))
             return
 
         if parsed.path == "/api/asr-evidence/report":
             query = parse_qs(parsed.query)
             file_name = (query.get("file") or [""])[0].strip()
-            payload, status = _asr_evidence_report(file_name)
+            payload, status = get_asr_evidence_report(ASR_EVIDENCE_DIR, file_name)
             self.send_json(payload, status=status)
             return
 
@@ -249,59 +343,47 @@ class Handler(BaseHTTPRequestHandler):
 
         # Provider API
         if parsed.path == "/api/providers":
-            from provider_store import list_providers
-            self.send_json({"providers": list_providers(mask_secret=True)})
+            self.send_json(list_provider_payload())
             return
 
         if parsed.path == "/api/providers/active":
-            from provider_store import get_active_provider, sanitize_provider
-            provider = sanitize_provider(get_active_provider())
-            self.send_json({"active": provider})
+            self.send_json(active_provider_payload())
             return
 
         path_parts = parsed.path.split("/")
         if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
-            from provider_store import get_provider, sanitize_provider
             provider_id = unquote(path_parts[3])
-            provider = sanitize_provider(get_provider(provider_id))
-            if provider is None:
-                self.send_error_json(404, "Provider not found")
-                return
-            self.send_json({"provider": provider})
+            payload, status = get_provider_payload(provider_id)
+            self.send_json(payload, status=status)
             return
 
         # Language Profile API
         if parsed.path == "/api/language-profiles":
-            from language_profile_store import list_language_profiles
-            self.send_json({"profiles": list_language_profiles()})
+            self.send_json(list_profile_payload())
             return
 
         if parsed.path == "/api/language-profiles/active":
-            from language_profile_store import get_active_language_profile
-            self.send_json({"active": get_active_language_profile()})
+            self.send_json(active_profile_payload())
             return
 
         path_parts = parsed.path.split("/")
         if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
-            from language_profile_store import get_language_profile
             profile_id = unquote(path_parts[3])
-            profile = get_language_profile(profile_id)
-            if profile is None:
-                self.send_error_json(404, "Language Profile not found")
-                return
-            self.send_json({"profile": profile})
+            payload, status = get_profile_payload(profile_id)
+            self.send_json(payload, status=status)
             return
 
         # Provider Templates
         if parsed.path == "/api/provider-templates":
-            from provider_store import get_provider_templates
-            self.send_json({"ok": True, "templates": get_provider_templates()})
+            self.send_json(provider_templates_payload())
             return
 
         self.send_error_json(404, "Not found")
 
     def do_PUT(self) -> None:
         self._log_request()
+        if not self._authorize_request():
+            return
         try:
             self._do_PUT_impl()
         except Exception as exc:
@@ -318,15 +400,9 @@ class Handler(BaseHTTPRequestHandler):
             if not body:
                 self.send_error_json(400, "Request body is empty.")
                 return
-            body["id"] = lpid
-            from language_profile_store import upsert_language_profile, validate_language_profile
-            errors = validate_language_profile(body)
-            if errors:
-                self.send_error_json(400, "; ".join(errors))
-                return
             try:
-                result = upsert_language_profile(body)
-                self.send_json({"ok": True, "profile": result})
+                payload, status = save_profile_payload(body, lpid)
+                self.send_json(payload, status=status)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -338,12 +414,9 @@ class Handler(BaseHTTPRequestHandler):
             if not body:
                 self.send_error_json(400, "Request body is empty.")
                 return
-            body["id"] = provider_id
-            from provider_store import upsert_provider, mask_api_key
             try:
-                result = upsert_provider(body)
-                result["api_key_masked"] = mask_api_key(result.pop("api_key", ""))
-                self.send_json({"ok": True, "provider": result})
+                payload, status = save_provider_payload(body, provider_id)
+                self.send_json(payload, status=status)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -352,6 +425,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         self._log_request()
+        if not self._authorize_request():
+            return
         try:
             self._do_DELETE_impl()
         except Exception as exc:
@@ -364,10 +439,8 @@ class Handler(BaseHTTPRequestHandler):
         # Language Profile delete
         if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
             lpid = unquote(path_parts[3])
-            from language_profile_store import delete_language_profile
             try:
-                delete_language_profile(lpid)
-                self.send_json({"ok": True})
+                self.send_json(delete_profile_payload(lpid))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -375,10 +448,8 @@ class Handler(BaseHTTPRequestHandler):
         # Provider delete
         if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
             provider_id = unquote(path_parts[3])
-            from provider_store import delete_provider
             try:
-                delete_provider(provider_id)
-                self.send_json({"ok": True})
+                self.send_json(delete_provider_payload(provider_id))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -387,6 +458,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self._log_request()
+        if not self._authorize_request():
+            return
         try:
             self._do_POST_impl()
         except Exception as exc:
@@ -394,6 +467,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_POST_impl(self) -> None:
         parsed = urlparse(self.path)
+
+        if parsed.path == "/api/config/recover":
+            body = self._read_json_body() or {}
+            try:
+                self.send_json(recover_store(str(body.get("store") or ""), str(body.get("action") or "")))
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+            except ConfigRecoveryError as exc:
+                self.send_error_json(409, str(exc), code="config_recovery_failed")
+            return
 
         # Pipeline: run in the background for the input directory.
         if parsed.path == "/api/pipeline/run":
@@ -408,6 +491,12 @@ class Handler(BaseHTTPRequestHandler):
             language = body.get("language", "")
             hf_endpoint = body.get("hf_endpoint", "").strip()
             local_files_only = bool(body.get("local_files_only", False))
+            try:
+                asr_strategy = _parse_asr_strategy_payload(body, model)
+                reliability = _parse_translation_reliability_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
             subtitle_formats = body.get("subtitle_formats", ["srt"])
             ass_style_id = body.get("ass_style_id", "")
             try:
@@ -428,6 +517,9 @@ class Handler(BaseHTTPRequestHandler):
                 language=language,
                 hf_endpoint=hf_endpoint,
                 local_files_only=local_files_only,
+                asr_experiment_mode=asr_strategy["mode"],
+                asr_candidate_id=asr_strategy["candidate_id"],
+                **reliability,
                 subtitle_formats=subtitle_formats,
                 ass_style_id=ass_style_id,
                 **routing_payload,
@@ -448,6 +540,12 @@ class Handler(BaseHTTPRequestHandler):
             language = body.get("language", "")
             hf_endpoint = body.get("hf_endpoint", "").strip()
             local_files_only = bool(body.get("local_files_only", False))
+            try:
+                asr_strategy = _parse_asr_strategy_payload(body, model)
+                reliability = _parse_translation_reliability_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
             subtitle_formats = body.get("subtitle_formats", ["srt"])
             ass_style_id = body.get("ass_style_id", "")
             try:
@@ -468,6 +566,9 @@ class Handler(BaseHTTPRequestHandler):
                 language=language,
                 hf_endpoint=hf_endpoint,
                 local_files_only=local_files_only,
+                asr_experiment_mode=asr_strategy["mode"],
+                asr_candidate_id=asr_strategy["candidate_id"],
+                **reliability,
                 subtitle_formats=subtitle_formats,
                 ass_style_id=ass_style_id,
                 **routing_payload,
@@ -481,14 +582,9 @@ class Handler(BaseHTTPRequestHandler):
             if not body:
                 self.send_error_json(400, "Request body is empty.")
                 return
-            from language_profile_store import upsert_language_profile, validate_language_profile
-            errors = validate_language_profile(body)
-            if errors:
-                self.send_error_json(400, "; ".join(errors))
-                return
             try:
-                result = upsert_language_profile(body)
-                self.send_json({"ok": True, "profile": result}, status=201)
+                payload, status = save_profile_payload(body)
+                self.send_json(payload, status=status)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -496,10 +592,8 @@ class Handler(BaseHTTPRequestHandler):
         # Language Profile activate
         if parsed.path.startswith("/api/language-profiles/") and parsed.path.endswith("/activate"):
             lpid = unquote(parsed.path.split("/")[3])
-            from language_profile_store import set_active_language_profile
             try:
-                set_active_language_profile(lpid)
-                self.send_json({"ok": True, "active": lpid})
+                self.send_json(activate_profile_payload(lpid))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -510,11 +604,9 @@ class Handler(BaseHTTPRequestHandler):
             if not body:
                 self.send_error_json(400, "Request body is empty.")
                 return
-            from provider_store import upsert_provider, mask_api_key
             try:
-                result = upsert_provider(body)
-                result["api_key_masked"] = mask_api_key(result.pop("api_key", ""))
-                self.send_json({"ok": True, "provider": result}, status=201)
+                payload, status = save_provider_payload(body)
+                self.send_json(payload, status=status)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -522,10 +614,8 @@ class Handler(BaseHTTPRequestHandler):
         # Provider activate
         if parsed.path.startswith("/api/providers/") and parsed.path.endswith("/activate"):
             provider_id = unquote(parsed.path.split("/")[3])
-            from provider_store import set_active_provider
             try:
-                set_active_provider(provider_id)
-                self.send_json({"ok": True, "active": provider_id})
+                self.send_json(activate_provider_payload(provider_id))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -533,9 +623,7 @@ class Handler(BaseHTTPRequestHandler):
         # Provider test
         if parsed.path.startswith("/api/providers/") and parsed.path.endswith("/test"):
             provider_id = unquote(parsed.path.split("/")[3])
-            from provider_store import test_provider_connection
-            result = test_provider_connection(provider_id)
-            self.send_json(_sanitize_provider_test_result(result, provider_id))
+            self.send_json(test_provider_payload(provider_id))
             return
 
         if parsed.path == "/api/storage/cleanup":
@@ -544,7 +632,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/files/inspect":
             body = self._read_json_body() or {}
-            self.send_json(_inspect_input_file(body))
+            self.send_json(
+                inspect_input_file(
+                    body, output_dir=OUTPUT_DIR, supported_extensions=SUPPORTED_MEDIA_EXTENSIONS
+                )
+            )
             return
 
         if parsed.path == "/api/runtime/download":
@@ -566,6 +658,16 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(_runtime_import_package(body))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
+            return
+
+        if parsed.path == "/api/runtime/diagnostic-bundle":
+            from diagnostic_bundle import DiagnosticBundleBusy
+            from runtime_api import create_runtime_diagnostic_bundle
+
+            try:
+                self.send_json(create_runtime_diagnostic_bundle(), status=201)
+            except DiagnosticBundleBusy as exc:
+                self.send_error_json(409, str(exc))
             return
 
         if parsed.path != "/api/jobs":
@@ -610,8 +712,28 @@ class Handler(BaseHTTPRequestHandler):
     def _log_request(self) -> None:
         print(f"[web] {self.command} {self.path}", flush=True)
 
+    def _authorize_request(self) -> bool:
+        failure = validate_request(self)
+        if failure is None:
+            return True
+        status, code, message = failure
+        self.send_error_json(status, message, code=code)
+        return False
+
     def _handle_exception(self, exc: Exception) -> None:
         import traceback
+
+        if isinstance(exc, ConfigCorruptError):
+            self.send_error_json(
+                409,
+                "The local configuration is corrupt. Review /api/config/status before recovery.",
+                code="config_corrupt",
+            )
+            return
+
+        if isinstance(exc, RequestBodyError):
+            self.send_error_json(400, str(exc), code="invalid_json")
+            return
 
         traceback.print_exc()
         try:
@@ -634,13 +756,20 @@ class Handler(BaseHTTPRequestHandler):
         return obj
 
     def _read_json_body(self) -> dict | None:
-        """Read a JSON request body with a loose Content-Type check."""
-        length = int(self.headers.get("Content-Length", "0"))
+        """Read an application/json request body after request validation."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise RequestBodyError("Invalid Content-Length.") from exc
         if length <= 0:
             return None
+        if length > MAX_JSON_BYTES:
+            raise RequestBodyError("JSON request body is too large.")
         try:
             raw = self.rfile.read(length)
             body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise RequestBodyError("JSON request body must be an object.")
             print(
                 "[web] payload "
                 + json.dumps(self._redact_payload(body), ensure_ascii=False),
@@ -649,7 +778,7 @@ class Handler(BaseHTTPRequestHandler):
             return body
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             print(f"[web] invalid JSON payload: {exc}", flush=True)
-            return None
+            raise RequestBodyError("Malformed JSON request body.") from exc
 
     def read_multipart_form(self) -> dict:
         content_type = self.headers.get("Content-Type", "")
@@ -688,17 +817,31 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, payload: dict, status: int = 200) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            self._send_security_headers()
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            # A local browser can close a tab or cancel polling while a response
+            # is being written. Treat that as a completed request lifecycle, not
+            # as an application failure that triggers a second response attempt.
+            return
 
-    def send_error_json(self, status: int, message: str) -> None:
-        self.send_json({"ok": False, "error": message}, status=status)
+    def send_error_json(self, status: int, message: str, code: str | None = None) -> None:
+        payload = {"ok": False, "error": message}
+        if code:
+            payload["code"] = code
+        self.send_json(payload, status=status)
+
+    def _send_security_headers(self) -> None:
+        for name, value in security_headers():
+            self.send_header(name, value)
 
     def send_file(self, path: Path, content_type: str, download_name: str | None = None) -> None:
         if not path.exists():
@@ -708,6 +851,7 @@ class Handler(BaseHTTPRequestHandler):
         data = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        self._send_security_headers()
         if path.resolve() == (WEB_ROOT / "index.html").resolve():
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
             self.send_header("Pragma", "no-cache")
@@ -775,6 +919,36 @@ def _parse_segment_routing_payload(body: dict) -> dict:
     }
 
 
+def _parse_asr_strategy_payload(body: dict, model: str) -> dict[str, str]:
+    from asr_strategy import validate_strategy_config
+
+    return validate_strategy_config(
+        {
+            "mode": body.get("asr_experiment_mode", "off"),
+            "candidate_id": body.get("asr_candidate_id", ""),
+        },
+        model=str(model or "large-v3"),
+    )
+
+
+def _parse_translation_reliability_payload(body: dict) -> dict:
+    if (
+        "translation_reliability_mode" not in body
+        and "translation_max_extra_requests" not in body
+    ):
+        return {}
+    from translation_reliability import normalize_reliability_config
+
+    normalized = normalize_reliability_config(
+        body.get("translation_reliability_mode", "off"),
+        max_extra_requests=body.get("translation_max_extra_requests", 12),
+    )
+    return {
+        "translation_reliability_mode": normalized["mode"],
+        "translation_max_extra_requests": normalized["max_extra_requests"],
+    }
+
+
 def _truthy(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -785,103 +959,9 @@ def _truthy(value: object) -> bool:
 
 def _effective_translation_config(query: dict | None = None) -> dict:
     """Resolve selected translation config without writing any local state."""
-    query = query or {}
-    provider_id = _first_query_value(query, "provider_id") or _first_query_value(query, "provider")
-    profile_id = _first_query_value(query, "language_profile_id") or _first_query_value(query, "language_profile")
-    warnings: list[str] = []
+    from provider_profile_api import effective_translation_config
 
-    provider_summary = {
-        "id": "",
-        "name": "",
-        "protocol": "",
-        "model": "",
-        "api_key_present": False,
-        "api_key_masked": "",
-        "status": "not_configured",
-    }
-    try:
-        from provider_store import get_active_provider, get_provider, mask_api_key
-
-        provider = get_provider(provider_id) if provider_id else get_active_provider()
-        if provider:
-            api_key = str(provider.get("api_key") or "")
-            provider_summary = {
-                "id": str(provider.get("id") or ""),
-                "name": str(provider.get("name") or provider.get("id") or ""),
-                "protocol": str(provider.get("protocol") or "openai-compatible"),
-                "model": str(provider.get("translation_model") or ""),
-                "api_key_present": bool(api_key),
-                "api_key_masked": mask_api_key(api_key) if api_key else "",
-                "status": "ok" if provider.get("enabled", True) else "disabled",
-            }
-            if not provider_summary["model"]:
-                warnings.append("Selected Provider has no translation model.")
-            if not api_key:
-                warnings.append("Selected Provider has no API key.")
-        else:
-            warnings.append("No Provider is configured for translation.")
-    except Exception as exc:
-        provider_summary["status"] = "error"
-        warnings.append(f"Provider preview failed: {exc}")
-
-    profile_summary = {
-        "id": "",
-        "name": "",
-        "type": "default",
-        "source_language": "auto",
-        "target_language": "zh-CN",
-        "style_present": False,
-        "glossary_count": 0,
-        "quality": {},
-        "quality_source": "default",
-        "status": "not_configured",
-    }
-    try:
-        from language_profile_store import (
-            get_active_language_profile,
-            get_language_profile,
-            list_language_profiles,
-            normalize_glossary,
-        )
-
-        profile = get_language_profile(profile_id) if profile_id else get_active_language_profile()
-        listed = {p.get("id"): p for p in list_language_profiles()}
-        if profile:
-            listed_profile = listed.get(profile.get("id"), profile)
-            glossary = normalize_glossary(profile.get("glossary", []))
-            is_builtin = bool(listed_profile.get("builtin", False))
-            profile_summary = {
-                "id": str(profile.get("id") or ""),
-                "name": str(profile.get("name") or profile.get("id") or ""),
-                "type": "builtin" if is_builtin else "local",
-                "source_language": str(profile.get("source_language") or "auto"),
-                "target_language": str(profile.get("target_language") or "zh-CN"),
-                "style_present": bool(str(profile.get("translation_style") or "").strip()),
-                "glossary_count": len(glossary),
-                "quality": profile.get("quality", {}) if isinstance(profile.get("quality"), dict) else {},
-                "quality_source": "builtin" if is_builtin else "local",
-                "status": "ok",
-            }
-        else:
-            warnings.append("No Language Profile is configured.")
-    except Exception as exc:
-        profile_summary["status"] = "error"
-        warnings.append(f"Language Profile preview failed: {exc}")
-
-    return {
-        "ok": True,
-        "provider": provider_summary,
-        "language_profile": profile_summary,
-        "prompt_behavior": {
-            "custom_prompt_overrides_profile_style": True,
-            "glossary_always_appended": True,
-        },
-        "cache_behavior": {
-            "key_includes_effective_prompt": True,
-            "note": "Translation cache entries vary by effective prompt; style or glossary changes create separate cache entries.",
-        },
-        "warnings": warnings,
-    }
+    return effective_translation_config(query)
 
 
 def _runtime_download_plan(components: list[str] | None = None) -> dict:
@@ -923,95 +1003,13 @@ def _format_bytes(size: int) -> str:
 
 
 def _asr_evidence_reports() -> dict:
-    reports: list[dict] = []
-    if ASR_EVIDENCE_DIR.exists():
-        for path in sorted(
-            ASR_EVIDENCE_DIR.glob("*.asr_evidence.json"),
-            key=lambda item: item.stat().st_mtime if item.exists() else 0,
-            reverse=True,
-        ):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not _is_asr_evidence_report(data):
-                continue
-            metadata = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
-            summary = data.get("summary", {}) if isinstance(data.get("summary"), dict) else {}
-            try:
-                stat = path.stat()
-            except OSError:
-                continue
-            reports.append({
-                "file": path.name,
-                "path": str(path.resolve()),
-                "bytes": stat.st_size,
-                "display_size": _format_bytes(stat.st_size),
-                "generated_at": data.get("generated_at", ""),
-                "input_name": metadata.get("input_name", ""),
-                "input_path": metadata.get("input_path", ""),
-                "model": metadata.get("model", ""),
-                "summary": {
-                    "mixed_language_likelihood": summary.get("mixed_language_likelihood", "none"),
-                    "dominant_language": summary.get("dominant_language", ""),
-                    "distinct_detected_languages": summary.get("distinct_detected_languages", []),
-                    "low_confidence_count": summary.get("low_confidence_count", 0),
-                    "failed_sample_count": summary.get("failed_sample_count", 0),
-                },
-            })
-    return {
-        "ok": True,
-        "directory": str(ASR_EVIDENCE_DIR.resolve()),
-        "reports": reports,
-        "count": len(reports),
-    }
+    """Compatibility wrapper for callers predating the API module split."""
+    return list_asr_evidence_reports(ASR_EVIDENCE_DIR, _format_bytes)
 
 
 def _asr_evidence_report(file_name: str) -> tuple[dict, int]:
-    path, error = _resolve_asr_evidence_report(file_name)
-    if path is None:
-        return {"ok": False, "error": error}, 404
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return {"ok": False, "error": f"Could not read ASR evidence report: {exc}"}, 400
-    if not _is_asr_evidence_report(data):
-        return {"ok": False, "error": "Invalid ASR evidence report."}, 400
-    return {"ok": True, "file": path.name, "report": data}, 200
-
-
-def _resolve_asr_evidence_report(file_name: str) -> tuple[Path | None, str]:
-    name = str(file_name or "").strip()
-    if not name:
-        return None, "Missing report file name"
-    if Path(name).is_absolute() or Path(name).name != name or "/" in name or "\\" in name:
-        return None, "Invalid report file name"
-    if not name.endswith(".asr_evidence.json"):
-        return None, "Unsupported ASR evidence report file"
-    try:
-        base = ASR_EVIDENCE_DIR.resolve()
-        path = (base / name).resolve()
-        if not path.is_relative_to(base):
-            return None, "Invalid report file name"
-        if not path.is_file() or path.stat().st_size <= 0:
-            return None, "ASR evidence report not found"
-    except OSError as exc:
-        return None, f"Could not resolve ASR evidence report: {exc}"
-    return path, ""
-
-
-def _is_asr_evidence_report(data: object) -> bool:
-    if not isinstance(data, dict):
-        return False
-    if data.get("report_type") != "mixed_language_asr_evidence":
-        return False
-    if not isinstance(data.get("metadata"), dict):
-        return False
-    if not isinstance(data.get("summary"), dict):
-        return False
-    if not isinstance(data.get("samples"), list):
-        return False
-    return True
+    """Compatibility wrapper for callers predating the API module split."""
+    return get_asr_evidence_report(ASR_EVIDENCE_DIR, file_name)
 
 
 def _content_type_for_artifact(path: Path) -> str:
@@ -1035,167 +1033,18 @@ def _sum_files(paths: list[Path]) -> tuple[int, int]:
 
 def _storage_status() -> dict:
     """Return lightweight project storage info without scanning model caches."""
-    audio_count, audio_size = _sum_files(list(WORK_DIR.glob("*.16k.wav")))
-    upload_count, upload_size = _sum_files([p for p in UPLOAD_DIR.iterdir()] if UPLOAD_DIR.exists() else [])
-    translation_cache = WORK_DIR / "translation-cache"
-    cache_files = list(translation_cache.glob("*.json")) if translation_cache.exists() else []
-    cache_count, cache_size = _sum_files(cache_files)
-    return {
-        "ok": True,
-        "work_audio": {
-            "path": str(WORK_DIR),
-            "count": audio_count,
-            "bytes": audio_size,
-            "display": _format_bytes(audio_size),
-        },
-        "uploads": {
-            "path": str(UPLOAD_DIR),
-            "count": upload_count,
-            "bytes": upload_size,
-            "display": _format_bytes(upload_size),
-        },
-        "translation_cache": {
-            "path": str(translation_cache),
-            "count": cache_count,
-            "bytes": cache_size,
-            "display": _format_bytes(cache_size),
-            "managed_by_cleanup": False,
-        },
-        "model_cache": {
-            "path": str(PROJECT_ROOT / ".cache" / "huggingface"),
-            "managed_by_cleanup": False,
-        },
-        "note": "Stopping the web service does not automatically delete caches.",
-    }
+    from storage_api import storage_status
+
+    return storage_status(project_root=PROJECT_ROOT, work_dir=WORK_DIR, upload_dir=UPLOAD_DIR)
 
 
 def _cleanup_transient_files() -> dict:
     """Delete only safe, reproducible intermediates inside the project."""
-    deleted: list[str] = []
-    errors: list[str] = []
-    targets: list[Path] = []
-    if WORK_DIR.exists():
-        targets.extend(WORK_DIR.glob("*.16k.wav"))
-    if UPLOAD_DIR.exists():
-        targets.extend(path for path in UPLOAD_DIR.iterdir() if path.is_file())
+    from storage_api import cleanup_transient_files
 
-    allowed_roots = [WORK_DIR.resolve(), UPLOAD_DIR.resolve()]
-    for target in targets:
-        try:
-            resolved = target.resolve()
-            if not any(resolved.is_relative_to(root) for root in allowed_roots):
-                errors.append(f"Skipped unexpected path: {target}")
-                continue
-            size = resolved.stat().st_size
-            resolved.unlink()
-            deleted.append(f"{target.name} ({_format_bytes(size)})")
-        except OSError as exc:
-            errors.append(f"{target}: {exc}")
-
-    status = _storage_status()
-    status.update({
-        "ok": not errors,
-        "deleted": deleted,
-        "errors": errors,
-    })
-    return status
-
-
-def _inspect_input_file(body: dict) -> dict:
-    """Inspect a local media path without reading, copying, or creating files."""
-    from subtitle_model import DEFAULT_ASS_STYLE_ID, normalize_subtitle_formats, plan_subtitle_outputs
-
-    path_text = str(body.get("path") or "").strip()
-    model = str(body.get("model") or "small").strip() or "small"
-    target_language = str(body.get("target_language") or "zh-CN").strip() or "zh-CN"
-    translation_mode = str(body.get("translation_mode") or "bilingual").strip()
-    subtitle_formats = normalize_subtitle_formats(body.get("subtitle_formats") or ["srt"])
-    ass_style_id = str(body.get("ass_style_id") or DEFAULT_ASS_STYLE_ID).strip() or DEFAULT_ASS_STYLE_ID
-    mode_tag = "translated" if translation_mode == "translated" else "bilingual"
-
-    if not path_text:
-        return {
-            "ok": False,
-            "error": "Enter a local file path.",
-            "path": "",
-            "exists": False,
-            "supported": False,
-        }
-
-    try:
-        input_path = Path(path_text).expanduser().resolve()
-    except OSError as exc:
-        return {
-            "ok": False,
-            "error": f"路径无法解析: {exc}",
-            "path": path_text,
-            "exists": False,
-            "supported": False,
-        }
-
-    suffix = input_path.suffix.lower()
-    exists = input_path.exists()
-    is_file = input_path.is_file() if exists else False
-    supported = suffix in SUPPORTED_MEDIA_EXTENSIONS
-    readable = bool(exists and is_file and os.access(input_path, os.R_OK))
-    size = 0
-    mtime = None
-    if exists and is_file:
-        try:
-            stat = input_path.stat()
-            size = stat.st_size
-            mtime = stat.st_mtime
-        except OSError:
-            readable = False
-
-    source_output = OUTPUT_DIR / f"{input_path.stem}.{model}.srt"
-    translated_output = OUTPUT_DIR / f"{input_path.stem}.{model}.{mode_tag}.{target_language}.srt"
-    output_plan = plan_subtitle_outputs(
-        output_root=OUTPUT_DIR,
-        stem=input_path.stem,
-        model=model,
-        target_language=target_language,
-        translation_mode=mode_tag,
-        formats=subtitle_formats,
-        ass_style_id=ass_style_id,
+    return cleanup_transient_files(
+        project_root=PROJECT_ROOT, work_dir=WORK_DIR, upload_dir=UPLOAD_DIR
     )
-    warnings: list[str] = []
-    if not exists:
-        warnings.append("File does not exist. Check that the path is complete.")
-    elif not is_file:
-        warnings.append("This path is not a file. Single-file processing needs a video or audio file.")
-    if exists and is_file and not supported:
-        warnings.append(f"Extension {suffix or '(none)'} is not supported.")
-    if exists and is_file and not readable:
-        warnings.append("The current web process may not have permission to read this file.")
-    if source_output.exists():
-        warnings.append("The expected source SRT already exists and may be overwritten.")
-    if translated_output.exists():
-        warnings.append("The expected translated SRT already exists and may be overwritten.")
-
-    return {
-        "ok": True,
-        "path": str(input_path),
-        "exists": exists,
-        "is_file": is_file,
-        "supported": supported,
-        "readable": readable,
-        "extension": suffix,
-        "bytes": size,
-        "display_size": _format_bytes(size),
-        "modified_at": mtime,
-        "model": model,
-        "target_language": target_language,
-        "translation_mode": mode_tag,
-        "source_output": str(source_output.resolve()),
-        "source_output_exists": source_output.exists(),
-        "translated_output": str(translated_output.resolve()),
-        "translated_output_exists": translated_output.exists(),
-        "subtitle_output_plan": output_plan,
-        "warnings": warnings,
-        "ready": bool(exists and is_file and supported and readable),
-    }
-
 
 
 if __name__ == "__main__":
