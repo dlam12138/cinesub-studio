@@ -143,7 +143,7 @@
 
 状态：`in_progress`
 
-2026-07-17 稳定化：暂停继续投入 ASR 与翻译质量候选，生产默认继续保持 `off`。当前工作转向 v0.6.1 外测基线、portable `.venv` 配置诊断、启动/断连稳定性、连续全量回归和 CPU/GPU 安装器复验；未完成的干净 Windows VM 与人工质量验收不因此视为通过。
+2026-07-17 稳定化：暂停继续投入 ASR 与翻译质量候选，生产默认继续保持 `off`。v0.6.1 已收拢 portable `.venv` 配置诊断、启动/断连稳定性和连续全量回归；Windows 发布进一步取消 CPU/GPU 双包，统一为内置 CPU 与 CUDA 运行时、启动后自动选择设备的单一离线安装器。未完成的干净 Windows VM 与人工质量验收不因此视为通过。
 
 2026-07-16 进展：已以默认 `off`、非默认 `preview` 实现自适应拆分恢复、阻断翻译修复、原子缓存/成品和 CLI/Profile/Web/Pipeline 接口。真实 LLM 固定 24 cues 两轮自动文本阻断门槛通过，但原片匿名 A/B 听审发现跨 cue 语义割裂和重复，人工结论为 `no_go`。因此不在 Web 高级设置和 Profile 编辑器公开开关，下一轮评估相邻源文+译文上下文与固定时间轴的小窗口联合重译。详见 `docs/translation_reliability_preview.md` 与 `acceptance/translation_reliability_preview.md`。
 

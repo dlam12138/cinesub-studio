@@ -4,7 +4,7 @@
 
 当前版本面向本机使用。它不要求修改系统 PATH，也不要求安装前端构建工具、npm、CDN 或浏览器插件。
 
-v0.6.1 Windows 外测版提供独立的 CPU/auto 与 GPU 安装包。两者都自带 portable Python 和 FFmpeg；GPU 包额外携带 CUDA 运行库，但仍要求兼容的 NVIDIA 驱动。安装包不包含 Whisper 模型，也不会静默下载模型。详见 [v0.6 Windows 外测说明](docs/v0_6_windows_external_test.md)。
+v0.6.1 Windows 外测版只提供一个完整离线安装包。安装包自带 portable Python、FFmpeg 和 CUDA 运行库；设备默认使用 `auto`，检测到兼容 NVIDIA 驱动时使用 GPU，否则自动回退 CPU。安装包不包含 Whisper 模型，也不会静默下载模型。详见 [v0.6 Windows 外测说明](docs/v0_6_windows_external_test.md)。
 
 ## 1. 选择运行方式
 
