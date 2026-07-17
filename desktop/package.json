@@ -1,7 +1,7 @@
 {
   "name": "cinesub-studio-desktop",
   "version": "0.6.1",
-  "cinesubBuildFlavor": "cpu",
+  "cinesubBuildFlavor": "unified",
   "private": true,
   "productName": "智译字幕工坊",
   "description": "Electron desktop shell for 智译字幕工坊 / CineSub Studio",

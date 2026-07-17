@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).parent.parent
 HTML = ROOT / "web" / "index.html"
 PACKAGE = ROOT / "desktop" / "package.json"
@@ -29,7 +28,7 @@ def _manifest_module():
 def test_stage2_package_metadata_and_brand_assets_are_configured():
     package = json.loads(_read(PACKAGE))
     assert package["version"] == "0.6.1"
-    assert package["cinesubBuildFlavor"] == "cpu"
+    assert package["cinesubBuildFlavor"] == "unified"
     assert package["build"]["win"]["icon"] == "build/icon.ico"
     assert "build/**/*" in package["build"]["files"]
     for relative in (
@@ -42,19 +41,18 @@ def test_stage2_package_metadata_and_brand_assets_are_configured():
         assert path.is_file() and path.stat().st_size > 0
 
 
-def test_build_script_has_explicit_flavors_and_isolated_outputs():
+def test_build_script_produces_one_unified_offline_installer():
     text = _read(BUILD_SCRIPT)
-    assert '[ValidateSet("cpu", "gpu")]' in text
-    assert '$Flavor = "cpu"' in text
-    assert '$requiresCuda = $Flavor -eq "gpu"' in text
-    assert '"release\\" + $Flavor' in text
+    assert '[ValidateSet("cpu", "gpu")]' not in text
+    assert "$Flavor = \"unified\"" in text
+    assert 'Join-Path $desktop "release\\unified"' in text
+    assert "windows-x64-setup" in text
     assert "CINESUB_BUILD_FLAVOR" in text
     assert "generate_release_manifest.py" in text
-    assert '$collectorArgs["RequireCuda"] = $true' in text
-    assert "RequireCuda" in text  # legacy compatibility
+    assert "& $runtimeCollector -RequireCuda" in text
 
 
-def test_release_manifest_hashes_artifacts_and_records_cpu_policy(tmp_path):
+def test_release_manifest_hashes_only_current_unified_installer(tmp_path):
     module = _manifest_module()
     output = tmp_path / "output"
     runtime = tmp_path / "runtime"
@@ -64,39 +62,58 @@ def test_release_manifest_hashes_artifacts_and_records_cpu_policy(tmp_path):
     (runtime / "tools" / "ffmpeg" / "bin").mkdir(parents=True)
     (runtime / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe").write_bytes(b"ffmpeg")
     (runtime / "tools" / "ffmpeg" / "bin" / "ffprobe.exe").write_bytes(b"ffprobe")
-    artifact = output / "CineSubStudio-0.6.0-windows-x64-cpu-setup.exe"
+    (runtime / "tools" / "cuda").mkdir(parents=True)
+    (runtime / "tools" / "cuda" / "cublas64_12.dll").write_bytes(b"cublas")
+    (runtime / "tools" / "cuda" / "cudnn64_9.dll").write_bytes(b"cudnn")
+    artifact = output / "CineSubStudio-0.6.0-windows-x64-setup.exe"
     artifact.write_bytes(b"installer")
-    (output / "CineSubStudio-0.5.0-windows-x64-cpu-setup.exe").write_bytes(b"stale")
+    (output / "CineSubStudio-0.5.0-windows-x64-setup.exe").write_bytes(b"stale")
+    (output / f"{artifact.name}.blockmap").write_bytes(b"blockmap")
+    (output / "builder-debug.yml").write_text("debug", encoding="utf-8")
 
     manifest = module.build_manifest(
         output_dir=output,
         runtime_dir=runtime,
         version="0.6.0",
-        flavor="cpu",
+        flavor="unified",
     )
 
-    assert manifest["build_flavor"] == "cpu"
-    assert manifest["components"]["cuda_runtime"] is False
+    assert manifest["build_flavor"] == "unified"
+    assert manifest["components"]["cuda_runtime"] is True
     assert manifest["components"]["nvidia_driver"] is False
     assert manifest["components"]["whisper_models"] is False
     assert [item["name"] for item in manifest["artifacts"]] == [artifact.name]
     assert manifest["artifacts"][0]["sha256"] == "9C0D294C05FC1D88D698034609BB81C0C69196327594E4C69D2915C80FD9850C"
 
 
-def test_release_manifest_enforces_flavor_cuda_boundary(tmp_path):
+def test_release_manifest_requires_complete_cuda_for_unified_build(tmp_path):
     module = _manifest_module()
     output = tmp_path / "output"
     runtime = tmp_path / "runtime"
     output.mkdir()
     runtime.mkdir()
-    (output / "setup.exe").write_bytes(b"installer")
+    (output / "CineSubStudio-0.6.0-windows-x64-setup.exe").write_bytes(b"installer")
 
-    with pytest.raises(RuntimeError, match="without staged CUDA"):
-        module.build_manifest(output_dir=output, runtime_dir=runtime, version="0.6.0", flavor="gpu")
+    with pytest.raises(RuntimeError, match="complete staged CUDA"):
+        module.build_manifest(
+            output_dir=output, runtime_dir=runtime, version="0.6.0", flavor="unified"
+        )
 
     (runtime / "tools" / "cuda").mkdir(parents=True)
-    with pytest.raises(RuntimeError, match="unexpectedly contains CUDA"):
-        module.build_manifest(output_dir=output, runtime_dir=runtime, version="0.6.0", flavor="cpu")
+    (runtime / "tools" / "cuda" / "cublas64_12.dll").write_bytes(b"cublas")
+    with pytest.raises(RuntimeError, match="complete staged CUDA"):
+        module.build_manifest(
+            output_dir=output, runtime_dir=runtime, version="0.6.0", flavor="unified"
+        )
+
+    (runtime / "tools" / "cuda" / "cudnn64_9.dll").write_bytes(b"cudnn")
+    manifest = module.build_manifest(
+        output_dir=output, runtime_dir=runtime, version="0.6.0", flavor="unified"
+    )
+    assert manifest["components"]["cuda_runtime"] is True
+
+    with pytest.raises(RuntimeError, match="Unsupported release flavor"):
+        module.build_manifest(output_dir=output, runtime_dir=runtime, version="0.6.0", flavor="gpu")
 
 
 def test_stage2_ui_has_dynamic_build_identity_and_readiness_flow():

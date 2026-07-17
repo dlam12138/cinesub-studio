@@ -75,7 +75,7 @@ function resolvePackagedPaths() {
   const env = {
     CINESUB_PACKAGED_ROOT: resourcesApp,
     CINESUB_USER_DATA_ROOT: userDataRoot,
-    CINESUB_BUILD_FLAVOR: process.env.CINESUB_BUILD_FLAVOR || packageMetadata.cinesubBuildFlavor || "cpu",
+    CINESUB_BUILD_FLAVOR: process.env.CINESUB_BUILD_FLAVOR || packageMetadata.cinesubBuildFlavor || "unified",
     CINESUB_FFMPEG: path.join(ffmpegBin, "ffmpeg.exe"),
     CINESUB_FFPROBE: path.join(ffmpegBin, "ffprobe.exe"),
   };
@@ -322,7 +322,7 @@ async function main() {
   let launchEnv = {
     ...process.env,
     CINESUB_BUILD_FLAVOR: app.isPackaged
-      ? (process.env.CINESUB_BUILD_FLAVOR || packageMetadata.cinesubBuildFlavor || "cpu")
+      ? (process.env.CINESUB_BUILD_FLAVOR || packageMetadata.cinesubBuildFlavor || "unified")
       : "development",
     PYTHONUTF8: "1",
     PYTHONIOENCODING: "utf-8"

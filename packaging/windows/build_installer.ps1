@@ -9,22 +9,19 @@
 #   - tools/python complete portable Python 3.12 runtime
 #   - Project .venv with all Python dependencies (dependency source only)
 #   - tools/ffmpeg/bin/ffmpeg.exe and ffprobe.exe
-#   - Optional tools/cuda/; required only with -RequireCuda
+#   - Complete tools/cuda/ runtime; bundled for automatic GPU/CPU selection
 #
 # Usage:
 #   .\packaging\windows\build_installer.ps1
 #   .\packaging\windows\build_installer.ps1 -SkipPreCheck
 #   .\packaging\windows\build_installer.ps1 -OnlyUnpacked
-#   .\packaging\windows\build_installer.ps1 -Flavor cpu
-#   .\packaging\windows\build_installer.ps1 -Flavor gpu
-#   .\packaging\windows\build_installer.ps1 -RequireCuda -OutputDir artifacts\gpu
+#   .\packaging\windows\build_installer.ps1
+#   .\packaging\windows\build_installer.ps1 -OnlyUnpacked
+#   .\packaging\windows\build_installer.ps1 -OutputDir artifacts\unified
 
 param(
     [switch]$SkipPreCheck,
     [switch]$OnlyUnpacked,
-    [switch]$RequireCuda,
-    [ValidateSet("cpu", "gpu")]
-    [string]$Flavor = "cpu",
     [string]$OutputDir = ""
 )
 
@@ -36,10 +33,7 @@ if (-not (Test-Path -LiteralPath $VersionPython)) { throw "Missing project Pytho
 & $VersionPython -B (Join-Path $root "src\tools\versioning.py") check
 if ($LASTEXITCODE -ne 0) { throw "Release version consumers do not match VERSION." }
 
-if ($RequireCuda) {
-    $Flavor = "gpu"
-}
-$requiresCuda = $Flavor -eq "gpu"
+$Flavor = "unified"
 
 function Write-Info($msg) { Write-Host "[build] $msg" -ForegroundColor Cyan }
 function Write-Warn($msg) { Write-Host "[build] $msg" -ForegroundColor Yellow }
@@ -80,18 +74,17 @@ function Test-Prereqs {
         $ok = $false
     }
 
-    # CUDA is optional for auto/CPU builds and strict for an explicit GPU build.
-    if ($requiresCuda) {
-        $cublas = Join-Path $root "tools\cuda\cublas64_12.dll"
-        $cudnn = Get-ChildItem -Path (Join-Path $root "tools\cuda") -Filter "cudnn*_9.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not (Test-Path $cublas)) {
-            Write-Err "CUDA cublas64_12.dll not found in tools/cuda/."
-            $ok = $false
-        }
-        if (-not $cudnn) {
-            Write-Err "CUDA cudnn*_9.dll not found in tools/cuda/."
-            $ok = $false
-        }
+    # The unified offline installer always carries CUDA and falls back to CPU
+    # at runtime when a compatible NVIDIA driver is unavailable.
+    $cublas = Join-Path $root "tools\cuda\cublas64_12.dll"
+    $cudnn = Get-ChildItem -Path (Join-Path $root "tools\cuda") -Filter "cudnn*_9.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not (Test-Path $cublas)) {
+        Write-Err "CUDA cublas64_12.dll not found in tools/cuda/."
+        $ok = $false
+    }
+    if (-not $cudnn) {
+        Write-Err "CUDA cudnn*_9.dll not found in tools/cuda/."
+        $ok = $false
     }
 
     # faster-whisper / ctranslate2 importability
@@ -100,7 +93,7 @@ function Test-Prereqs {
         & $venvPython -B -c "import faster_whisper, ctranslate2" 2>$null
         if ($LASTEXITCODE -ne 0) { throw }
     } catch {
-        Write-Warn "faster-whisper or ctranslate2 may not be importable in .venv. GPU runtime might fail."
+        Write-Warn "faster-whisper or ctranslate2 may not be importable in .venv. Unified runtime validation might fail."
     }
 
     return $ok
@@ -118,9 +111,7 @@ try {
     }
 
     $runtimeCollector = Join-Path $PSScriptRoot "collect_runtime.ps1"
-    $collectorArgs = @{}
-    if ($requiresCuda) { $collectorArgs["RequireCuda"] = $true }
-    & $runtimeCollector @collectorArgs
+    & $runtimeCollector -RequireCuda
     if ($LASTEXITCODE -ne 0) {
         throw "Runtime collector failed with exit code $LASTEXITCODE"
     }
@@ -130,12 +121,12 @@ try {
     } elseif ($OutputDir) {
         [System.IO.Path]::GetFullPath((Join-Path $root $OutputDir))
     } else {
-        Join-Path $desktop ("release\" + $Flavor)
+        Join-Path $desktop "release\unified"
     }
 
     $package = Get-Content -Raw -Encoding UTF8 (Join-Path $desktop "package.json") | ConvertFrom-Json
     $version = [string]$package.version
-    $artifactName = "CineSubStudio-$version-windows-x64-$Flavor-setup." + '${ext}'
+    $artifactName = "CineSubStudio-$version-windows-x64-setup." + '${ext}'
     $env:CINESUB_BUILD_FLAVOR = $Flavor
 
     Push-Location $desktop

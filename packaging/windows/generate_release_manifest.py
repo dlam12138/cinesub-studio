@@ -23,15 +23,11 @@ def build_manifest(*, output_dir: Path, runtime_dir: Path, version: str, flavor:
     output_dir = output_dir.resolve()
     runtime_dir = runtime_dir.resolve()
     artifacts = []
-    current_installer_prefix = f"CineSubStudio-{version}-windows-x64-{flavor}-"
+    current_installer_name = f"CineSubStudio-{version}-windows-x64-setup.exe"
     for path in sorted(output_dir.iterdir(), key=lambda item: item.name.lower()):
         if path.name == "release_manifest.json":
             continue
-        if path.name.startswith("CineSubStudio-") and not path.name.startswith(
-            current_installer_prefix
-        ):
-            continue
-        if path.is_file():
+        if path.is_file() and path.name == current_installer_name:
             artifacts.append({
                 "name": path.name,
                 "type": "file",
@@ -49,11 +45,16 @@ def build_manifest(*, output_dir: Path, runtime_dir: Path, version: str, flavor:
     cuda_root = runtime_dir / "tools" / "cuda"
     ffmpeg_root = runtime_dir / "tools" / "ffmpeg" / "bin"
     python_root = runtime_dir / "python"
-    cuda_bundled = cuda_root.is_dir()
-    if flavor == "gpu" and not cuda_bundled:
-        raise RuntimeError("GPU release manifest cannot be generated without staged CUDA runtime.")
-    if flavor == "cpu" and cuda_bundled:
-        raise RuntimeError("CPU release staging unexpectedly contains CUDA runtime files.")
+    cuda_bundled = (
+        (cuda_root / "cublas64_12.dll").is_file()
+        and bool(list(cuda_root.glob("cudnn*_9.dll")))
+    )
+    if flavor != "unified":
+        raise RuntimeError(f"Unsupported release flavor: {flavor}")
+    if not cuda_bundled:
+        raise RuntimeError(
+            "Unified release manifest cannot be generated without a complete staged CUDA runtime."
+        )
     if not artifacts:
         raise RuntimeError(f"No build artifacts found under: {output_dir}")
 
@@ -81,7 +82,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--version", required=True)
-    parser.add_argument("--flavor", choices=("cpu", "gpu"), required=True)
+    parser.add_argument("--flavor", choices=("unified",), required=True)
     args = parser.parse_args()
 
     manifest = build_manifest(

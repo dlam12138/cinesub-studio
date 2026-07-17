@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import provider_store
+import pytest
 import runtime_api
 import runtime_env
 
@@ -82,6 +83,32 @@ def _patch_runtime(monkeypatch, tmp_path, *, python_minor=13):
 
 def _item(payload, item_id):
     return next(item for item in payload["diagnostic_items"] if item["id"] == item_id)
+
+
+def test_auto_device_prefers_cuda_and_falls_back_to_cpu(monkeypatch):
+    monkeypatch.setattr(runtime_env, "runtime_diagnostics", lambda: {"cuda_ready": True})
+    assert runtime_env.choose_device("auto") == ("cuda", [])
+
+    monkeypatch.setattr(
+        runtime_env,
+        "runtime_diagnostics",
+        lambda: {"cuda_ready": False, "cuda_messages": ["nvidia-smi not found"]},
+    )
+    device, warnings = runtime_env.choose_device("auto")
+    assert device == "cpu"
+    assert warnings == [
+        "CUDA unavailable, falling back to CPU: nvidia-smi not found"
+    ]
+
+
+def test_explicit_cuda_fails_when_runtime_is_not_ready(monkeypatch):
+    monkeypatch.setattr(
+        runtime_env,
+        "runtime_diagnostics",
+        lambda: {"cuda_ready": False, "cuda_messages": ["no compatible driver"]},
+    )
+    with pytest.raises(RuntimeError, match="CUDA was requested"):
+        runtime_env.choose_device("cuda")
 
 
 def test_runtime_diagnostics_preserves_old_fields_and_adds_user_readable_items(monkeypatch, tmp_path):

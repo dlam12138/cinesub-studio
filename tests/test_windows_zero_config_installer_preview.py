@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).parent.parent
 DESKTOP = ROOT / "desktop"
 PACKAGE_JSON = DESKTOP / "package.json"
@@ -163,11 +162,15 @@ def test_packaging_scripts_exist():
     assert PREPARE_RUNTIME.exists()
 
 
-def test_build_uses_output_dir_and_optional_cuda_policy():
+def test_build_uses_output_dir_and_unified_cuda_policy():
     text = _read(BUILD_SCRIPT)
     assert "OutputDir" in text
     assert "config.directories.output" in text
-    assert "RequireCuda" in text
+    assert "& $runtimeCollector -RequireCuda" in text
+    assert '$Flavor = "unified"' in text
+    assert "windows-x64-setup" in text
+    assert "Flavor cpu" not in text
+    assert "Flavor gpu" not in text
     assert "collect_runtime.ps1" in text
     assert "versioning.py" in text
     assert "Release version consumers do not match VERSION" in text

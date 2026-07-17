@@ -32,14 +32,14 @@ def test_source_app_info_is_explicitly_development(monkeypatch, tmp_path):
     }
 
 
-def test_packaged_gpu_info_uses_explicit_environment(monkeypatch, tmp_path):
+def test_packaged_unified_info_uses_explicit_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("CINESUB_APP_VERSION", "0.6.1")
-    monkeypatch.setenv("CINESUB_BUILD_FLAVOR", "gpu")
+    monkeypatch.setenv("CINESUB_BUILD_FLAVOR", "unified")
 
     info = get_app_info(_paths(tmp_path, "packaged"))
 
     assert info["version"] == "0.6.1"
-    assert info["build_flavor"] == "gpu"
+    assert info["build_flavor"] == "unified"
     assert info["packaged"] is True
     assert info["cuda_runtime_bundled"] is True
     assert set(info) == {
@@ -56,11 +56,12 @@ def test_invalid_flavor_falls_back_without_probing_hardware(monkeypatch, tmp_pat
     monkeypatch.setenv("CINESUB_BUILD_FLAVOR", "cuda-auto-detected-secret-path")
 
     assert get_app_info(_paths(tmp_path, "source"))["build_flavor"] == "development"
-    assert get_app_info(_paths(tmp_path, "packaged"))["build_flavor"] == "cpu"
+    assert get_app_info(_paths(tmp_path, "packaged"))["build_flavor"] == "unified"
 
 
 def test_web_server_exposes_read_only_app_info_route():
     import inspect
+
     import web_server
 
     source = inspect.getsource(web_server.Handler._do_GET_impl)
