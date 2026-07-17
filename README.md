@@ -4,6 +4,8 @@
 
 当前版本面向本机使用。它不要求修改系统 PATH，也不要求安装前端构建工具、npm、CDN 或浏览器插件。
 
+v0.6.1 Windows 外测版提供独立的 CPU/auto 与 GPU 安装包。两者都自带 portable Python 和 FFmpeg；GPU 包额外携带 CUDA 运行库，但仍要求兼容的 NVIDIA 驱动。安装包不包含 Whisper 模型，也不会静默下载模型。详见 [v0.6 Windows 外测说明](docs/v0_6_windows_external_test.md)。
+
 ## 1. 选择运行方式
 
 智译字幕工坊 / CineSub Studio 当前支持两种运行方式。Portable RC 面向试用交付，源码开发版面向继续开发和本地调试。
@@ -138,6 +140,8 @@ input/
 
 同一时间只允许一个后台流水线任务运行。如果提示已有任务运行，等待完成后再重试，或查看“任务状态”和“操作日志”。
 
+批量工作区默认使用中文控制台：任务行只保留状态、阶段、进度与关键告警，点击任务或按 Enter 可打开详情。桌面端使用右侧详情抽屉，窄屏使用全屏详情层；已生成的 SRT 可在详情中分页只读预览。顶部语言按钮目前仅启用中文，英文入口用于后续完整本地化，不会切换到未完成的混合语言界面。
+
 ## 7. 查看状态和复核
 
 处理过程中可以查看：
@@ -160,6 +164,10 @@ output/reports/     quality_report.json 和 review_needed.srt
 ```
 
 Web 会在任务产物区域显示可下载链接。只有项目 `output/` 下存在且非空的产物可以通过 Web 下载；外部路径只显示为可复制路径。
+
+### OCR 弱标注对照（高级离线工具）
+
+如果视频带有硬字幕，可使用独立 CLI 把 OCR 双语字幕与 ASR/译文进行离线对照，生成差异报告和候选初筛。该流程默认不访问网络、不覆盖字幕，也不会把 OCR 当成人工金标。Manifest、可选 LLM 裁判和结果解释见 [`docs/ocr_weak_evidence_evaluation.md`](docs/ocr_weak_evidence_evaluation.md)。
 
 ## 9. 常见问题
 

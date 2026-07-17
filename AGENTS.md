@@ -16,10 +16,12 @@
 - `src/web/web_server.py`：本地 Web 后端，处理任务、下载、Provider、Language Profile、Pipeline、运行环境 API。
 - `src/web/runtime_api.py`：运行环境 Web API 的薄模块，转调 `runtime_env.py`。
 - `src/web/pipeline_api.py`：Pipeline Web API 辅助模块，负责只读状态、日志、后台任务启动和子进程环境。
+- `src/web/subtitle_preview_api.py`：任务产物 SRT 的只读分页预览；只解析任务元数据指向的项目 `output/` 文件，不接受任意路径。
 - `src/tools/ffmpeg_locator.py`：唯一 FFmpeg 查找入口。
 - `src/tools/runtime_paths.py`：源码布局 / 未来 release 布局的运行根、应用根、源码根、runtime 根解析入口；导入不得有副作用。
 - `src/tools/runtime_env.py`：统一运行环境管理，检测 Python、FFmpeg、CUDA、wheelhouse、模型，处理离线包导入和环境下载计划。
 - `src/tools/download_ffmpeg.py`：FFmpeg 下载兜底工具，写入 `tools/ffmpeg/bin/`。
+- `src/tools/ocr_evidence_compare.py`：硬字幕 OCR、ASR 与译文的离线弱证据对照；只产生 disagreement/coverage 和候选初筛，不把 OCR 当金标。
 
 入口脚本：
 
