@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -67,6 +68,8 @@ def test_release_manifest_hashes_only_current_unified_installer(tmp_path):
     (runtime / "tools" / "cuda" / "cudnn64_9.dll").write_bytes(b"cudnn")
     artifact = output / "CineSubStudio-0.6.0-windows-x64-setup.exe"
     artifact.write_bytes(b"installer")
+    portable = output / "CineSubStudio-0.6.0-windows-x64-portable.zip"
+    portable.write_bytes(b"portable")
     (output / "CineSubStudio-0.5.0-windows-x64-setup.exe").write_bytes(b"stale")
     (output / f"{artifact.name}.blockmap").write_bytes(b"blockmap")
     (output / "builder-debug.yml").write_text("debug", encoding="utf-8")
@@ -82,8 +85,13 @@ def test_release_manifest_hashes_only_current_unified_installer(tmp_path):
     assert manifest["components"]["cuda_runtime"] is True
     assert manifest["components"]["nvidia_driver"] is False
     assert manifest["components"]["whisper_models"] is False
-    assert [item["name"] for item in manifest["artifacts"]] == [artifact.name]
-    assert manifest["artifacts"][0]["sha256"] == "9C0D294C05FC1D88D698034609BB81C0C69196327594E4C69D2915C80FD9850C"
+    assert [item["name"] for item in manifest["artifacts"]] == [
+        portable.name,
+        artifact.name,
+    ]
+    hashes = {item["name"]: item["sha256"] for item in manifest["artifacts"]}
+    assert hashes[artifact.name] == "9C0D294C05FC1D88D698034609BB81C0C69196327594E4C69D2915C80FD9850C"
+    assert hashes[portable.name] == hashlib.sha256(b"portable").hexdigest().upper()
 
 
 def test_release_manifest_requires_complete_cuda_for_unified_build(tmp_path):

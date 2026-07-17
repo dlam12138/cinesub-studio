@@ -24,10 +24,14 @@ def build_manifest(*, output_dir: Path, runtime_dir: Path, version: str, flavor:
     runtime_dir = runtime_dir.resolve()
     artifacts = []
     current_installer_name = f"CineSubStudio-{version}-windows-x64-setup.exe"
+    current_portable_name = f"CineSubStudio-{version}-windows-x64-portable.zip"
     for path in sorted(output_dir.iterdir(), key=lambda item: item.name.lower()):
         if path.name == "release_manifest.json":
             continue
-        if path.is_file() and path.name == current_installer_name:
+        if path.is_file() and path.name in {
+            current_installer_name,
+            current_portable_name,
+        }:
             artifacts.append({
                 "name": path.name,
                 "type": "file",
