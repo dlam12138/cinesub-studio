@@ -26,13 +26,20 @@
 | --- | --- | ---: | --- | --- |
 | Unified auto | `desktop/release/unified/CineSubStudio-0.6.1-windows-x64-setup.exe` | `1266475908` | `DA8C749C44369DB6CEC96A53643E3B9376296DD004169611129272D96875C70C` | present |
 
-- v0.6.1 最终只交付一个 `unified` 安装器，不再要求测试者选择 CPU 或 GPU flavor。
+免安装交付：
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `desktop/release/unified/CineSubStudio-0.6.1-windows-x64-portable.zip` | `1629355270` | `483E35CAF092869A2C16D5F6157CCB37127D971421948914F4F1D3D93D9B7D79` |
+
+- v0.6.1 最终只使用一个 `unified` 运行时，不再要求测试者选择 CPU 或 GPU flavor；安装器和 portable ZIP 的运行能力相同。
 - Manifest 为 schema 1、version `0.6.1`、`build_flavor=unified`，携带 portable Python、FFmpeg/FFprobe 和 CUDA 运行库，不携带模型或 NVIDIA 驱动。
-- Manifest 最终只登记当前统一安装器；blockmap、builder debug、`win-unpacked` 和旧双 flavor 安装器不作为交付物保留。
+- Manifest 最终只登记当前统一安装器和 portable ZIP；blockmap、builder debug、`win-unpacked` 和旧双 flavor 安装器不作为交付物保留。
 - `win-unpacked` 后端的 homepage、diagnostics、app-info 均返回 200，报告 `runtime_layout=packaged`、`python_source=packaged-python`、`build_flavor=unified` 和 `cuda_runtime_bundled=true`。
 - 当前 NVIDIA 环境报告 `cuda_ready=true`、`recommended_device=cuda`。
 - 在 packaged 子进程 PATH 中屏蔽 `nvidia-smi` 后，CUDA DLL 仍可检测，但 diagnostics 报告 `cuda_ready=false`、`recommended_device=cpu`、`recommended_compute_type=int8`，原因是 `nvidia-smi not found`；首页和 diagnostics 仍返回 200。
 - packaged 后端退出后端口关闭，没有观察到遗留后端进程。
+- portable ZIP 在全新目录解压后，根目录存在 `CineSubStudio.exe`；启动真实 Electron 程序后 homepage、diagnostics、app-info 均返回 200，关闭窗口后端口关闭且无相关进程残留。
 
 短样本：`tests/e2e_samples/fr_short/34584660077-1-192.mp4`，现有本地 `small` 模型，强制法语，不启用翻译。
 
