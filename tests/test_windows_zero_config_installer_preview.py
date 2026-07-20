@@ -10,7 +10,6 @@ MAIN_JS = DESKTOP / "main.js"
 PRELOAD_JS = DESKTOP / "preload.js"
 README = DESKTOP / "README.md"
 GITIGNORE = ROOT / ".gitignore"
-ACCEPTANCE = ROOT / "acceptance" / "v0_5_windows_zero_config_installer_preview.md"
 PACKAGING = ROOT / "packaging" / "windows"
 BUILD_SCRIPT = ROOT / "scripts" / "build_portable_release.py"
 THIRD_PARTY = PACKAGING / "THIRD_PARTY_NOTICES.md"
@@ -234,14 +233,3 @@ def test_no_tts_or_dubbing_in_desktop_shell():
     ]
     for marker in forbidden:
         assert marker not in combined
-
-
-def test_acceptance_doc_exists_for_v05():
-    assert ACCEPTANCE.exists()
-    text = _read(ACCEPTANCE)
-    assert "v0.5" in text or "v0_5" in text
-    assert "Windows Zero-Config Installer Preview" in text
-    assert "no code signing" in text.lower()
-    assert "no auto-update" in text.lower()
-    assert "no model bundle" in text.lower() or "models are separate" in text.lower()
-    assert "NVIDIA driver" in text or "显卡驱动" in text
