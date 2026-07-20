@@ -18,8 +18,35 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config" / "language_profiles.local.json"
+from encoding_utils import read_json
+from runtime_paths import resolve_runtime_paths
+from config_recovery import ConfigCorruptError
+
+
+def _resolve_language_profile_config_path(anchor: Path | str | None = None) -> tuple[Path, Path]:
+    paths = resolve_runtime_paths(anchor or Path(__file__).resolve())
+    return paths.project_root, paths.config_root / "language_profiles.local.json"
+
+
+PROJECT_ROOT, CONFIG_PATH = _resolve_language_profile_config_path()
+DEFAULT_SUBTITLE_STYLE: dict = {
+    "formats": ["srt"],
+    "ass_style_id": "clean-cn",
+    "enabled": False,
+    "note": "ASS output is reserved for a future version.",
+}
+SECRET_FIELD_MARKERS = (
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "client_secret",
+    "authorization",
+    "password",
+    "bearer",
+)
 
 _cache: dict | None = None
 _cache_lock = threading.Lock()
@@ -35,6 +62,7 @@ BUILTIN_PROFILES: list[dict] = [
         "name": "自动识别语言",
         "description": "未知语言影片默认模式。由 Whisper 自动检测源语言，根据 language_probability 给出 warning/error。",
         "builtin": True,
+        "asr_mode": "auto",
         "source_language": "auto",
         "target_language": "zh-CN",
         "asr": {
@@ -68,6 +96,7 @@ BUILTIN_PROFILES: list[dict] = [
         "name": "法语电影",
         "description": "法语电影、法语访谈、法语剧情片。强制法语识别，启用原文校对和译文润色。",
         "builtin": True,
+        "asr_mode": "fixed",
         "source_language": "fr",
         "target_language": "zh-CN",
         "asr": {
@@ -121,6 +150,7 @@ BUILTIN_PROFILES: list[dict] = [
         "name": "欧洲语种通用",
         "description": "欧洲语种通用影片。涵盖西班牙语、意大利语、德语、葡萄牙语、荷兰语、瑞典语、波兰语、捷克语等。启用原文校对和译文润色。",
         "builtin": True,
+        "asr_mode": "auto",
         "source_language": "auto",
         "target_language": "zh-CN",
         "asr": {
@@ -178,18 +208,17 @@ def _load_raw() -> dict:
             _cache_mtime = 0.0
             return _cache
         try:
-            raw = CONFIG_PATH.read_text(encoding="utf-8")
-            data = json.loads(raw)
+            data = read_json(CONFIG_PATH)
             data.setdefault("version", 1)
             data.setdefault("active", "auto-detect")
             data.setdefault("profiles", [])
             _cache = data
             _cache_mtime = CONFIG_PATH.stat().st_mtime
             return _cache
-        except (OSError, json.JSONDecodeError, ValueError):
-            _cache = dict(DEFAULT_EMPTY_CONFIG)
+        except (OSError, json.JSONDecodeError, UnicodeError, ValueError, TypeError, AttributeError) as exc:
+            _cache = None
             _cache_mtime = 0.0
-            return _cache
+            raise ConfigCorruptError("language_profiles") from exc
 
 
 def _save_raw(data: dict) -> None:
@@ -219,6 +248,48 @@ def _clear_cache() -> None:
         _cache_mtime = 0.0
 
 
+def _is_secret_field(key: object) -> bool:
+    lowered = str(key).lower()
+    return any(marker in lowered for marker in SECRET_FIELD_MARKERS)
+
+
+def remove_secret_fields(value):
+    """Return a copy with provider/API secret-looking fields removed."""
+    if isinstance(value, dict):
+        clean = {}
+        for key, item in value.items():
+            if _is_secret_field(key):
+                continue
+            clean[key] = remove_secret_fields(item)
+        return clean
+    if isinstance(value, list):
+        return [remove_secret_fields(item) for item in value]
+    return value
+
+
+def normalize_glossary(raw) -> list[dict]:
+    """Normalize profile glossary rows and drop incomplete entries."""
+    if not isinstance(raw, list):
+        return []
+
+    result: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        source = str(entry.get("source") or "").strip()
+        target = str(entry.get("target") or "").strip()
+        note = str(entry.get("note") or "").strip()
+        if not source or not target:
+            continue
+        key = (source, target)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"source": source, "target": target, "note": note})
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 查询 API
 # ═══════════════════════════════════════════════════════════════════════════
@@ -227,42 +298,116 @@ def _merge_with_defaults(local_profiles: list[dict]) -> list[dict]:
     """合并内置默认和本地配置。本地优先（相同 id 则覆盖内置）。"""
     merged: dict[str, dict] = {}
     for bp in BUILTIN_PROFILES:
-        merged[bp["id"]] = deepcopy(bp)
+        merged[bp["id"]] = _with_profile_defaults(deepcopy(bp))
     for lp in local_profiles:
         pid = lp.get("id", "")
         if not pid:
             continue
-        copy = deepcopy(lp)
+        copy = remove_secret_fields(deepcopy(lp))
         copy["builtin"] = merged[pid]["builtin"] if pid in merged else False
-        merged[pid] = copy
+        merged[pid] = _with_profile_defaults(copy)
     return sorted(merged.values(), key=lambda p: (not p.get("builtin", False), p.get("id", "")))
+
+
+def _with_subtitle_style(profile: dict) -> dict:
+    style = deepcopy(DEFAULT_SUBTITLE_STYLE)
+    incoming = profile.get("subtitle_style")
+    if isinstance(incoming, dict):
+        style.update(incoming)
+    formats = style.get("formats")
+    if isinstance(formats, str):
+        formats = [item.strip() for item in formats.split(",") if item.strip()]
+    if not isinstance(formats, list) or not formats:
+        formats = ["srt"]
+    if "srt" not in formats:
+        formats.insert(0, "srt")
+    style["formats"] = formats
+    style["enabled"] = False
+    profile["subtitle_style"] = style
+    return profile
+
+
+def _with_profile_defaults(profile: dict) -> dict:
+    profile = remove_secret_fields(profile)
+    profile = _with_subtitle_style(profile)
+    profile["glossary"] = normalize_glossary(profile.get("glossary", []))
+    profile["asr"] = _normalize_asr_config(profile.get("asr"))
+    source_language = str(profile.get("source_language") or "").strip()
+    legacy_language = profile["asr"].get("language") or (
+        source_language if source_language and source_language != "auto" else None
+    )
+    from asr_runtime import normalize_asr_request
+
+    mode, language = normalize_asr_request(
+        profile.get("asr_mode") or ("fixed" if legacy_language else "auto"),
+        legacy_language,
+        reject_conflict=False,
+    )
+    profile["asr_mode"] = mode
+    profile["source_language"] = language if mode == "fixed" else "auto"
+    profile["asr"]["language"] = language
+    profile["translation_reliability"] = _normalize_translation_reliability(
+        profile.get("translation_reliability")
+    )
+    profile["translation_strategy"] = _normalize_translation_strategy(
+        profile.get("translation_strategy")
+    )
+    return profile
+
+
+def _normalize_asr_config(value: object) -> dict:
+    data = deepcopy(value) if isinstance(value, dict) else {}
+    data.pop("recognizer", None)
+    data.pop("aligner", None)
+    return data
+
+
+def _normalize_translation_reliability(value: object) -> dict:
+    from translation_reliability import normalize_reliability_config
+
+    return normalize_reliability_config(value)
+
+
+def _normalize_translation_strategy(value: object) -> dict:
+    from translation_strategy import normalize_translation_strategy
+
+    return normalize_translation_strategy(value)
 
 
 def list_language_profiles() -> list[dict]:
     """返回所有 language profiles（合并默认 + 本地）。"""
-    data = _load_raw()
+    try:
+        data = _load_raw()
+    except ConfigCorruptError:
+        return _merge_with_defaults([])
     local = data.get("profiles", [])
     return _merge_with_defaults(local)
 
 
 def get_language_profile(profile_id: str) -> dict | None:
     """获取单个 language profile。先查本地，再查内置。"""
-    data = _load_raw()
+    try:
+        data = _load_raw()
+    except ConfigCorruptError:
+        data = dict(DEFAULT_EMPTY_CONFIG)
     for p in data.get("profiles", []):
         if p.get("id") == profile_id:
-            return deepcopy(p)
+            return _with_profile_defaults(deepcopy(p))
     for bp in BUILTIN_PROFILES:
         if bp["id"] == profile_id:
-            return deepcopy(bp)
+            return _with_profile_defaults(deepcopy(bp))
     return None
 
 
 def get_active_language_profile() -> dict:
     """获取当前 active language profile。默认返回 auto-detect。"""
-    data = _load_raw()
+    try:
+        data = _load_raw()
+    except ConfigCorruptError:
+        data = dict(DEFAULT_EMPTY_CONFIG)
     active_id = data.get("active", "auto-detect") or "auto-detect"
     profile = get_language_profile(active_id)
-    return profile if profile else deepcopy(BUILTIN_PROFILES[0])
+    return profile if profile else _with_profile_defaults(deepcopy(BUILTIN_PROFILES[0]))
 
 
 def set_active_language_profile(profile_id: str) -> None:
@@ -281,6 +426,7 @@ def set_active_language_profile(profile_id: str) -> None:
 
 def upsert_language_profile(profile_data: dict) -> dict:
     """新增或更新本地 language profile。"""
+    profile_data = remove_secret_fields(profile_data)
     pid = (profile_data.get("id") or "").strip()
     if not pid:
         raise ValueError("Profile ID 不能为空")
@@ -292,6 +438,7 @@ def upsert_language_profile(profile_data: dict) -> dict:
         "id": pid,
         "name": (profile_data.get("name") or "").strip(),
         "description": (profile_data.get("description") or "").strip(),
+        "asr_mode": profile_data.get("asr_mode"),
         "source_language": profile_data.get("source_language", "auto"),
         "target_language": profile_data.get("target_language", "zh-CN"),
         "asr": {
@@ -315,13 +462,32 @@ def upsert_language_profile(profile_data: dict) -> dict:
             "proofread_source": profile_data.get("llm_stages", {}).get("proofread_source", False) is True,
             "polish_translation": profile_data.get("llm_stages", {}).get("polish_translation", False) is True,
         },
+        "translation_reliability": _normalize_translation_reliability(
+            profile_data.get("translation_reliability")
+        ),
+        "translation_strategy": _normalize_translation_strategy(
+            profile_data.get("translation_strategy")
+        ),
         "translation_style": (profile_data.get("translation_style") or "").strip(),
+        "subtitle_style": _with_subtitle_style({"subtitle_style": profile_data.get("subtitle_style", {})})["subtitle_style"],
+        "glossary": normalize_glossary(profile_data.get("glossary", [])),
     }
 
-    # 如果 source_language 不是 auto，同步设置 asr.language
+    from asr_runtime import normalize_asr_request
+
     src_lang = new_p["source_language"]
-    if src_lang and src_lang != "auto":
-        new_p["asr"]["language"] = src_lang
+    requested_mode = new_p["asr_mode"] or (
+        "fixed" if src_lang and src_lang != "auto" else "auto"
+    )
+    mode, language = normalize_asr_request(
+        requested_mode,
+        new_p["asr"].get("language") or src_lang,
+        reject_conflict=False,
+    )
+    new_p["asr_mode"] = mode
+    new_p["source_language"] = language if mode == "fixed" else "auto"
+    new_p["asr"]["language"] = language
+    if mode == "fixed":
         # 严格阈值
         new_p["quality"]["language_probability_warning"] = profile_data.get("quality", {}).get("language_probability_warning", 0.90)
         new_p["quality"]["language_probability_error"] = profile_data.get("quality", {}).get("language_probability_error", 0.70)
@@ -331,11 +497,11 @@ def upsert_language_profile(profile_data: dict) -> dict:
     found = False
     for i, p in enumerate(profiles):
         if p.get("id") == pid:
-            profiles[i] = new_p
+            profiles[i] = remove_secret_fields(new_p)
             found = True
             break
     if not found:
-        profiles.append(new_p)
+        profiles.append(remove_secret_fields(new_p))
         if len(profiles) == 1 and not data.get("active"):
             data["active"] = pid
     data["profiles"] = profiles
@@ -381,6 +547,26 @@ def validate_language_profile(data: dict) -> list[str]:
     target = data.get("target_language", "")
     if not target:
         errors.append("目标语言不能为空")
+    try:
+        _normalize_asr_config(data.get("asr"))
+        from asr_runtime import normalize_asr_request
+        source_language = data.get("source_language")
+        normalize_asr_request(
+            data.get("asr_mode")
+            or ("fixed" if source_language and source_language != "auto" else "auto"),
+            data.get("asr", {}).get("language") or source_language,
+            reject_conflict=False,
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+    try:
+        _normalize_translation_reliability(data.get("translation_reliability"))
+    except ValueError as exc:
+        errors.append(str(exc))
+    try:
+        _normalize_translation_strategy(data.get("translation_strategy"))
+    except ValueError as exc:
+        errors.append(str(exc))
     return errors
 
 
@@ -414,15 +600,24 @@ def resolve_language_profile_config(profile_id: str | None = None) -> dict:
         profile = get_active_language_profile()
 
     if not profile:
-        profile = deepcopy(BUILTIN_PROFILES[0])
+        profile = _with_profile_defaults(deepcopy(BUILTIN_PROFILES[0]))
 
     return {
+        "asr_mode": profile.get("asr_mode", "auto"),
         "source_language": profile.get("source_language", "auto"),
         "target_language": profile.get("target_language", "zh-CN"),
-        "asr": profile.get("asr", {}),
+        "asr": _normalize_asr_config(profile.get("asr")),
         "quality": profile.get("quality", {}),
         "translation_style": profile.get("translation_style", ""),
+        "subtitle_style": _with_subtitle_style(deepcopy(profile)).get("subtitle_style", deepcopy(DEFAULT_SUBTITLE_STYLE)),
+        "glossary": normalize_glossary(profile.get("glossary", [])),
         "llm_stages": profile.get("llm_stages", {}),
+        "translation_reliability": _normalize_translation_reliability(
+            profile.get("translation_reliability")
+        ),
+        "translation_strategy": _normalize_translation_strategy(
+            profile.get("translation_strategy")
+        ),
         "profile_id": profile.get("id", "auto-detect"),
         "profile_name": profile.get("name", "自动识别语言"),
     }

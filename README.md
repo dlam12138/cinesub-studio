@@ -1,450 +1,266 @@
-# CineSub Studio
+# 智译字幕工坊 / CineSub Studio
 
-CineSub Studio 是一个影视字幕自动化生产系统。使用 `faster-whisper` 进行语音识别生成 SRT 字幕，通过 LLM API 进行字幕翻译，内置自动质检，支持批量流水线处理。
+智译字幕工坊 / CineSub Studio 是一个 Windows 本地影视字幕工具：把视频或音频转写为 SRT 字幕，可调用 OpenAI-compatible 翻译接口生成中文字幕或双语字幕，并输出基础质量报告和 `review_needed.srt`。
 
-## 核心能力
+当前版本面向本机使用。它不要求修改系统 PATH，也不要求安装前端构建工具、npm、CDN 或浏览器插件。
 
-| 能力 | 说明 |
-|------|------|
-| **语音转写** | faster-whisper（支持 tiny ~ large-v3），自动语言识别 |
-| **字幕翻译** | 通过 LLM API（OpenAI 兼容 / Anthropic），支持双语或纯译文输出 |
-| **自动质检** | SRT 格式检查 + 翻译质量检查 + 异常片段标记 |
-| **批量流水线** | 自动发现视频 → 提取音频 → 转写 → 翻译 → 质检 → 输出 |
-| **断点续跑** | 各阶段独立缓存，中断后不从头开始 |
-| **语言策略路由** | 主流语言 vs 小语种自动切换翻译策略 |
-| **Web UI** | 本地 Web 界面用于单文件手动处理 |
+v0.6.2 Windows 版只提供 Electron 免安装 ZIP，不提供安装器。压缩包自带 `CineSubStudio.exe`、portable Python、运行依赖、FFmpeg、CUDA 运行库和 faster-whisper `small` 模型；设备默认使用 `auto`，检测到兼容 NVIDIA 驱动时使用 GPU，否则自动回退 CPU。正常离线转写不会下载模型。
 
-## 两种使用方式
+## 1. 选择运行方式
 
-### 方式一：批量生产流水线（推荐）
+智译字幕工坊 / CineSub Studio 当前支持便携版和源码开发版两种运行方式。便携版面向普通用户，源码开发版面向继续开发和本地调试。
 
-把视频丢进 `input/` 目录，系统自动处理：
+### 方式 A：0.6.2 便携版
 
-```powershell
-# 完整流水线
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --input input --model large-v3 --device cuda `
-  --api-base "https://api.deepseek.com/v1" `
-  --api-key "sk-xxx" `
-  --llm-model "deepseek-chat"
+适用于 `CineSubStudio-0.6.2-windows-x64-portable.zip`：
 
-# 仅扫描（不处理）
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --scan
-
-# 查看任务状态
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --status
-
-# 重试失败任务
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --retry-failed
-```
-
-**流水线架构：**
+1. 把 ZIP 完整解压到当前用户有写入权限的目录，不要直接在压缩软件内运行。
+2. 进入解压后的 `CineSubStudio-0.6.2-windows-x64-portable/` 目录。
+3. 双击：
 
 ```text
-input/                          ← 丢视频进来
-   ↓ 自动发现
-work/                           ← 中间音频、状态文件、翻译缓存
-   ↓ 提取音频 (ffmpeg)
-   ↓ 语音识别 (Whisper)         → 保存语言检测 JSON
-   ↓ LLM 翻译                   → 根据语言自动选择策略
-   ↓ 自动质检                   → 生成质量报告 + review_needed.srt
+CineSubStudio.exe
+```
+
+应用会打开本地 Electron 窗口并在后台启动仅绑定 `127.0.0.1` 的服务。便携版自带 Python、FFmpeg、CUDA 运行库和 `data/models/` 下的 `small` 模型，不需要系统 Python、FFmpeg 或 CUDA Toolkit，也不修改系统 PATH。CUDA 运行库不包含 NVIDIA 显卡驱动；没有兼容 NVIDIA 环境时自动使用 CPU。运行数据只写入 EXE 同级 `data/`：
+
+```text
+data/input/
+data/output/
+data/work/
+data/logs/
+data/uploads/
+data/models/
+data/config/
+data/.cache/
+```
+
+`small` 模型支持自动检测、固定单语言和多语言三种 ASR 模式的离线转写。`large-v3` 不随包提供，如有需要可稍后导入 `data/models/`。翻译仍需用户自行配置 Provider。移动便携版时应移动整个解压目录。
+
+外部试用前请先阅读 [TRIAL.md](TRIAL.md)，其中包含普通测试者的启动步骤、已知限制、反馈模板和 API key 安全提醒。
+
+应用未进行代码签名，Windows 可能显示来源或 SmartScreen 提示。请只从本项目 GitHub Release 下载，并用同名 `.sha256` 文件核对压缩包。
+
+### 方式 B：源码开发版
+
+适用于从 Git checkout 直接运行源码。建议使用 Windows 10/11、PowerShell，以及 Python 3.10-3.12。首次运行前确认项目目录可写，尤其是：
+
+```text
+.venv/
+.cache/
+models/
 output/
-  source/       ← 原文字幕 SRT
-  zh/           ← 中文字幕 SRT（translated 模式）
-  bilingual/    ← 双语字幕 SRT
-  reports/      ← 质量报告 JSON
-archive/        ← 已完成视频
-failed/         ← 失败任务
+work/
+logs/
+tools/
 ```
 
-### 方式二：Web 流水线控制台（推荐）
-
-启动 Web 服务后，打开 `http://127.0.0.1:7860` 使用流水线控制台：
+如果 PowerShell 阻止脚本运行，可以在当前窗口临时允许本次会话执行脚本：
 
 ```powershell
-.\start_web.ps1
-# 打开 http://127.0.0.1:7860
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-`start_web.ps1` 是 Windows 便利入口；实际启动、等待服务就绪、打开浏览器和退出清理都由 `start_app.py` 负责。也可以直接运行：
+## 2. 安装源码依赖
+
+源码开发版在项目目录运行：
 
 ```powershell
-.\.venv\Scripts\python.exe -B start_app.py
-```
-
-控制台提供两个标签页：
-
-| 标签 | 功能 |
-|------|------|
-| **⚙ 流水线控制台** | 扫描 input、开始处理、查看状态、异常复核、重试失败、操作日志 |
-| **📝 单文件处理** | 上传视频、手动转写 + 翻译（原有功能） |
-
-流水线控制台操作按钮：
-
-| 按钮 | 说明 | 类型 |
-|------|------|------|
-| **扫描 input** | 显示 `input/` 目录中待处理的文件列表 | 只读 |
-| **查看状态** | 显示所有任务的进度（阶段、状态、重试次数） | 只读 |
-| **异常复核** | 汇总所有质检报告中的问题，只显示需要人工关注的片段 | 只读 |
-| **开始处理 input** | 后台启动完整流水线：扫描 → 转写 → 翻译 → 质检 → 归档 | **会修改文件** |
-| **重试失败** | 仅重试之前失败的任务，**不扫描新文件**，不处理已成功的任务 | **会修改文件** |
-| **刷新全部** | 同时刷新扫描、状态、复核（只读操作） | 只读 |
-
-> ⚠️ `开始处理 input` 和 `重试失败` 互斥：同一时间只允许一个后台流水线任务运行。重复点击会返回 HTTP 409 并提示"已有流水线任务正在运行"。
-
-> ⚠️ `重试失败` 仅重置状态为 `failed` 的任务并重新处理，**不会**扫描 `input/` 目录中的新文件。如需处理新文件，请用 `开始处理 input`。
-
-控制台后端 API：
-
-```text
-GET  /api/pipeline/scan            扫描 input 目录（只读）
-GET  /api/pipeline/status          查看所有任务状态（只读）
-GET  /api/pipeline/review          查看异常复核摘要（只读）
-GET  /api/pipeline/logs            查看流水线操作日志（只读）
-GET  /api/pipeline/task            查看后台任务运行状态（只读）
-POST /api/pipeline/run             启动完整流水线（后台，返回 202 / 冲突返回 409）
-POST /api/pipeline/retry-failed    仅重试失败任务（后台，返回 202 / 冲突返回 409）
-```
-
-后台任务日志写入 `logs/pipeline.log`，前端通过轮询 `/api/pipeline/logs` 和 `/api/pipeline/status` 查看进度。
-
-## 模型接口配置
-
-Web 控制台的第三个标签页"🔑 模型接口"用于管理本地 Provider 配置，避免每次手动输入 API 参数。
-
-### 配置文件
-
-Provider 配置保存在 `config/providers.local.json`，首次使用 Web 控制台新增接口时自动创建。
-
-> ⚠️ 此文件包含 API Key，已加入 `.gitignore`，**不要提交到仓库**。
-
-配置结构：
-
-```json
-{
-  "version": 1,
-  "active": "openai-main",
-  "providers": [
-    {
-      "id": "openai-main",
-      "name": "OpenAI 主接口",
-      "protocol": "openai-compatible",
-      "api_base": "https://api.openai.com/v1",
-      "api_key": "sk-...",
-      "chat_model": "gpt-4o",
-      "translation_model": "gpt-4o",
-      "whisper_model": "large-v3",
-      "whisper_device": "cuda",
-      "enabled": true,
-      "notes": ""
-    }
-  ]
-}
-```
-
-### 操作说明
-
-| 操作 | 说明 |
-|------|------|
-| 新增接口 | 填写 Provider ID、名称、API Base、Key、模型等，保存到本地 |
-| 设为默认 | 将该 Provider 设为 active，Pipeline 和单文件处理默认使用 |
-| 编辑 | 修改已有配置（API Key 留空则保留旧值） |
-| 测试连接 | 发送极短请求验证 API 可用性，返回延迟和模型信息 |
-| 删除 | 删除 Provider，若为 active 则自动清空默认 |
-
-### 安全措施
-
-- 列表和详情 API 返回 `api_key_masked`（如 `sk-...abcd`），不返回完整 Key
-- 后端日志不出现在何 API Key
-- 配置文件已 `.gitignore`
-
-### Pipeline 使用 Provider
-
-- `POST /api/pipeline/run` 和 `POST /api/pipeline/retry-failed` 默认使用 active provider
-- 命令行：`.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --provider <id>` 使用指定 Provider
-- CLI 显式参数优先于 Provider 配置：`--api-key` > Provider > 默认值
-
-### Provider API
-
-```text
-GET    /api/providers                 列表（脱敏）
-GET    /api/providers/active          当前默认（脱敏）
-POST   /api/providers                 新增
-PUT    /api/providers/<id>            更新
-DELETE /api/providers/<id>            删除
-POST   /api/providers/<id>/activate   设为默认
-POST   /api/providers/<id>/test       测试连接
-```
-
-## 语言配置 Language Profile
-
-Web 控制台的第四个标签页"🌐 语言配置"用于管理不同语言/影片类型的转写、翻译、质检策略。
-
-### Language Profile vs Provider
-
-| 职责 | Provider | Language Profile |
-|------|----------|-----------------|
-| API Key / API Base / LLM 模型 | ✅ | ❌ 不包含 |
-| 源语言 / 目标语言 | ❌ | ✅ |
-| Whisper 模型 / 设备 / VAD | ✅ 可设 | ✅ 优先 |
-| 质检阈值 | ❌ | ✅ |
-| 翻译风格 prompt | ❌ | ✅ |
-| 原文校对 / 译文润色开关 | ❌ | ✅ |
-
-### 默认内置 Profile
-
-| ID | 名称 | 用途 |
-|----|------|------|
-| `auto-detect` | 自动识别语言 | 未知语言影片默认模式，Whisper 自动检测 |
-| `fr-film` | 法语电影 | 强制法语识别，启用校对和润色 |
-| `generic-european-film` | 欧洲语种通用 | 西/意/德/葡/荷/瑞/波/捷等欧洲语种 |
-
-内置 profile 在配置文件缺失时始终可用。本地配置可覆盖或新增。
-
-### 配置文件
-
-保存在 `config/language_profiles.local.json`（已 gitignore），结构参见 `config/language_profiles.local.json.example`。
-
-### 优先级
-
-```
-CLI 显式参数 > Language Profile > Provider > 默认值
-```
-
-API Key / LLM 模型：Provider 优先。
-语言 / ASR / VAD / 质检阈值 / prompt：Language Profile 优先。
-
-### CLI 使用
-
-```powershell
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --input input --provider openai-main --language-profile fr-film
-```
-
-### Language Profile API
-
-```text
-GET    /api/language-profiles                 列表
-GET    /api/language-profiles/active          当前默认
-POST   /api/language-profiles                 新增
-PUT    /api/language-profiles/<id>            更新
-DELETE /api/language-profiles/<id>            删除
-POST   /api/language-profiles/<id>/activate   设为默认
-```
-
-### 方式三：CLI 单文件处理
-
-```powershell
-.\run_transcribe.ps1 -InputFile "movie.mp4" -Model large-v3 -Device cuda
-```
-
-## 目录结构
-
-```text
-电影翻译/
-├── input/                       # 批量输入（放视频到这里）
-├── output/
-│   ├── source/                  # 原文字幕
-│   ├── zh/                      # 中文字幕
-│   ├── bilingual/               # 双语字幕
-│   └── reports/                 # 质检报告 + review_needed.srt
-├── work/
-│   ├── states/                  # 任务状态 JSON（断点续跑）
-│   └── translation-cache/       # 翻译缓存
-├── archive/                     # 已完成视频
-├── failed/                      # 失败任务
-│
-├── src/
-│   ├── pipeline/batch_worker.py # 批量流水线引擎
-│   ├── core/quality_checker.py  # 自动质检模块
-│   ├── core/transcribe.py       # 转写 + 语言识别
-│   ├── core/subtitle_translate.py # 翻译模块
-│   ├── web/web_server.py        # Web 后端
-│   └── tools/                   # 下载、分析、辅助工具
-├── web/index.html               # Web 前端
-│
-├── install.ps1                  # 安装脚本
-├── start_web.ps1                # 启动 Web UI
-└── run_transcribe.ps1           # CLI 转写
-```
-
-## 自动质检
-
-质检自动检查以下问题并输出质量报告：
-
-| 检查项 | 严重度 | 说明 |
-|--------|--------|------|
-| `broken_numbering` | error | SRT 编号不连续 |
-| `broken_timestamp` | error | 时间码格式异常 |
-| `llm_boilerplate` | error | 翻译结果中混入 LLM 废话 |
-| `time_overlap` | warning | 相邻字幕时间轴重叠 |
-| `empty_subtitle` | warning | 空字幕 |
-| `too_long` | warning | 单条字幕过长 |
-| `possibly_untranslated` | warning | 可能未翻译的片段 |
-| `duplicate_content` | warning | 连续重复字幕 |
-| `mixed_language` | warning | 中英文混乱 |
-| `too_short_duration` | info | 显示时长过短 |
-| `count_mismatch` | error | 原文译文条数不一致 |
-
-质检输出：
-- `质量报告.json` — 完整结构化报告
-- `review_needed.srt` — 仅包含异常片段，人工只需看这些
-
-### 独立运行质检
-
-```powershell
-.\.venv\Scripts\python.exe -B src\core\quality_checker.py output/source/movie.srt --translated output/bilingual/movie.bilingual.srt
-```
-
-## 语言识别与策略路由
-
-Whisper 自动检测语言，结果保存为 `.lang.json` 文件。系统根据检测结果自动选择翻译策略：
-
-```text
-日语/韩语/英语/法语等主流语言  →  常规影视翻译提示词
-小语种（不在主流列表）        →  保守翻译提示词（保留更多原文）
-语言识别置信度 < 70%          →  额外标注 [待确认]
-```
-
-## 翻译 API 配置
-
-支持 OpenAI 兼容 API 和 Anthropic Claude API。
-
-```powershell
-# 通过环境变量设置（推荐）
-$env:SUBTITLE_LLM_API_KEY = "your-api-key"
-
-# 或在命令行直接传递
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --input input --api-key "sk-xxx" --api-base "https://api.openai.com/v1" --llm-model "gpt-4o"
-```
-
-## 安装
-
-```powershell
-cd D:\Claude项目操作\电影翻译
 .\install.ps1
 ```
 
-`install.ps1` 只负责创建虚拟环境和安装 Python 依赖，不要求系统 PATH 中已有 FFmpeg。
+离线安装时，把 wheel 文件放入 `tools/wheelhouse/`，然后运行：
 
-## 内置 FFmpeg
+```powershell
+.\install.ps1 -Offline
+```
 
-项目优先使用内置 FFmpeg，不要求用户提前配置系统 PATH。
+只有明确想重建虚拟环境时才使用：
 
-Windows 用户可以运行：
+```powershell
+.\install.ps1 -Recreate
+```
+
+`install.ps1` 只创建或更新项目内 `.venv/`，不会修改系统 PATH、PowerShell profile、全局 Python 或全局 pip 缓存。
+
+## 3. 启动源码 Web
+
+```powershell
+.\start_web.ps1
+```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:7860
+```
+
+`start_web.ps1` 只使用 `.venv\Scripts\python.exe -B start_app.py`。如果启动失败，先看终端提示和：
+
+```text
+logs/web_server.log
+```
+
+### 便携版审计信息
+
+0.6.2 的交付物只有 Electron 免安装 ZIP 和对应 `.sha256` 文件，不生成 NSIS、PyInstaller 或其他安装器。包内 `release_manifest.json` 和 `release_checksums.sha256` 记录运行时组成与文件校验值；ZIP 自身的 SHA256 写在包外 sidecar 中。
+
+若包含完整 CUDA 的 ZIP 达到 GitHub 单文件 2 GiB 限制，Release 会提供 CPU 可直接运行的主 ZIP，以及单独的 `windows-x64-cuda-addon.zip`。把 CUDA add-on 解压到主程序目录即可补齐 `resources/app/tools/cuda/`。
+
+0.6.2 的活动发布入口冻结为：
+
+```powershell
+.\.venv\Scripts\python.exe -B scripts\build_portable_release.py
+```
+
+旧脚本型 portable 和 NSIS 构建入口已经退役；后续修改发布布局必须升级版本。
+
+## 4. 配置 Provider
+
+在 Web 的“模型接口”区域配置翻译 Provider：
+
+- API Base
+- API Key
+- 翻译模型
+- 质量模型（可选；三步翻译的反思和终稿使用，留空则复用翻译模型）
+- active provider
+
+Provider 未配置不会阻止 Web UI 启动；转写和本地质检仍可用。但实际翻译任务需要 Provider，缺少 API Key 或翻译模型时会失败。API Key 只应保存在 Provider 配置中，不要写入 Language Profile。
+
+### 翻译提示词的前端冻结
+
+当前版本的单文件页面和 Language Profile 编辑页不提供新增或修改翻译提示词的输入框。已有 Profile 中的 `translation_style` 仍会生效，后端 CLI/API 的 `--translation-prompt` / `translation_prompt` 字段也继续支持，自动化调用和现有本地配置不会失效。这只是 UI 冻结，并未删除后端提示词能力。术语表仍可在前端编辑。
+
+## 5. 放入 input/
+
+把要批处理的视频或音频放入：
+
+```text
+input/
+```
+
+常见格式包括 `mp4`、`mkv`、`mov`、`avi`、`mp3`、`m4a`、`wav`。大文件建议直接放入 `input/` 或使用 Web 的本机路径方式，不要通过浏览器上传整部电影。
+
+## 6. 扫描并开始处理
+
+在 Web 的“流水线控制台”依次点击：
+
+1. `扫描 input`
+2. `开始处理 input`
+
+同一时间只允许一个后台流水线任务运行。如果提示已有任务运行，等待完成后再重试，或查看“任务状态”和“操作日志”。
+
+单文件和批量处理都提供相同的三种 ASR 模式：
+
+- `自动检测（默认）`：整片交给 faster-whisper 自动检测并转写，适合大多数单语言视频。
+- `固定单语言`：必须指定英语、法语、中文等具体语言，整片按该语言转写。
+- `多语言`：VAD 按语音停顿组合约 45 秒、最长 60 秒的语音块，每块独立检测语言并转写，再恢复原始时间轴、去除边界重复并合并。
+
+CLI 对应参数为 `--asr-mode auto|fixed|multilingual` 和 `--language`。为兼容旧调用，只传具体 `--language` 时会推断为 `fixed`；都不传时使用 `auto`。`fixed` 缺少语言会拒绝启动，`auto` 和 `multilingual` 不接受固定语言。
+
+批量工作区默认使用中文控制台：任务行只保留状态、阶段、进度与关键告警，点击任务或按 Enter 可打开详情。桌面端使用右侧详情抽屉，窄屏使用全屏详情层；已生成的 SRT 可在详情中分页只读预览。当前界面统一为中文，不显示不可用的语言切换入口。
+
+## 7. 查看状态和复核
+
+处理过程中可以查看：
+
+- `任务状态`：进度、失败任务、可下载产物
+- `操作日志`：后台流水线日志尾部
+- `异常复核`：质量报告和需要人工复核的字幕片段
+
+`异常复核` 发现问题时，Web 可能显示 `issues_found`。这表示复核命令正常运行且发现质量问题，不等同于程序崩溃。
+
+## 8. 下载字幕/报告
+
+批处理默认输出：
+
+```text
+output/source/      原文 SRT
+output/zh/          中文字幕 SRT
+output/bilingual/   双语字幕 SRT
+output/reports/     quality_report.json 和 review_needed.srt
+```
+
+Web 会在任务产物区域显示可下载链接。只有项目 `output/` 下存在且非空的产物可以通过 Web 下载；外部路径只显示为可复制路径。
+
+### 高质量模式（显式可选）
+
+- 翻译可选择 `three_pass`：快模型初译、质量模型反思、质量模型终稿。通常约为标准模式三倍调用量，阶段缓存允许失败后续跑，最终字幕只在全部结构与可靠性检查通过后原子写入。
+- 翻译可显式选择实验策略 `semantic_review`、`wenyi_review` 和 `semantic_wenyi_review`。组合模式以 Semantic 成品为基线，由 WenYi 只提出挑战候选，并要求八项高置信匿名证明后才采用。
+- 三部 451 条终选中三种策略均未达到严重错误为 0 的晋级门槛；`semantic_review` 仅作为三者中的相对推荐，`wenyi_review` 与组合模式标记为未通过。默认仍为 `standard`，详见 `docs/translation_strategy_finale.md`。
+- Language Profile 可配置 `asr_mode`、固定源语言、faster-whisper 性能参数和 `translation_strategy`。旧 Profile 的具体 `source_language` 会自动按 `fixed` 读取，`auto` 会按 `auto` 读取；重新保存时写入 `asr_mode`。
+- 授权翻译金标与匿名 A/B 工具说明见 `tests/translation_benchmark/README.md`。自动指标只作证据，三步模式晋升仍要求非平局偏好率至少 60%，且各素材类别无净退化。
+
+### OCR / 历史 ASR 研究资产
+
+如果视频带有硬字幕，可使用独立 CLI 把 OCR 双语字幕与 ASR/译文进行离线对照，生成差异报告和候选初筛。该流程默认不访问网络、不覆盖字幕，也不会把 OCR 当成人工金标。FunASR、WhisperX、ASR candidate、`mixed-route-v1` 和 segment routing 已退出产品链路；一次性可执行脚本及专属测试已删除。历史验收记录、研究说明与依赖清单仅作为离线资料保留，不进入便携包，也不会参与正常任务。研究资产说明见 [`research/README.md`](research/README.md)，OCR 结果解释见 [`docs/ocr_weak_evidence_evaluation.md`](docs/ocr_weak_evidence_evaluation.md)。
+
+## 9. 常见问题
+
+### 缺少 .venv
+
+运行：
+
+```powershell
+.\install.ps1
+```
+
+然后重新运行：
+
+```powershell
+.\start_web.ps1
+```
+
+### FFmpeg 缺失
+
+Web 运行环境诊断会显示 FFmpeg 状态。安装内置 FFmpeg：
 
 ```powershell
 .\scripts\download_ffmpeg.ps1
 ```
 
-安装后 FFmpeg 会放在：
+下载后 FFmpeg 位于 `tools/ffmpeg/bin/`，不会写入系统 PATH。
 
-```text
-tools/ffmpeg/bin/ffmpeg.exe
-tools/ffmpeg/bin/ffprobe.exe
-```
+### Python 版本警告
 
-查找优先级：
+推荐 Python 3.10-3.12。诊断显示 warning 时不一定阻止基础流程，但如果 faster-whisper 或 ctranslate2 安装失败，建议换用 Python 3.12 后重建 `.venv`。
 
-```text
-CINESUB_FFMPEG / FFMPEG_PATH
-→ 项目内 tools/ffmpeg/bin/
-→ 项目内 tools/
-→ bin/
-→ vendor/ffmpeg/
-→ 系统 PATH
-```
+### Provider 未配置
 
-重新下载：
+Web 可以启动，转写也可以运行；需要翻译时必须配置 active Provider、API Key 和翻译模型。
 
-```powershell
-.\scripts\download_ffmpeg.ps1 -Force
-```
+### 目录不可写
 
-本脚本不会修改系统 PATH，也不需要管理员权限。
+运行环境诊断会检查 `output/`、`work/`、`logs/` 是否可写。如果不可写，请把项目放到当前用户有写权限的位置，不要放到需要管理员权限的系统目录。
 
-## PowerShell 入口
+## 10. 已知限制
 
-项目核心逻辑由 Python 承担，PowerShell 只作为 Windows 便利入口：
+- 当前版本不做 PyInstaller 打包，也不提供 Docker/云端部署。
+- 当前版本不实现 portable Python runtime 自动切换；`.venv` 仍是启动入口。
+- 当前版本只稳定输出 SRT。ASS 参数是预留接口，不会生成 `.ass` 成品。
+- 当前产品 ASR 只使用 faster-whisper，并仅提供自动检测、固定单语言和多语言三种模式；离线研究工具不会自动路由或替换产品输出。
+- 当前版本不做字幕编码自动检测。导入外部字幕前建议先转换为 UTF-8。
+
+## M13 历史启动器说明
+
+Source checkout startup:
 
 ```powershell
-.\start_web.ps1          # thin wrapper for .\.venv\Scripts\python.exe -B start_app.py
-.\run_transcribe.ps1     # thin CLI convenience wrapper
-.\analyze_subtitles.ps1  # thin wrapper for src/tools/analyze_subtitles_workflow.py
+.\start_web.ps1
 ```
 
-推荐启动方式仍然是：
+Optional launcher modes:
 
 ```powershell
-.\.venv\Scripts\python.exe -B start_app.py
+.\start_web.ps1 -NoBrowser
+.\start_web.ps1 -Smoke -NoBrowser -NonInteractive
+.\start_web.ps1 -NoBrowser -NonInteractive
 ```
 
-这些 `.ps1` 不负责后台调度、日志解析、状态判断、字幕处理或 JSON 读写；遇到这类需求时应优先扩展 Python 模块或 CLI。
+Default URL: `http://127.0.0.1:7860/`.
 
-## 自测
+`-Smoke` is a non-interactive startup readiness check. It does not open a browser, run ASR, translate, process media, load Whisper models, or download models.
 
-```powershell
-$env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
-.\.venv\Scripts\python.exe -B src\core\subtitle_translate.py --self-test
-.\.venv\Scripts\python.exe -B src\core\quality_checker.py --self-test
-.\.venv\Scripts\python.exe -B -c "import transcribe, web_server, download_model_file, subtitle_translate, quality_checker, batch_worker; print('imports ok')"
-```
+If FFmpeg is missing, the Web UI can still open for settings and runtime diagnostics. Media jobs that need audio extraction will fail until FFmpeg is configured. Accepted variables are `CINESUB_FFMPEG` and `FFMPEG_PATH`; the project-local expected location is `tools/ffmpeg/bin/`.
 
-## 真实短片验收
-
-用于验证 1-3 分钟真实短片的端到端效果，不提交视频、不提交 API Key。
-
-1. 把样本放入对应目录：
-
-```text
-tests/e2e_samples/fr_short/sample.mp4
-tests/e2e_samples/auto_unknown_short/sample.mp4
-tests/e2e_samples/european_short/sample.mp4
-```
-
-2. 按需复制并修改样本配置：
-
-```powershell
-Copy-Item tests/e2e_samples/samples.example.json tests/e2e_samples/samples.local.json
-```
-
-`samples.local.json` 已忽略，不会提交。每个样本只记录 `file`、`language_profile`、`provider`、`expected_language` 和人工备注。
-
-3. 运行验收：
-
-```powershell
-.\.venv\Scripts\python.exe -B src\pipeline\e2e_runner.py --config tests/e2e_samples/samples.local.json
-```
-
-运行时脚本会把样本映射到 `work/e2e_samples/<sample_id>/<sample_id>.<ext>` 后再调用流水线，优先使用硬链接，失败时才复制。这样即使多个目录里都叫 `sample.mp4`，输出的 SRT 和报告也会按样本 ID 区分，不会互相覆盖；原始样本不会被移动。
-
-脚本运行前会做 preflight 检查：样本文件是否存在、Language Profile 是否存在、Provider 是否存在且启用、Provider 是否配置了 API Base / 翻译模型 / API Key。检查结果会写入报告；如果真实样本存在但配置有 error，脚本不会启动流水线，避免白跑。
-
-没有真实视频时也可以直接跑示例配置，脚本会把缺失样本标记为 `missing_sample`，不会崩溃：
-
-```powershell
-.\.venv\Scripts\python.exe -B src\pipeline\e2e_runner.py --config tests/e2e_samples/samples.example.json
-```
-
-4. 查看报告：
-
-```text
-reports/e2e_sample_report.json
-reports/e2e_sample_report.md
-```
-
-报告会汇总 `detected_language`、`language_probability`、`forced_language`、source/zh/bilingual 字幕条数、质检 error/warning 数量、`review_needed.srt` 条数和人工观感。报告只写 Provider ID，不读取或输出 API Key。
-
-跑完真实样本后，可以复制 `tests/e2e_samples/manual_review.template.md` 记录人工观感。重点不是长篇校对，而是判断问题归属：ASR、翻译、质检阈值，还是配置错误。
-
-判断问题归属：
-
-- 识别语言错误、置信度低、source 字幕不可读：优先看 ASR / Language Profile。
-- zh 字幕生硬、漏译、误译：优先看翻译模型、提示词和 batch 大小。
-- bilingual 条数不一致或时间轴异常：优先看翻译输出格式和质检报告。
-- `review_needed_count` 过多但问题不严重：优先调整 Language Profile 质检阈值。
-
-## 注意事项
-
-- 不要提交 API keys
-- 不要提交 `.venv/`、`.cache/`、`models/`、`uploads/`、`work/`、`input/`、`archive/`、`failed/`、`output/`
-- 模型文件较大，存放在 `models/` 并排除在 Git 之外
-- 翻译结果缓存在 `work/translation-cache/`，相同内容不会重复调用 API
+以下内容记录 Electron 便携版引入前的历史启动方式，仅用于维护参考；当前 0.6.2 已使用 Electron 免安装壳。项目仍不提供安装器、代码签名、自动更新、模型中心或配音/TTS。桌面化评估见 `docs/desktopization_readiness.md`。

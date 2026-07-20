@@ -1,16 +1,64 @@
+<#
+.SYNOPSIS
+Create or update the project-local Python virtual environment for CineSub Studio.
+
+.DESCRIPTION
+This script installs dependencies into .venv under the project directory. It does
+not modify system PATH, PowerShell profile, global Python, or global pip cache.
+
+Use -Offline with a wheelhouse when installing without internet access. Use
+-Recreate only when you intentionally want to rebuild the existing .venv.
+#>
 param(
     [string]$Python = "python",
     [string[]]$PythonArgs = @(),
     [switch]$Recreate,
+    [switch]$RepairVenvConfig,
+    [switch]$Offline,
+    [string]$Wheelhouse = "tools\wheelhouse",
     [string]$IndexUrl = "https://pypi.org/simple"
 )
 
 $ErrorActionPreference = "Stop"
 
+try {
+    chcp 65001 > $null
+    $Utf8NoBom = [System.Text.UTF8Encoding]::new()
+    [Console]::InputEncoding = $Utf8NoBom
+    [Console]::OutputEncoding = $Utf8NoBom
+    $OutputEncoding = $Utf8NoBom
+} catch {
+    # Best effort for older PowerShell hosts.
+}
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
 Write-Host "Project: $ProjectRoot"
+Write-Host "Install mode: $(if ($Offline) { 'offline wheelhouse' } else { 'online pip index' })"
+Write-Host "Virtual environment: .venv"
+Write-Host "No system PATH or PowerShell profile changes will be made."
+if ($Recreate) {
+    Write-Warning "Recreate requested: existing .venv will be removed after a project-path safety check."
+} else {
+    Write-Host "Existing .venv will be reused if present. Use -Recreate only when rebuilding is intentional."
+}
+
+$PortablePython = Join-Path $ProjectRoot "tools\python\python.exe"
+if ($Python -eq "python" -and $PythonArgs.Count -eq 0 -and (Test-Path $PortablePython)) {
+    $Python = $PortablePython
+    Write-Host "Using bundled Python: $Python"
+} else {
+    Write-Host "Python launcher: $Python $($PythonArgs -join ' ')"
+    Write-Host "Portable Python support is a future delivery option; start_web.ps1 will still use .venv."
+}
+
+$WheelhousePath = Join-Path $ProjectRoot $Wheelhouse
+if ($Offline -and -not (Test-Path $WheelhousePath)) {
+    throw "Offline install requested but wheelhouse was not found: $WheelhousePath"
+}
 
 function Invoke-Checked {
     param(
@@ -39,13 +87,19 @@ if ([version]$majorMinor -lt [version]"3.9" -or [version]$majorMinor -gt [versio
 
 Write-Host "FFmpeg runtime check is handled by Python ffmpeg_locator.py."
 Write-Host "To install the bundled Windows FFmpeg, run: .\scripts\download_ffmpeg.ps1"
+if ($Offline) {
+    Write-Host "Offline mode: pip will only use wheelhouse: $WheelhousePath"
+} else {
+    Write-Host "Online mode: pip index is $IndexUrl"
+}
 
 $env:PIP_CACHE_DIR = Join-Path $ProjectRoot ".cache\pip"
 $env:HF_HOME = Join-Path $ProjectRoot ".cache\huggingface"
 $env:HF_HUB_CACHE = Join-Path $ProjectRoot ".cache\huggingface\hub"
 
-New-Item -ItemType Directory -Force -Path $env:PIP_CACHE_DIR, $env:HF_HOME, $env:HF_HUB_CACHE, (Join-Path $ProjectRoot "models"), (Join-Path $ProjectRoot "output"), (Join-Path $ProjectRoot "work") | Out-Null
+New-Item -ItemType Directory -Force -Path $env:PIP_CACHE_DIR, $env:HF_HOME, $env:HF_HUB_CACHE, (Join-Path $ProjectRoot "models"), (Join-Path $ProjectRoot "output"), (Join-Path $ProjectRoot "work"), (Join-Path $ProjectRoot "logs") | Out-Null
 
+$VenvCreated = $false
 if ($Recreate -and (Test-Path ".venv")) {
     $venvPath = Resolve-Path -LiteralPath ".venv"
     if (-not $venvPath.Path.StartsWith($ProjectRoot)) {
@@ -67,18 +121,64 @@ if (-not (Test-Path ".venv")) {
         }
 
         Invoke-Checked -FilePath $Python -Arguments ($PythonArgs + @("-m", "venv", "--without-pip", ".venv"))
-        Invoke-Checked -FilePath $Python -Arguments ($PythonArgs + @("-m", "pip", "--python", ".\.venv\Scripts\python.exe", "install", "pip", "-i", $IndexUrl, "--timeout", "100", "--retries", "10"))
+        $pipBootstrapArgs = @("-m", "pip", "--python", ".\.venv\Scripts\python.exe", "install", "pip")
+        if ($Offline) {
+            $pipBootstrapArgs += @("--no-index", "--find-links", $WheelhousePath)
+        } else {
+            $pipBootstrapArgs += @("-i", $IndexUrl, "--timeout", "100", "--retries", "10")
+        }
+        Invoke-Checked -FilePath $Python -Arguments ($PythonArgs + $pipBootstrapArgs)
+    }
+    $VenvCreated = $true
+}
+
+$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$VenvConfigTool = Join-Path $ProjectRoot "src\tools\venv_config.py"
+$VenvBasePython = (& $VenvPython -B -c "import sys; print(getattr(sys, '_base_executable', sys.executable))").Trim()
+if ($LASTEXITCODE -ne 0 -or -not $VenvBasePython) {
+    throw "Could not resolve the base interpreter used by .venv."
+}
+if ($VenvCreated -or $RepairVenvConfig) {
+    Write-Host "Normalizing .venv\pyvenv.cfg against: $VenvBasePython"
+    Invoke-Checked -FilePath $VenvPython -Arguments @(
+        "-B", $VenvConfigTool, "repair",
+        "--venv", (Join-Path $ProjectRoot ".venv"),
+        "--base-python", $VenvBasePython
+    )
+} else {
+    & $VenvPython -B $VenvConfigTool inspect --venv (Join-Path $ProjectRoot ".venv") --base-python $VenvBasePython
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning 'Existing .venv configuration needs attention. It was not modified.'
+        Write-Warning 'Run .\install.ps1 -RepairVenvConfig to repair pyvenv.cfg without rebuilding the environment.'
     }
 }
 
 & ".\.venv\Scripts\python.exe" -m pip --version
 if ($LASTEXITCODE -ne 0) {
-    Invoke-Checked -FilePath $Python -Arguments ($PythonArgs + @("-m", "pip", "--python", ".\.venv\Scripts\python.exe", "install", "pip", "-i", $IndexUrl, "--timeout", "100", "--retries", "10"))
+    $pipBootstrapArgs = @("-m", "pip", "--python", ".\.venv\Scripts\python.exe", "install", "pip")
+    if ($Offline) {
+        $pipBootstrapArgs += @("--no-index", "--find-links", $WheelhousePath)
+    } else {
+        $pipBootstrapArgs += @("-i", $IndexUrl, "--timeout", "100", "--retries", "10")
+    }
+    Invoke-Checked -FilePath $Python -Arguments ($PythonArgs + $pipBootstrapArgs)
 }
 
-Invoke-Checked -FilePath ".\.venv\Scripts\python.exe" -Arguments @("-m", "pip", "install", "--upgrade", "pip", "-i", $IndexUrl, "--timeout", "100", "--retries", "10")
-Invoke-Checked -FilePath ".\.venv\Scripts\python.exe" -Arguments @("-m", "pip", "install", "-r", "requirements.txt", "-i", $IndexUrl, "--timeout", "100", "--retries", "10")
+if ($Offline) {
+    Invoke-Checked -FilePath ".\.venv\Scripts\python.exe" -Arguments @("-m", "pip", "install", "--no-index", "--find-links", $WheelhousePath, "-r", "requirements.txt")
+} else {
+    Invoke-Checked -FilePath ".\.venv\Scripts\python.exe" -Arguments @("-m", "pip", "install", "--upgrade", "pip", "-i", $IndexUrl, "--timeout", "100", "--retries", "10")
+    Invoke-Checked -FilePath ".\.venv\Scripts\python.exe" -Arguments @("-m", "pip", "install", "-r", "requirements.txt", "-i", $IndexUrl, "--timeout", "100", "--retries", "10")
+}
 
 Write-Host ""
-Write-Host "Installed. Run example:"
-Write-Host '.\run_transcribe.ps1 -InputFile "D:\Movies\movie.mp4" -Model small -Device cpu'
+Write-Host "Installed."
+Write-Host ""
+Write-Host "Next steps:"
+Write-Host "  1. Start the Web UI: .\start_web.ps1"
+Write-Host "  2. Open: http://127.0.0.1:7860"
+Write-Host "  3. Check Web diagnostics at the top of the page."
+Write-Host "  4. If FFmpeg is missing, run: .\scripts\download_ffmpeg.ps1"
+Write-Host ""
+Write-Host "Single-file CLI example:"
+Write-Host '  .\run_transcribe.ps1 -InputFile "D:\Movies\movie.mp4" -Model small -Device auto'

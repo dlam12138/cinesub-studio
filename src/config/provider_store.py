@@ -21,9 +21,18 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CONFIG_DIR = PROJECT_ROOT / "config"
-CONFIG_PATH = CONFIG_DIR / "providers.local.json"
+from encoding_utils import read_json, read_text as read_utf8_text, write_json, write_text
+from runtime_paths import resolve_runtime_paths
+from config_recovery import ConfigCorruptError
+
+
+def _resolve_provider_config_paths(anchor: Path | str | None = None) -> tuple[Path, Path, Path]:
+    paths = resolve_runtime_paths(anchor or Path(__file__).resolve())
+    config_dir = paths.config_root
+    return paths.project_root, config_dir, config_dir / "providers.local.json"
+
+
+PROJECT_ROOT, CONFIG_DIR, CONFIG_PATH = _resolve_provider_config_paths()
 
 _cache: dict | None = None
 _cache_lock = threading.Lock()
@@ -35,6 +44,8 @@ DEFAULT_EMPTY_CONFIG: dict = {
     "providers": [],
 }
 
+LEGACY_PROVIDER_ASR_FIELDS = ("whisper_model", "whisper_device")
+
 # ── 迁移：旧字段 → 新字段 ──────────────────────────────────────────────
 
 def _migrate_provider(p: dict) -> dict:
@@ -44,12 +55,13 @@ def _migrate_provider(p: dict) -> dict:
     if not p.get("translation_model") and p.get("chat_model"):
         p["translation_model"] = p["chat_model"]
     # 移除 ASR 字段（已迁移到 Language Profile）
-    for key in ("whisper_model", "whisper_device", "chat_model"):
+    for key in LEGACY_PROVIDER_ASR_FIELDS + ("chat_model",):
         p.pop(key, None)
     # 确保新字段存在
     p.setdefault("template_id", "")
     p.setdefault("enabled", True)
     p.setdefault("translation_model", "")
+    p.setdefault("translation_quality_model", "")
     return p
 
 
@@ -70,8 +82,7 @@ def _load_raw() -> dict:
             _cache_mtime = 0.0
             return _cache
         try:
-            raw = CONFIG_PATH.read_text(encoding="utf-8")
-            data = json.loads(raw)
+            data = read_json(CONFIG_PATH)
             data.setdefault("version", 2)
             data.setdefault("active", "")
             data.setdefault("providers", [])
@@ -80,10 +91,10 @@ def _load_raw() -> dict:
             _cache = data
             _cache_mtime = CONFIG_PATH.stat().st_mtime
             return _cache
-        except (OSError, json.JSONDecodeError, ValueError):
-            _cache = dict(DEFAULT_EMPTY_CONFIG)
+        except (OSError, json.JSONDecodeError, UnicodeError, ValueError, TypeError, AttributeError) as exc:
+            _cache = None
             _cache_mtime = 0.0
-            return _cache
+            raise ConfigCorruptError("providers") from exc
 
 
 def _save_raw(data: dict) -> None:
@@ -91,10 +102,7 @@ def _save_raw(data: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not CONFIG_PATH.exists():
         try:
-            CONFIG_PATH.write_text(
-                json.dumps(DEFAULT_EMPTY_CONFIG, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            write_json(CONFIG_PATH, DEFAULT_EMPTY_CONFIG)
         except FileExistsError:
             pass
     # 保存前清理旧字段
@@ -115,12 +123,12 @@ def _save_raw(data: dict) -> None:
             # target was not updated, fall back to a direct write so the local
             # UI remains usable.
             try:
-                if CONFIG_PATH.exists() and CONFIG_PATH.read_text(encoding="utf-8") == payload:
+                if CONFIG_PATH.exists() and read_utf8_text(CONFIG_PATH) == payload:
                     replaced = True
             except OSError:
                 pass
             if not replaced:
-                CONFIG_PATH.write_text(payload, encoding="utf-8")
+                write_text(CONFIG_PATH, payload)
     except Exception:
         _scrub_temp_file(tmp)
         try: os.unlink(tmp)
@@ -138,10 +146,7 @@ def _save_raw(data: dict) -> None:
 def _scrub_temp_file(path: str) -> None:
     try:
         if os.path.exists(path):
-            Path(path).write_text(
-                json.dumps(DEFAULT_EMPTY_CONFIG, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            write_json(path, DEFAULT_EMPTY_CONFIG)
     except OSError:
         pass
 
@@ -160,6 +165,13 @@ def _mask_provider(provider: dict) -> dict:
         p["api_key_masked"] = mask_api_key(p["api_key"])
     p.pop("api_key", None)
     return p
+
+
+def sanitize_provider(provider: dict | None) -> dict | None:
+    """Return a UI-safe provider copy without the raw API key."""
+    if provider is None:
+        return None
+    return _mask_provider(provider)
 
 
 # ── 查询接口 ─────────────────────────────────────────────────────────────
@@ -205,7 +217,10 @@ def set_active_provider(provider_id: str) -> None:
 
 # ── 增删改（简化版） ────────────────────────────────────────────────────
 
-PROVIDER_FIELDS = ["id", "name", "template_id", "protocol", "api_base", "api_key", "translation_model", "enabled", "notes"]
+PROVIDER_FIELDS = [
+    "id", "name", "template_id", "protocol", "api_base", "api_key",
+    "translation_model", "translation_quality_model", "enabled", "notes",
+]
 
 
 def _auto_id(template_id: str = "") -> str:
@@ -235,6 +250,7 @@ def upsert_provider(provider_data: dict) -> dict:
     api_base = (provider_data.get("api_base") or "").strip()
     api_key = provider_data.get("api_key", "")
     model = (provider_data.get("model") or provider_data.get("translation_model") or "").strip()
+    quality_model = str(provider_data.get("translation_quality_model") or "").strip()
     protocol = normalize_protocol((provider_data.get("protocol") or "openai-compatible").strip())
 
     # 模板模式：自动填充 api_base / protocol / model
@@ -262,6 +278,7 @@ def upsert_provider(provider_data: dict) -> dict:
         "api_base": api_base,
         "api_key": api_key,
         "translation_model": model,
+        "translation_quality_model": quality_model,
         "enabled": provider_data.get("enabled", True) is not False,
         "notes": (provider_data.get("notes") or "").strip(),
     }
@@ -321,6 +338,10 @@ def resolve_provider_config(provider_id: str | None = None) -> dict:
         "api_base": provider.get("api_base", ""),
         "api_key": provider.get("api_key", ""),
         "llm_model": provider.get("translation_model", ""),
+        "translation_quality_model": (
+            provider.get("translation_quality_model")
+            or provider.get("translation_model", "")
+        ),
     }
 
 
@@ -392,13 +413,61 @@ def _local_proxy_problem() -> str:
             )
     return ""
 
+def _test_openai_model(
+    *, api_base: str, api_key: str, model: str, timeout: float = 30
+) -> dict:
+    url = api_base.rstrip("/") + "/chat/completions"
+    body = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a test endpoint."},
+            {"role": "user", "content": 'Return exactly this JSON object: {"ok":true}'},
+        ],
+        "stream": False,
+        # Reasoning models may consume most of a tiny allowance before emitting
+        # visible content, so the probe must leave room for a real response.
+        "max_tokens": 256,
+        "temperature": 0,
+    }, ensure_ascii=False)
+
+    import urllib.request, urllib.error
+    start = time.perf_counter()
+    try:
+        req = urllib.request.Request(url, data=body.encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            latency = round((time.perf_counter() - start) * 1000)
+            content = str(
+                payload.get("choices", [{}])[0].get("message", {}).get("content") or ""
+            ).strip()
+            if not content:
+                return {
+                    "ok": False,
+                    "latency_ms": latency,
+                    "model": model,
+                    "error": "模型连接成功但未返回可见正文",
+                }
+            return {"ok": True, "latency_ms": latency, "model": model, "error": ""}
+    except urllib.error.HTTPError as e:
+        latency = round((time.perf_counter() - start) * 1000)
+        err = e.read().decode("utf-8", errors="replace")[:300]
+        return {"ok": False, "latency_ms": latency, "model": model, "error": _scrub_provider_test_error(f"HTTP {e.code}: {err}", api_key)}
+    except urllib.error.URLError as e:
+        latency = round((time.perf_counter() - start) * 1000)
+        return {"ok": False, "latency_ms": latency, "model": model, "error": _scrub_provider_test_error(f"连接失败: {e.reason}", api_key)}
+    except Exception as e:
+        return {"ok": False, "latency_ms": 0, "model": model, "error": _scrub_provider_test_error(str(e), api_key)}
+
+
 def test_provider_connection(provider_id: str) -> dict:
     provider = get_provider(provider_id)
     if not provider:
         return {"ok": False, "error": f"Provider '{provider_id}' 不存在", "latency_ms": 0, "model": ""}
     api_base = (provider.get("api_base") or "").strip()
     api_key = provider.get("api_key", "")
-    model = provider.get("translation_model", "")
+    model = str(provider.get("translation_model") or "").strip()
+    quality_model = str(provider.get("translation_quality_model") or "").strip()
     if not api_base: return {"ok": False, "error": "API Base 未设置", "latency_ms": 0, "model": ""}
     if not api_key: return {"ok": False, "error": "API Key 未设置", "latency_ms": 0, "model": ""}
     if not model: return {"ok": False, "error": "模型未设置", "latency_ms": 0, "model": ""}
@@ -411,31 +480,48 @@ def test_provider_connection(provider_id: str) -> dict:
     if proxy_problem:
         return {"ok": False, "error": proxy_problem, "latency_ms": 0, "model": model}
 
-    url = api_base.rstrip("/") + "/chat/completions"
-    body = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a test endpoint."},
-            {"role": "user", "content": "Return OK."},
-        ],
-        "stream": False,
-        "max_tokens": 5,
-    }, ensure_ascii=False)
+    initial = _test_openai_model(
+        api_base=api_base, api_key=api_key, model=model
+    )
+    model_results = [{"role": "initial", **initial}]
+    quality = None
+    if quality_model:
+        quality = (
+            dict(initial, model=quality_model)
+            if quality_model == model
+            else _test_openai_model(
+                api_base=api_base, api_key=api_key, model=quality_model
+            )
+        )
+        model_results.append({"role": "quality", **quality})
 
-    import urllib.request, urllib.error
-    start = time.perf_counter()
-    try:
-        req = urllib.request.Request(url, data=body.encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            latency = round((time.perf_counter() - start) * 1000)
-            return {"ok": True, "latency_ms": latency, "model": model, "error": ""}
-    except urllib.error.HTTPError as e:
-        latency = round((time.perf_counter() - start) * 1000)
-        err = e.read().decode("utf-8", errors="replace")[:300]
-        return {"ok": False, "latency_ms": latency, "model": model, "error": f"HTTP {e.code}: {err}"}
-    except urllib.error.URLError as e:
-        latency = round((time.perf_counter() - start) * 1000)
-        return {"ok": False, "latency_ms": latency, "model": model, "error": f"连接失败: {e.reason}"}
-    except Exception as e:
-        return {"ok": False, "latency_ms": 0, "model": model, "error": str(e)[:300]}
+    all_ok = bool(initial.get("ok")) and (
+        quality is None or bool(quality.get("ok"))
+    )
+    errors = [
+        f"{row['role']}({row['model']}): {row.get('error', '')}"
+        for row in model_results if not row.get("ok")
+    ]
+    return {
+        "ok": all_ok,
+        # Stable legacy fields continue to describe the primary translation model.
+        "latency_ms": initial.get("latency_ms", 0),
+        "model": model,
+        "error": "; ".join(errors),
+        # Additive per-stage diagnostics.
+        "models": model_results,
+        "initial_model_ok": bool(initial.get("ok")),
+        "quality_model": quality_model,
+        "quality_model_ok": None if quality is None else bool(quality.get("ok")),
+    }
+
+
+def _scrub_provider_test_error(message: str, api_key: str) -> str:
+    """Keep provider test failures user-readable without echoing credentials."""
+    clean = str(message or "")
+    if api_key:
+        clean = clean.replace(api_key, "[redacted-api-key]")
+        masked = mask_api_key(api_key)
+        if masked:
+            clean = clean.replace(masked, "[redacted-api-key]")
+    return clean[:300]

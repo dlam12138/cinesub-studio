@@ -10,6 +10,7 @@
       "api_base": "https://api.deepseek.com",
       "api_key": "sk-your-deepseek-key-here",
       "translation_model": "deepseek-v4-flash",
+      "translation_quality_model": "deepseek-v4-pro",
       "enabled": true,
       "notes": ""
     }

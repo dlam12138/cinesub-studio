@@ -2,26 +2,70 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
-import threading
-import time
-import uuid
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
+
+from app_info import get_app_info
+from file_inspection_api import inspect_input_file
+from job_api import get_job, list_jobs, retry_job, sanitize_filename, start_job
+from pipeline_api import (
+    get_pipeline_task,
+    pipeline_progress,
+    read_pipeline_log,
+    resolve_pipeline_artifact,
+    run_pipeline_command,
+    start_pipeline_background,
+)
+from provider_profile_api import (
+    activate_profile_payload,
+    activate_provider_payload,
+    active_profile_payload,
+    active_provider_payload,
+    delete_profile_payload,
+    delete_provider_payload,
+    get_profile_payload,
+    get_provider_payload,
+    list_profile_payload,
+    list_provider_payload,
+    provider_templates_payload,
+    save_profile_payload,
+    save_provider_payload,
+    test_provider_payload,
+)
+from runtime_paths import resolve_runtime_paths
+from request_security import ensure_session_token, security_headers, validate_request
+from subtitle_preview_api import (
+    SubtitlePreviewError,
+    job_subtitle_preview,
+    pipeline_subtitle_preview,
+)
+from review_detail_api import (
+    ReviewDetailError,
+    job_review_detail,
+    pipeline_review_detail,
+)
+from config_recovery import (
+    ConfigCorruptError,
+    ConfigRecoveryError,
+    all_config_status,
+    recover_store,
+)
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-WEB_ROOT = PROJECT_ROOT / "web"
-UPLOAD_DIR = PROJECT_ROOT / "uploads"
-OUTPUT_DIR = PROJECT_ROOT / "output"
-MODEL_DIR = PROJECT_ROOT / "models"
-WORK_DIR = PROJECT_ROOT / "work"
-PIPELINE_LOG = PROJECT_ROOT / "logs" / "pipeline.log"
+PATHS = resolve_runtime_paths()
+PROJECT_ROOT = PATHS.project_root
+APP_ROOT = PATHS.app_root
+SRC_ROOT = PATHS.src_root
+WEB_ROOT = APP_ROOT / "web"
+UPLOAD_DIR = PATHS.uploads_dir
+OUTPUT_DIR = PATHS.output_dir
+MODEL_DIR = PATHS.models_dir
+WORK_DIR = PATHS.work_dir
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+MAX_JSON_BYTES = 2 * 1024 * 1024
 SUPPORTED_MEDIA_EXTENSIONS = {
     ".mp4",
     ".mkv",
@@ -41,12 +85,9 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".wma",
 }
 
-JOBS: dict[str, dict] = {}
-JOBS_LOCK = threading.Lock()
 
-# Pipeline background task tracking
-PIPELINE_TASK: dict = {"running": False, "pid": None, "action": "", "started_at": 0}
-PIPELINE_TASK_LOCK = threading.Lock()
+class RequestBodyError(ValueError):
+    """A client-safe JSON body validation failure."""
 
 
 def redact_secret(value: str) -> str:
@@ -57,6 +98,23 @@ def redact_secret(value: str) -> str:
     return value[:3] + "***" + value[-4:]
 
 
+def _is_secret_like_key(key: object) -> bool:
+    lowered = str(key).lower()
+    markers = (
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "token",
+        "secret",
+        "client_secret",
+        "authorization",
+        "password",
+        "bearer",
+    )
+    return any(marker in lowered for marker in markers)
+
+
 def main() -> int:
     host = "127.0.0.1"
     port = int(os.environ.get("SUBTITLE_WEB_PORT", "7860"))
@@ -65,6 +123,7 @@ def main() -> int:
         path.mkdir(parents=True, exist_ok=True)
 
     server = ThreadingHTTPServer((host, port), Handler)
+    ensure_session_token(server)
     print(f"Subtitle web UI: http://{host}:{port}")
     server.serve_forever()
     return 0
@@ -75,6 +134,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         self._log_request()
+        if not self._authorize_request():
+            return
         try:
             self._do_GET_impl()
         except Exception as exc:
@@ -82,12 +143,78 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_GET_impl(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/session":
+            self.send_json({"ok": True, "token": ensure_session_token(self.server)})
+            return
+
+        if parsed.path == "/api/config/status":
+            self.send_json(all_config_status())
+            return
         if parsed.path in ("/", "/index.html"):
             self.send_file(WEB_ROOT / "index.html", "text/html; charset=utf-8")
             return
 
+        if parsed.path == "/assets/brand-mark.png":
+            self.send_file(WEB_ROOT / "assets" / "brand-mark.png", "image/png")
+            return
+
+        if parsed.path == "/assets/fonts/BarlowCondensed-SemiBold.ttf":
+            self.send_file(
+                WEB_ROOT / "assets" / "fonts" / "BarlowCondensed-SemiBold.ttf",
+                "font/ttf",
+            )
+            return
+
+        if parsed.path == "/assets/fonts/NotoSansSC-Variable.ttf":
+            self.send_file(
+                WEB_ROOT / "assets" / "fonts" / "NotoSansSC-Variable.ttf",
+                "font/ttf",
+            )
+            return
+
+        if parsed.path == "/api/app-info":
+            self.send_json(get_app_info(PATHS))
+            return
+
         if parsed.path == "/api/jobs":
             self.send_json({"jobs": list_jobs()})
+            return
+
+        if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/preview"):
+            job_id = unquote(parsed.path[len("/api/jobs/"):-len("/preview")]).strip("/")
+            query = parse_qs(parsed.query)
+            try:
+                payload = job_subtitle_preview(
+                    job_id=job_id,
+                    artifact=(query.get("artifact") or [""])[0],
+                    offset=(query.get("offset") or [0])[0],
+                    limit=(query.get("limit") or [None])[0],
+                    job=get_job(job_id),
+                    output_dir=OUTPUT_DIR,
+                )
+            except SubtitlePreviewError as exc:
+                self.send_error_json(exc.status, str(exc))
+                return
+            self.send_json(payload)
+            return
+
+        if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/review-detail"):
+            job_id = unquote(
+                parsed.path[len("/api/jobs/"):-len("/review-detail")]
+            ).strip("/")
+            query = parse_qs(parsed.query)
+            try:
+                payload = job_review_detail(
+                    job=get_job(job_id),
+                    output_dir=OUTPUT_DIR,
+                    categories=(query.get("categories") or [""])[0],
+                    offset=(query.get("offset") or [0])[0],
+                    limit=(query.get("limit") or [50])[0],
+                )
+            except ReviewDetailError as exc:
+                self.send_error_json(exc.status, str(exc))
+                return
+            self.send_json(payload)
             return
 
         if parsed.path.startswith("/api/jobs/"):
@@ -133,73 +260,158 @@ class Handler(BaseHTTPRequestHandler):
             self.send_file(output_path, "application/x-subrip", download_name=output_path.name)
             return
 
-        # ── Pipeline API ──
+        # Pipeline API
         if parsed.path == "/api/pipeline/scan":
             query = parse_qs(parsed.query)
             input_dir = (query.get("input_dir") or [""])[0].strip()
-            self.send_json(_run_pipeline_command("scan", input_dir=input_dir))
+            self.send_json(run_pipeline_command("scan", input_dir=input_dir))
             return
 
         if parsed.path == "/api/pipeline/status":
             query = parse_qs(parsed.query)
             input_dir = (query.get("input_dir") or [""])[0].strip()
-            self.send_json(_run_pipeline_command("status", input_dir=input_dir))
+            self.send_json(run_pipeline_command("status", input_dir=input_dir))
+            return
+
+        if parsed.path == "/api/pipeline/progress":
+            self.send_json(pipeline_progress())
+            return
+
+        if parsed.path == "/api/pipeline/preview":
+            query = parse_qs(parsed.query)
+            try:
+                payload = pipeline_subtitle_preview(
+                    task_id=(query.get("task") or [""])[0].strip(),
+                    artifact=(query.get("artifact") or [""])[0].strip(),
+                    offset=(query.get("offset") or [0])[0],
+                    limit=(query.get("limit") or [None])[0],
+                    resolver=resolve_pipeline_artifact,
+                )
+            except SubtitlePreviewError as exc:
+                self.send_error_json(exc.status, str(exc))
+                return
+            self.send_json(payload)
+            return
+
+        if parsed.path == "/api/pipeline/review-detail":
+            query = parse_qs(parsed.query)
+            try:
+                payload = pipeline_review_detail(
+                    task_id=(query.get("task") or [""])[0],
+                    states_dir=WORK_DIR / "states",
+                    output_dir=OUTPUT_DIR,
+                    categories=(query.get("categories") or [""])[0],
+                    offset=(query.get("offset") or [0])[0],
+                    limit=(query.get("limit") or [50])[0],
+                )
+            except ReviewDetailError as exc:
+                self.send_error_json(exc.status, str(exc))
+                return
+            self.send_json(payload)
+            return
+
+        if parsed.path == "/api/pipeline/artifact":
+            query = parse_qs(parsed.query)
+            task_id = (query.get("task") or [""])[0].strip()
+            artifact_type = (query.get("artifact") or [""])[0].strip()
+            artifact_path, error = resolve_pipeline_artifact(task_id, artifact_type)
+            if artifact_path is None:
+                self.send_error_json(404, error or "Artifact not found")
+                return
+            self.send_file(
+                artifact_path,
+                _content_type_for_artifact(artifact_path),
+                download_name=artifact_path.name,
+            )
             return
 
         if parsed.path == "/api/pipeline/review":
             query = parse_qs(parsed.query)
             input_dir = (query.get("input_dir") or [""])[0].strip()
-            self.send_json(_run_pipeline_command("review", input_dir=input_dir))
+            self.send_json(run_pipeline_command("review", input_dir=input_dir))
             return
 
         if parsed.path == "/api/pipeline/logs":
-            self.send_json(_read_pipeline_log())
+            self.send_json(read_pipeline_log())
             return
 
         if parsed.path == "/api/pipeline/task":
-            with PIPELINE_TASK_LOCK:
-                self.send_json(dict(PIPELINE_TASK))
+            self.send_json(get_pipeline_task())
+            return
+
+        if parsed.path == "/api/runtime/diagnostics":
+            self.send_json(_runtime_diagnostics())
+            return
+
+        if parsed.path == "/api/runtime/download-plan":
+            query = parse_qs(parsed.query)
+            components = query.get("component", [])
+            self.send_json(_runtime_download_plan(components))
+            return
+
+        if parsed.path == "/api/runtime/diagnostic-bundle/download":
+            from diagnostic_bundle import resolve_diagnostic_bundle
+
+            file_name = (parse_qs(parsed.query).get("file") or [""])[0]
+            bundle = resolve_diagnostic_bundle(file_name)
+            if bundle is None:
+                self.send_error_json(404, "Diagnostic bundle not found")
+            else:
+                self.send_file(bundle, "application/zip", download_name=bundle.name)
             return
 
         if parsed.path == "/api/storage/status":
             self.send_json(_storage_status())
             return
 
-        # ── Provider API ──
+        if parsed.path == "/api/translation/effective-config":
+            query = parse_qs(parsed.query)
+            self.send_json(_effective_translation_config(query))
+            return
+
+        # Provider API
         if parsed.path == "/api/providers":
-            from provider_store import list_providers
-            self.send_json({"providers": list_providers(mask_secret=True)})
+            self.send_json(list_provider_payload())
             return
 
         if parsed.path == "/api/providers/active":
-            from provider_store import get_active_provider, mask_api_key
-            provider = get_active_provider()
-            if provider:
-                provider["api_key_masked"] = mask_api_key(provider.pop("api_key", ""))
-            self.send_json({"active": provider})
+            self.send_json(active_provider_payload())
             return
 
-        # ── Language Profile API ──
+        path_parts = parsed.path.split("/")
+        if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
+            provider_id = unquote(path_parts[3])
+            payload, status = get_provider_payload(provider_id)
+            self.send_json(payload, status=status)
+            return
+
+        # Language Profile API
         if parsed.path == "/api/language-profiles":
-            from language_profile_store import list_language_profiles
-            self.send_json({"profiles": list_language_profiles()})
+            self.send_json(list_profile_payload())
             return
 
         if parsed.path == "/api/language-profiles/active":
-            from language_profile_store import get_active_language_profile
-            self.send_json({"active": get_active_language_profile()})
+            self.send_json(active_profile_payload())
             return
 
-        # ── Provider Templates ──
+        path_parts = parsed.path.split("/")
+        if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
+            profile_id = unquote(path_parts[3])
+            payload, status = get_profile_payload(profile_id)
+            self.send_json(payload, status=status)
+            return
+
+        # Provider Templates
         if parsed.path == "/api/provider-templates":
-            from provider_store import get_provider_templates
-            self.send_json({"ok": True, "templates": get_provider_templates()})
+            self.send_json(provider_templates_payload())
             return
 
         self.send_error_json(404, "Not found")
 
     def do_PUT(self) -> None:
         self._log_request()
+        if not self._authorize_request():
+            return
         try:
             self._do_PUT_impl()
         except Exception as exc:
@@ -211,37 +423,28 @@ class Handler(BaseHTTPRequestHandler):
 
         # Language Profile update
         if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
-            lpid = path_parts[3]
+            lpid = unquote(path_parts[3])
             body = self._read_json_body()
             if not body:
-                self.send_error_json(400, "请求体为空")
-                return
-            body["id"] = lpid
-            from language_profile_store import upsert_language_profile, validate_language_profile
-            errors = validate_language_profile(body)
-            if errors:
-                self.send_error_json(400, "; ".join(errors))
+                self.send_error_json(400, "Request body is empty.")
                 return
             try:
-                result = upsert_language_profile(body)
-                self.send_json({"ok": True, "profile": result})
+                payload, status = save_profile_payload(body, lpid)
+                self.send_json(payload, status=status)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
 
         # Provider update
         if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
-            provider_id = path_parts[3]
+            provider_id = unquote(path_parts[3])
             body = self._read_json_body()
             if not body:
-                self.send_error_json(400, "请求体为空")
+                self.send_error_json(400, "Request body is empty.")
                 return
-            body["id"] = provider_id
-            from provider_store import upsert_provider, mask_api_key
             try:
-                result = upsert_provider(body)
-                result["api_key_masked"] = mask_api_key(result.pop("api_key", ""))
-                self.send_json({"ok": True, "provider": result})
+                payload, status = save_provider_payload(body, provider_id)
+                self.send_json(payload, status=status)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -250,6 +453,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         self._log_request()
+        if not self._authorize_request():
+            return
         try:
             self._do_DELETE_impl()
         except Exception as exc:
@@ -261,22 +466,18 @@ class Handler(BaseHTTPRequestHandler):
 
         # Language Profile delete
         if parsed.path.startswith("/api/language-profiles/") and len(path_parts) == 4:
-            lpid = path_parts[3]
-            from language_profile_store import delete_language_profile
+            lpid = unquote(path_parts[3])
             try:
-                delete_language_profile(lpid)
-                self.send_json({"ok": True})
+                self.send_json(delete_profile_payload(lpid))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
 
         # Provider delete
         if parsed.path.startswith("/api/providers/") and len(path_parts) == 4:
-            provider_id = path_parts[3]
-            from provider_store import delete_provider
+            provider_id = unquote(path_parts[3])
             try:
-                delete_provider(provider_id)
-                self.send_json({"ok": True})
+                self.send_json(delete_provider_payload(provider_id))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
@@ -285,6 +486,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self._log_request()
+        if not self._authorize_request():
+            return
         try:
             self._do_POST_impl()
         except Exception as exc:
@@ -293,129 +496,156 @@ class Handler(BaseHTTPRequestHandler):
     def _do_POST_impl(self) -> None:
         parsed = urlparse(self.path)
 
-        # ── Pipeline: run (background) — 完整处理 input 目录 ──
+        if parsed.path == "/api/config/recover":
+            body = self._read_json_body() or {}
+            try:
+                self.send_json(recover_store(str(body.get("store") or ""), str(body.get("action") or "")))
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+            except ConfigRecoveryError as exc:
+                self.send_error_json(409, str(exc), code="config_recovery_failed")
+            return
+
+        # Pipeline: run in the background for the input directory.
         if parsed.path == "/api/pipeline/run":
             body = self._read_json_body() or {}
             provider_id = body.get("provider") or body.get("provider_id", "")
             language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
             input_dir = body.get("input_dir", "").strip()
             model = body.get("model", "small")
-            device = body.get("device", "cpu")
+            device = body.get("device", "auto")
             compute_type = body.get("compute_type", "")
             translate_enabled = body.get("translate_enabled", True)
-            language = body.get("language", "")
-            with PIPELINE_TASK_LOCK:
-                if PIPELINE_TASK["running"]:
-                    self.send_json(
-                        {"ok": False, "error": "已有流水线任务正在运行，请等待完成"},
-                        status=409,
-                    )
-                    return
-                PIPELINE_TASK["running"] = True
-                PIPELINE_TASK["action"] = "run"
-                PIPELINE_TASK["started_at"] = time.time()
-
-            thread = threading.Thread(
-                target=_run_pipeline_background,
-                args=("run", provider_id, language_profile_id, input_dir, model, device, compute_type, translate_enabled, language),
-                daemon=True,
+            try:
+                asr_request = _parse_asr_request_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
+            hf_endpoint = body.get("hf_endpoint", "").strip()
+            local_files_only = bool(body.get("local_files_only", False))
+            try:
+                reliability = _parse_translation_reliability_payload(body)
+                quality_strategy = _parse_quality_strategy_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
+            subtitle_formats = body.get("subtitle_formats", ["srt"])
+            ass_style_id = body.get("ass_style_id", "")
+            payload, status = start_pipeline_background(
+                action="run",
+                provider_id=provider_id,
+                language_profile_id=language_profile_id,
+                input_dir=input_dir,
+                model=model,
+                device=device,
+                compute_type=compute_type,
+                translate_enabled=translate_enabled,
+                asr_mode=asr_request["asr_mode"],
+                language=asr_request["language"],
+                hf_endpoint=hf_endpoint,
+                local_files_only=local_files_only,
+                **quality_strategy,
+                **reliability,
+                subtitle_formats=subtitle_formats,
+                ass_style_id=ass_style_id,
             )
-            thread.start()
-            self.send_json({"ok": True, "message": "流水线已启动，正在处理 input 目录"}, status=202)
+            self.send_json(payload, status=status)
             return
 
-        # ── Pipeline: retry-failed (background) — 仅重试失败任务 ──
+        # Pipeline: retry failed tasks in the background.
         if parsed.path == "/api/pipeline/retry-failed":
             body = self._read_json_body() or {}
             provider_id = body.get("provider") or body.get("provider_id", "")
             language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
             input_dir = body.get("input_dir", "").strip()
             model = body.get("model", "small")
-            device = body.get("device", "cpu")
+            device = body.get("device", "auto")
             compute_type = body.get("compute_type", "")
             translate_enabled = body.get("translate_enabled", True)
-            language = body.get("language", "")
-            with PIPELINE_TASK_LOCK:
-                if PIPELINE_TASK["running"]:
-                    self.send_json(
-                        {"ok": False, "error": "已有流水线任务正在运行，请等待完成"},
-                        status=409,
-                    )
-                    return
-                PIPELINE_TASK["running"] = True
-                PIPELINE_TASK["action"] = "retry-failed"
-                PIPELINE_TASK["started_at"] = time.time()
-
-            thread = threading.Thread(
-                target=_run_pipeline_background,
-                args=("retry-failed", provider_id, language_profile_id, input_dir, model, device, compute_type, translate_enabled, language),
-                daemon=True,
+            try:
+                asr_request = _parse_asr_request_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
+            hf_endpoint = body.get("hf_endpoint", "").strip()
+            local_files_only = bool(body.get("local_files_only", False))
+            try:
+                reliability = _parse_translation_reliability_payload(body)
+                quality_strategy = _parse_quality_strategy_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
+            subtitle_formats = body.get("subtitle_formats", ["srt"])
+            ass_style_id = body.get("ass_style_id", "")
+            payload, status = start_pipeline_background(
+                action="retry-failed",
+                provider_id=provider_id,
+                language_profile_id=language_profile_id,
+                input_dir=input_dir,
+                model=model,
+                device=device,
+                compute_type=compute_type,
+                translate_enabled=translate_enabled,
+                asr_mode=asr_request["asr_mode"],
+                language=asr_request["language"],
+                hf_endpoint=hf_endpoint,
+                local_files_only=local_files_only,
+                **quality_strategy,
+                **reliability,
+                subtitle_formats=subtitle_formats,
+                ass_style_id=ass_style_id,
             )
-            thread.start()
-            self.send_json({"ok": True, "message": "retry-failed 已启动，仅重试之前失败的任务"}, status=202)
+            self.send_json(payload, status=status)
             return
 
-        # ── Language Profile API (POST) ──
+        # Language Profile API (POST)
         if parsed.path == "/api/language-profiles":
             body = self._read_json_body()
             if not body:
-                self.send_error_json(400, "请求体为空")
-                return
-            from language_profile_store import upsert_language_profile, validate_language_profile
-            errors = validate_language_profile(body)
-            if errors:
-                self.send_error_json(400, "; ".join(errors))
+                self.send_error_json(400, "Request body is empty.")
                 return
             try:
-                result = upsert_language_profile(body)
-                self.send_json({"ok": True, "profile": result}, status=201)
+                payload, status = save_profile_payload(body)
+                self.send_json(payload, status=status)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
 
         # Language Profile activate
         if parsed.path.startswith("/api/language-profiles/") and parsed.path.endswith("/activate"):
-            lpid = parsed.path.split("/")[3]
-            from language_profile_store import set_active_language_profile
+            lpid = unquote(parsed.path.split("/")[3])
             try:
-                set_active_language_profile(lpid)
-                self.send_json({"ok": True, "active": lpid})
+                self.send_json(activate_profile_payload(lpid))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
 
-        # ── Provider API (POST) ──
+        # Provider API (POST)
         if parsed.path == "/api/providers":
             body = self._read_json_body()
             if not body:
-                self.send_error_json(400, "请求体为空")
+                self.send_error_json(400, "Request body is empty.")
                 return
-            from provider_store import upsert_provider, mask_api_key
             try:
-                result = upsert_provider(body)
-                result["api_key_masked"] = mask_api_key(result.pop("api_key", ""))
-                self.send_json({"ok": True, "provider": result}, status=201)
+                payload, status = save_provider_payload(body)
+                self.send_json(payload, status=status)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
 
         # Provider activate
         if parsed.path.startswith("/api/providers/") and parsed.path.endswith("/activate"):
-            provider_id = parsed.path.split("/")[3]
-            from provider_store import set_active_provider
+            provider_id = unquote(parsed.path.split("/")[3])
             try:
-                set_active_provider(provider_id)
-                self.send_json({"ok": True, "active": provider_id})
+                self.send_json(activate_provider_payload(provider_id))
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
             return
 
         # Provider test
         if parsed.path.startswith("/api/providers/") and parsed.path.endswith("/test"):
-            provider_id = parsed.path.split("/")[3]
-            from provider_store import test_provider_connection
-            result = test_provider_connection(provider_id)
-            self.send_json(result)
+            provider_id = unquote(parsed.path.split("/")[3])
+            self.send_json(test_provider_payload(provider_id))
             return
 
         if parsed.path == "/api/storage/cleanup":
@@ -424,16 +654,74 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/files/inspect":
             body = self._read_json_body() or {}
-            self.send_json(_inspect_input_file(body))
+            self.send_json(
+                inspect_input_file(
+                    body, output_dir=OUTPUT_DIR, supported_extensions=SUPPORTED_MEDIA_EXTENSIONS
+                )
+            )
+            return
+
+        if parsed.path == "/api/runtime/download":
+            body = self._read_json_body() or {}
+            components = body.get("components") or []
+            if isinstance(components, str):
+                components = [components]
+            dry_run = body.get("dry_run", True) is not False
+            self.send_json(_runtime_download(components, dry_run=dry_run))
+            return
+
+        if parsed.path == "/api/runtime/import-package":
+            try:
+                if "multipart/form-data" in self.headers.get("Content-Type", ""):
+                    form = self.read_multipart_form()
+                    self.send_json(_runtime_import_uploaded_package(form))
+                else:
+                    body = self._read_json_body() or {}
+                    self.send_json(_runtime_import_package(body))
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+            return
+
+        if parsed.path == "/api/runtime/diagnostic-bundle":
+            from diagnostic_bundle import DiagnosticBundleBusy
+            from runtime_api import create_runtime_diagnostic_bundle
+
+            try:
+                self.send_json(create_runtime_diagnostic_bundle(), status=201)
+            except DiagnosticBundleBusy as exc:
+                self.send_error_json(409, str(exc))
             return
 
         if parsed.path != "/api/jobs":
+            # Check for /api/jobs/<job_id>/retry before 404
+            retry_match = None
+            if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/retry"):
+                retry_match = parsed.path[len("/api/jobs/"):][:-len("/retry")]
+            if retry_match:
+                job_id = retry_match
+                safe_job = get_job(job_id)
+                if safe_job is None:
+                    self.send_error_json(404, "Job not found")
+                    return
+                if safe_job.get("status") != "failed":
+                    self.send_error_json(400, "只能重试失败的任务")
+                    return
+                if not safe_job.get("can_retry"):
+                    self.send_error_json(400, safe_job.get("retry_reason") or "无法重试此任务")
+                    return
+                new_job = retry_job(job_id)
+                if new_job is None:
+                    self.send_error_json(500, "重试失败：无法创建新任务")
+                    return
+                self.send_json({"ok": True, "job": new_job}, status=201)
+                return
+
             self.send_error_json(404, "Not found")
             return
 
         try:
             form = self.read_multipart_form()
-            job = create_job(form)
+            job = start_job(form)
         except ValueError as exc:
             self.send_error_json(400, str(exc))
             return
@@ -441,16 +729,33 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error_json(500, f"Could not create job: {exc}")
             return
 
-        thread = threading.Thread(target=run_job, args=(job["id"],), daemon=True)
-        thread.start()
-        # Use get_job() for response to strip _api_key
-        self.send_json(get_job(job["id"]), status=201)
+        self.send_json(job, status=201)
 
     def _log_request(self) -> None:
         print(f"[web] {self.command} {self.path}", flush=True)
 
+    def _authorize_request(self) -> bool:
+        failure = validate_request(self)
+        if failure is None:
+            return True
+        status, code, message = failure
+        self.send_error_json(status, message, code=code)
+        return False
+
     def _handle_exception(self, exc: Exception) -> None:
         import traceback
+
+        if isinstance(exc, ConfigCorruptError):
+            self.send_error_json(
+                409,
+                "The local configuration is corrupt. Review /api/config/status before recovery.",
+                code="config_corrupt",
+            )
+            return
+
+        if isinstance(exc, RequestBodyError):
+            self.send_error_json(400, str(exc), code="invalid_json")
+            return
 
         traceback.print_exc()
         try:
@@ -463,7 +768,7 @@ class Handler(BaseHTTPRequestHandler):
             redacted = {}
             for key, value in obj.items():
                 lowered = str(key).lower()
-                if "api_key" in lowered or lowered in {"key", "token", "secret"}:
+                if _is_secret_like_key(lowered):
                     redacted[key] = redact_secret(str(value or ""))
                 else:
                     redacted[key] = self._redact_payload(value)
@@ -473,13 +778,20 @@ class Handler(BaseHTTPRequestHandler):
         return obj
 
     def _read_json_body(self) -> dict | None:
-        """读取 JSON 请求体。Content-Type 检查宽松。"""
-        length = int(self.headers.get("Content-Length", "0"))
+        """Read an application/json request body after request validation."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise RequestBodyError("Invalid Content-Length.") from exc
         if length <= 0:
             return None
+        if length > MAX_JSON_BYTES:
+            raise RequestBodyError("JSON request body is too large.")
         try:
             raw = self.rfile.read(length)
             body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise RequestBodyError("JSON request body must be an object.")
             print(
                 "[web] payload "
                 + json.dumps(self._redact_payload(body), ensure_ascii=False),
@@ -488,7 +800,7 @@ class Handler(BaseHTTPRequestHandler):
             return body
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             print(f"[web] invalid JSON payload: {exc}", flush=True)
-            return None
+            raise RequestBodyError("Malformed JSON request body.") from exc
 
     def read_multipart_form(self) -> dict:
         content_type = self.headers.get("Content-Type", "")
@@ -527,17 +839,31 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, payload: dict, status: int = 200) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            self._send_security_headers()
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            # A local browser can close a tab or cancel polling while a response
+            # is being written. Treat that as a completed request lifecycle, not
+            # as an application failure that triggers a second response attempt.
+            return
 
-    def send_error_json(self, status: int, message: str) -> None:
-        self.send_json({"ok": False, "error": message}, status=status)
+    def send_error_json(self, status: int, message: str, code: str | None = None) -> None:
+        payload = {"ok": False, "error": message}
+        if code:
+            payload["code"] = code
+        self.send_json(payload, status=status)
+
+    def _send_security_headers(self) -> None:
+        for name, value in security_headers():
+            self.send_header(name, value)
 
     def send_file(self, path: Path, content_type: str, download_name: str | None = None) -> None:
         if not path.exists():
@@ -547,6 +873,7 @@ class Handler(BaseHTTPRequestHandler):
         data = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        self._send_security_headers()
         if path.resolve() == (WEB_ROOT / "index.html").resolve():
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
             self.send_header("Pragma", "no-cache")
@@ -561,199 +888,105 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
-# ── Pipeline API helpers ──────────────────────────────────────────────────
+def _runtime_diagnostics() -> dict:
+    """Return environment diagnostics for the local web process."""
+    from runtime_api import get_runtime_diagnostics
+
+    return get_runtime_diagnostics()
 
 
-def _run_pipeline_command(action: str, timeout: int = 30, input_dir: str = "") -> dict:
-    """Run batch_worker.py --<action> and return structured result."""
-    command = [
-        sys.executable, "-B",
-        str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
-        f"--{action}",
-    ]
-    if input_dir:
-        command += ["--input", input_dir]
-    env = os.environ.copy()
-    env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
-    env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
-    # Inject PYTHONPATH so cross-module imports work
-    _src = PROJECT_ROOT / "src"
-    _pp = ";".join(str(_src / sub) for sub in ["core", "pipeline", "config", "web", "tools"])
-    env["PYTHONPATH"] = _pp
-    force_utf8_env(env)
-    clear_proxy_env(env)
-
-    try:
-        result = subprocess.run(
-            command,
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-        )
-        return {
-            "ok": result.returncode == 0,
-            "command": action,
-            "output": result.stdout,
-            "error": result.stderr,
-            "returncode": result.returncode,
-        }
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "command": action, "error": f"命令超时（{timeout}s）"}
-    except FileNotFoundError:
-        return {"ok": False, "command": action, "error": f"Python 解释器未找到: {sys.executable}"}
-    except Exception as exc:
-        return {"ok": False, "command": action, "error": str(exc)}
+def _first_query_value(query: dict, key: str) -> str:
+    values = query.get(key) or [""]
+    return str(values[0] or "").strip()
 
 
-def _run_pipeline_background(
-    action: str,
-    provider_id: str = "",
-    language_profile_id: str = "",
-    input_dir: str = "",
-    model: str = "small",
-    device: str = "cpu",
-    compute_type: str = "",
-    translate_enabled: bool = True,
-    language: str = "",
-) -> None:
-    """Run batch_worker.py with --<action> in background, writing output to pipeline log.
+def _parse_asr_request_payload(body: dict) -> dict[str, str]:
+    mode = str(body.get("asr_mode") or "").strip()
+    language = str(body.get("language") or "").strip()
+    if not mode and not language:
+        return {"asr_mode": "", "language": ""}
+    from asr_runtime import normalize_asr_request
 
-    Args:
-        action: "run" (full pipeline) or "retry-failed" (retry only)
-        provider_id: optional provider ID for LLM API config
-        language_profile_id: optional language profile ID for ASR/translation/quality config
-        input_dir: optional input directory path (default: project input/)
-        model: Whisper model size (default: small)
-        device: compute device (default: cpu)
-        compute_type: quantization type (default: auto)
-        translate_enabled: whether to enable LLM translation (default: True)
-        language: source language code (default: auto-detect)
-    """
-    PIPELINE_LOG.parent.mkdir(parents=True, exist_ok=True)
-
-    if action == "run":
-        target_dir = input_dir if input_dir else str(PROJECT_ROOT / "input")
-        command = [
-            sys.executable, "-B",
-            str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
-            "--input", target_dir,
-        ]
-    else:
-        command = [
-            sys.executable, "-B",
-            str(PROJECT_ROOT / "src" / "pipeline" / "batch_worker.py"),
-            f"--{action}",
-        ]
-
-    # Auto-detect active provider if not specified
-    if not provider_id:
-        try:
-            from provider_store import get_active_provider
-            active = get_active_provider()
-            if active:
-                provider_id = active.get("id", "")
-        except Exception:
-            pass
-
-    # Auto-detect active language profile if not specified
-    if not language_profile_id:
-        try:
-            from language_profile_store import get_active_language_profile
-            active_lp = get_active_language_profile()
-            if active_lp:
-                language_profile_id = active_lp.get("id", "")
-        except Exception:
-            pass
-
-    if provider_id:
-        command += ["--provider", provider_id]
-    if language_profile_id:
-        command += ["--language-profile", language_profile_id]
-    if model:
-        command += ["--model", model]
-    if device:
-        command += ["--device", device]
-    if compute_type:
-        command += ["--compute-type", compute_type]
-    if language:
-        command += ["--language", language]
-    if not translate_enabled:
-        command += ["--no-translate"]
-
-    env = os.environ.copy()
-    env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
-    env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
-    # Inject PYTHONPATH so cross-module imports work
-    _src = PROJECT_ROOT / "src"
-    _pp = ";".join(str(_src / sub) for sub in ["core", "pipeline", "config", "web", "tools"])
-    env["PYTHONPATH"] = _pp
-    force_utf8_env(env)
-    clear_proxy_env(env)
-
-    action_label = {"run": "完整流水线", "retry-failed": "重试失败任务"}.get(action, action)
-    started_at = time.strftime("%Y-%m-%d %H:%M:%S")
-    with PIPELINE_LOG.open("a", encoding="utf-8") as log:
-        log.write(f"\n{'='*60}\n")
-        log.write(f"  [{action_label}] 开始于 {started_at}\n")
-        log.write(f"  命令: {' '.join(command)}\n")
-        if provider_id:
-            log.write(f"  Provider: {provider_id}\n")
-        if language_profile_id:
-            log.write(f"  Language Profile: {language_profile_id}\n")
-        log.write(f"{'='*60}\n")
-
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        )
-        with PIPELINE_TASK_LOCK:
-            PIPELINE_TASK["pid"] = process.pid
-
-        assert process.stdout is not None
-        with PIPELINE_LOG.open("a", encoding="utf-8") as log:
-            for line in process.stdout:
-                log.write(clean_log_line(line))
-                log.flush()
-
-        returncode = process.wait()
-        finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        with PIPELINE_LOG.open("a", encoding="utf-8") as log:
-            log.write(f"\n[{action_label}] 完成于 {finished_at}, returncode={returncode}\n")
-    except Exception as exc:
-        with PIPELINE_LOG.open("a", encoding="utf-8") as log:
-            log.write(f"\n[{action_label}] 异常: {exc}\n")
-    finally:
-        with PIPELINE_TASK_LOCK:
-            PIPELINE_TASK["running"] = False
-            PIPELINE_TASK["pid"] = None
+    normalized_mode, normalized_language = normalize_asr_request(mode, language)
+    return {
+        "asr_mode": normalized_mode,
+        "language": normalized_language or "",
+    }
 
 
-def _read_pipeline_log() -> dict:
-    """Read pipeline log file and return its contents."""
-    if not PIPELINE_LOG.exists():
-        return {"ok": True, "lines": [], "text": ""}
-    try:
-        text = PIPELINE_LOG.read_text(encoding="utf-8")
-        # Return last 200 lines max
-        lines = text.splitlines()
-        if len(lines) > 200:
-            lines = lines[-200:]
-            text = "\n".join(lines)
-        return {"ok": True, "lines": lines, "text": text}
-    except OSError as exc:
-        return {"ok": False, "error": str(exc), "lines": [], "text": ""}
+def _parse_translation_reliability_payload(body: dict) -> dict:
+    if (
+        "translation_reliability_mode" not in body
+        and "translation_max_extra_requests" not in body
+    ):
+        return {}
+    from translation_reliability import normalize_reliability_config
+
+    normalized = normalize_reliability_config(
+        body.get("translation_reliability_mode", "off"),
+        max_extra_requests=body.get("translation_max_extra_requests", 12),
+    )
+    return {
+        "translation_reliability_mode": normalized["mode"],
+        "translation_max_extra_requests": normalized["max_extra_requests"],
+    }
+
+
+def _parse_quality_strategy_payload(body: dict) -> dict:
+    from translation_strategy import normalize_translation_strategy
+
+    result: dict[str, object] = {}
+    if "translation_strategy_mode" in body or "translation_scene_gap_seconds" in body:
+        strategy = normalize_translation_strategy({
+            "mode": body.get("translation_strategy_mode", "standard"),
+            "scene_gap_seconds": body.get("translation_scene_gap_seconds", 30.0),
+        })
+        result["translation_strategy_mode"] = strategy["mode"]
+        result["translation_scene_gap_seconds"] = strategy["scene_gap_seconds"]
+    return result
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _effective_translation_config(query: dict | None = None) -> dict:
+    """Resolve selected translation config without writing any local state."""
+    from provider_profile_api import effective_translation_config
+
+    return effective_translation_config(query)
+
+
+def _runtime_download_plan(components: list[str] | None = None) -> dict:
+    from runtime_api import get_runtime_download_plan
+
+    return get_runtime_download_plan(components or None)
+
+
+def _runtime_download(components: list[str], dry_run: bool = True) -> dict:
+    from runtime_api import run_runtime_download
+
+    return run_runtime_download(components or [], dry_run=dry_run)
+
+
+def _runtime_import_package(body: dict) -> dict:
+    from runtime_api import import_runtime_package
+
+    return import_runtime_package(body)
+
+
+def _runtime_import_uploaded_package(form: dict) -> dict:
+    from runtime_api import import_uploaded_runtime_package
+
+    return import_uploaded_runtime_package(
+        form=form,
+        project_root=PROJECT_ROOT,
+        sanitize_filename=sanitize_filename,
+    )
 
 
 def _format_bytes(size: int) -> str:
@@ -764,6 +997,12 @@ def _format_bytes(size: int) -> str:
             return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
         value /= 1024
     return f"{size} B"
+
+
+def _content_type_for_artifact(path: Path) -> str:
+    if path.suffix.lower() == ".json":
+        return "application/json; charset=utf-8"
+    return "application/x-subrip; charset=utf-8"
 
 
 def _sum_files(paths: list[Path]) -> tuple[int, int]:
@@ -781,562 +1020,18 @@ def _sum_files(paths: list[Path]) -> tuple[int, int]:
 
 def _storage_status() -> dict:
     """Return lightweight project storage info without scanning model caches."""
-    audio_count, audio_size = _sum_files(list(WORK_DIR.glob("*.16k.wav")))
-    upload_count, upload_size = _sum_files([p for p in UPLOAD_DIR.iterdir()] if UPLOAD_DIR.exists() else [])
-    translation_cache = WORK_DIR / "translation-cache"
-    cache_files = list(translation_cache.glob("*.json")) if translation_cache.exists() else []
-    cache_count, cache_size = _sum_files(cache_files)
-    return {
-        "ok": True,
-        "work_audio": {
-            "path": str(WORK_DIR),
-            "count": audio_count,
-            "bytes": audio_size,
-            "display": _format_bytes(audio_size),
-        },
-        "uploads": {
-            "path": str(UPLOAD_DIR),
-            "count": upload_count,
-            "bytes": upload_size,
-            "display": _format_bytes(upload_size),
-        },
-        "translation_cache": {
-            "path": str(translation_cache),
-            "count": cache_count,
-            "bytes": cache_size,
-            "display": _format_bytes(cache_size),
-            "managed_by_cleanup": False,
-        },
-        "model_cache": {
-            "path": str(PROJECT_ROOT / ".cache" / "huggingface"),
-            "managed_by_cleanup": False,
-        },
-        "note": "Stopping the web service does not automatically delete caches.",
-    }
+    from storage_api import storage_status
+
+    return storage_status(project_root=PROJECT_ROOT, work_dir=WORK_DIR, upload_dir=UPLOAD_DIR)
 
 
 def _cleanup_transient_files() -> dict:
     """Delete only safe, reproducible intermediates inside the project."""
-    deleted: list[str] = []
-    errors: list[str] = []
-    targets: list[Path] = []
-    if WORK_DIR.exists():
-        targets.extend(WORK_DIR.glob("*.16k.wav"))
-    if UPLOAD_DIR.exists():
-        targets.extend(path for path in UPLOAD_DIR.iterdir() if path.is_file())
+    from storage_api import cleanup_transient_files
 
-    allowed_roots = [WORK_DIR.resolve(), UPLOAD_DIR.resolve()]
-    for target in targets:
-        try:
-            resolved = target.resolve()
-            if not any(resolved.is_relative_to(root) for root in allowed_roots):
-                errors.append(f"Skipped unexpected path: {target}")
-                continue
-            size = resolved.stat().st_size
-            resolved.unlink()
-            deleted.append(f"{target.name} ({_format_bytes(size)})")
-        except OSError as exc:
-            errors.append(f"{target}: {exc}")
-
-    status = _storage_status()
-    status.update({
-        "ok": not errors,
-        "deleted": deleted,
-        "errors": errors,
-    })
-    return status
-
-
-def _inspect_input_file(body: dict) -> dict:
-    """Inspect a local media path without reading, copying, or creating files."""
-    path_text = str(body.get("path") or "").strip()
-    model = str(body.get("model") or "small").strip() or "small"
-    target_language = str(body.get("target_language") or "zh-CN").strip() or "zh-CN"
-    translation_mode = str(body.get("translation_mode") or "bilingual").strip()
-    mode_tag = "translated" if translation_mode == "translated" else "bilingual"
-
-    if not path_text:
-        return {
-            "ok": False,
-            "error": "请输入本机文件路径。",
-            "path": "",
-            "exists": False,
-            "supported": False,
-        }
-
-    try:
-        input_path = Path(path_text).expanduser().resolve()
-    except OSError as exc:
-        return {
-            "ok": False,
-            "error": f"路径无法解析: {exc}",
-            "path": path_text,
-            "exists": False,
-            "supported": False,
-        }
-
-    suffix = input_path.suffix.lower()
-    exists = input_path.exists()
-    is_file = input_path.is_file() if exists else False
-    supported = suffix in SUPPORTED_MEDIA_EXTENSIONS
-    readable = bool(exists and is_file and os.access(input_path, os.R_OK))
-    size = 0
-    mtime = None
-    if exists and is_file:
-        try:
-            stat = input_path.stat()
-            size = stat.st_size
-            mtime = stat.st_mtime
-        except OSError:
-            readable = False
-
-    source_output = OUTPUT_DIR / f"{input_path.stem}.{model}.srt"
-    translated_output = OUTPUT_DIR / f"{input_path.stem}.{model}.{mode_tag}.{target_language}.srt"
-    warnings: list[str] = []
-    if not exists:
-        warnings.append("文件不存在，请检查路径是否完整。")
-    elif not is_file:
-        warnings.append("这个路径不是文件。单文件处理需要视频或音频文件。")
-    if exists and is_file and not supported:
-        warnings.append(f"扩展名 {suffix or '(无扩展名)'} 暂不支持。")
-    if exists and is_file and not readable:
-        warnings.append("当前服务进程可能没有读取该文件的权限。")
-    if source_output.exists():
-        warnings.append("预计原文 SRT 已存在，重新处理会覆盖同名输出。")
-    if translated_output.exists():
-        warnings.append("预计翻译 SRT 已存在，重新翻译会覆盖同名输出。")
-
-    return {
-        "ok": True,
-        "path": str(input_path),
-        "exists": exists,
-        "is_file": is_file,
-        "supported": supported,
-        "readable": readable,
-        "extension": suffix,
-        "bytes": size,
-        "display_size": _format_bytes(size),
-        "modified_at": mtime,
-        "model": model,
-        "target_language": target_language,
-        "translation_mode": mode_tag,
-        "source_output": str(source_output.resolve()),
-        "source_output_exists": source_output.exists(),
-        "translated_output": str(translated_output.resolve()),
-        "translated_output_exists": translated_output.exists(),
-        "warnings": warnings,
-        "ready": bool(exists and is_file and supported and readable),
-    }
-
-
-def create_job(form: dict) -> dict:
-    input_path = resolve_input(form)
-    model = get_text(form, "model", "small")
-    device = get_text(form, "device", "cpu")
-    compute_type = get_text(form, "compute_type", "")
-    language = get_text(form, "language", "")
-    hf_endpoint = get_text(form, "hf_endpoint", "").strip()
-    local_files_only = get_text(form, "local_files_only", "") == "on"
-    beam_size = get_text(form, "beam_size", "5")
-    vad = get_text(form, "vad", "on") == "on"
-    condition_on_previous_text = get_text(form, "condition_on_previous_text", "on") == "on"
-
-    if device not in {"cpu", "cuda", "auto"}:
-        raise ValueError("Invalid device.")
-
-    try:
-        beam_size_int = int(beam_size)
-    except ValueError as exc:
-        raise ValueError("Beam size must be a number.") from exc
-
-    if beam_size_int < 1 or beam_size_int > 10:
-        raise ValueError("Beam size must be between 1 and 10.")
-
-    # Translation options
-    translate_enabled = get_text(form, "translate_enabled", "") == "on"
-    provider_select = get_text(form, "provider_select", "").strip()
-    api_provider = get_text(form, "api_provider", "openai-compatible")
-    api_base = get_text(form, "api_base", "").strip()
-    api_key = get_text(form, "api_key", "").strip()
-    llm_model = get_text(form, "llm_model", "").strip()
-    target_language = get_text(form, "target_language", "zh-CN").strip()
-    translation_batch_size = get_text(form, "translation_batch_size", "20")
-    translation_temperature = get_text(form, "translation_temperature", "0.2")
-    translation_mode = get_text(form, "translation_mode", "bilingual")
-    context_window = get_text(form, "context_window", "3")
-    translation_prompt = get_text(form, "translation_prompt", "")
-
-    if translate_enabled:
-        if provider_select:
-            try:
-                from provider_store import resolve_provider_config
-                provider_config = resolve_provider_config(provider_select)
-            except Exception as exc:
-                raise ValueError(f"Provider config error: {exc}") from exc
-            api_provider = api_provider or provider_config.get("api_provider", "openai-compatible")
-            api_base = api_base or provider_config.get("api_base", "")
-            api_key = api_key or provider_config.get("api_key", "")
-            llm_model = llm_model or provider_config.get("llm_model", "")
-        if not api_base:
-            raise ValueError("Translation enabled but API Base is empty.")
-        if not api_key:
-            raise ValueError("Translation enabled but API Key is empty.")
-        if not llm_model:
-            raise ValueError("Translation enabled but LLM Model is empty.")
-        if api_provider not in {"openai-compatible", "anthropic"}:
-            raise ValueError("Invalid API provider.")
-        try:
-            batch_size_int = int(translation_batch_size)
-            if batch_size_int < 1 or batch_size_int > 50:
-                raise ValueError
-        except (ValueError, TypeError):
-            raise ValueError("Translation batch size must be a number between 1 and 50.")
-        try:
-            temperature_float = float(translation_temperature)
-            if temperature_float < 0 or temperature_float > 1:
-                raise ValueError
-        except (ValueError, TypeError):
-            raise ValueError("Translation temperature must be a number between 0 and 1.")
-        try:
-            context_window_int = int(context_window)
-            if context_window_int < 0 or context_window_int > 10:
-                raise ValueError
-        except (ValueError, TypeError):
-            raise ValueError("Context window must be a number between 0 and 10.")
-
-    language_profile = get_text(form, "language_profile", "").strip()
-
-    job_id = uuid.uuid4().hex[:12]
-    job = {
-        "id": job_id,
-        "status": "queued",
-        "created_at": time.time(),
-        "updated_at": time.time(),
-        "input": str(input_path),
-        "output": "",
-        "source_output": "",
-        "translated_output": "",
-        "returncode": None,
-        "options": {
-            "model": model,
-            "device": device,
-            "compute_type": compute_type,
-            "language": language,
-            "hf_endpoint": hf_endpoint,
-            "local_files_only": local_files_only,
-            "beam_size": beam_size_int,
-            "vad": vad,
-            "condition_on_previous_text": condition_on_previous_text,
-            "translate_enabled": translate_enabled,
-            "provider_id": provider_select,
-            "api_provider": api_provider,
-            "api_base": api_base,
-            "api_key_masked": mask_secret(api_key) if api_key else "",
-            "llm_model": llm_model,
-            "target_language": target_language,
-            "language_profile": language_profile,
-            "translation_batch_size": translation_batch_size,
-            "translation_temperature": translation_temperature,
-            "translation_mode": translation_mode,
-            "context_window": context_window,
-            "translation_prompt": translation_prompt,
-        },
-        # Store actual api_key in memory for subprocess; never returned to frontend
-        "_api_key": api_key,
-        "logs": ["Queued."],
-    }
-
-    with JOBS_LOCK:
-        JOBS[job_id] = job
-
-    return job
-
-
-def resolve_input(form: dict) -> Path:
-    upload = form.get("file")
-    path_text = get_text(form, "path", "").strip()
-
-    if path_text:
-        path = Path(path_text).expanduser().resolve()
-        if not path.exists():
-            raise ValueError(f"Input path does not exist: {path}")
-        return path
-
-    if isinstance(upload, dict) and upload.get("content"):
-        filename = sanitize_filename(str(upload.get("filename") or "upload.bin"))
-        saved_path = UPLOAD_DIR / f"{int(time.time())}-{uuid.uuid4().hex[:8]}-{filename}"
-        saved_path.write_bytes(upload["content"])
-        return saved_path.resolve()
-
-    raise ValueError("Enter a local target file path, or upload a small sample file.")
-
-
-def run_job(job_id: str) -> None:
-    # Read from raw JOBS to get _api_key (get_job() strips it)
-    with JOBS_LOCK:
-        raw_job = JOBS.get(job_id)
-    if raw_job is None:
-        return
-
-    set_job(job_id, status="running", logs=raw_job["logs"] + ["Starting transcription..."])
-
-    options = raw_job["options"]
-    command = [
-        sys.executable,
-        str(PROJECT_ROOT / "src" / "core" / "transcribe.py"),
-        raw_job["input"],
-        "--model",
-        options["model"],
-        "--device",
-        options["device"],
-        "--output-dir",
-        str(OUTPUT_DIR),
-        "--model-dir",
-        str(MODEL_DIR),
-        "--work-dir",
-        str(WORK_DIR),
-        "--beam-size",
-        str(options["beam_size"]),
-    ]
-
-    if options["compute_type"]:
-        command += ["--compute-type", options["compute_type"]]
-    if options["language"]:
-        command += ["--language", options["language"]]
-    if options["local_files_only"]:
-        command += ["--local-files-only"]
-    if not options["vad"]:
-        command += ["--no-vad"]
-    if not options.get("condition_on_previous_text", True):
-        command += ["--no-condition-on-previous-text"]
-
-    # Language Profile
-    lang_profile = options.get("language_profile", "")
-    if lang_profile:
-        command += ["--language-profile", lang_profile]
-
-    # Translation args (API key passed via env var, NOT command line)
-    if options.get("translate_enabled"):
-        api_key = raw_job.get("_api_key", "")
-        command += [
-            "--translate",
-            "--api-provider", str(options.get("api_provider", "openai-compatible")),
-            "--api-base", str(options.get("api_base", "")),
-            "--llm-model", str(options.get("llm_model", "")),
-            "--target-language", str(options.get("target_language", "zh-CN")),
-            "--translation-batch-size", str(options.get("translation_batch_size", "20")),
-            "--translation-temperature", str(options.get("translation_temperature", "0.2")),
-            "--translation-mode", str(options.get("translation_mode", "bilingual")),
-            "--context-window", str(options.get("context_window", "3")),
-        ]
-        prompt = str(options.get("translation_prompt", ""))
-        if prompt:
-            command += ["--translation-prompt", prompt]
-
-    env = os.environ.copy()
-    env["HF_HOME"] = str(PROJECT_ROOT / ".cache" / "huggingface")
-    env["HF_HUB_CACHE"] = str(PROJECT_ROOT / ".cache" / "huggingface" / "hub")
-    # Inject PYTHONPATH so cross-module imports work for transcribe.py
-    _src = PROJECT_ROOT / "src"
-    _pp = ";".join(str(_src / sub) for sub in ["core", "pipeline", "config", "web", "tools"])
-    env["PYTHONPATH"] = _pp
-    force_utf8_env(env)
-    clear_proxy_env(env)
-    if options["hf_endpoint"]:
-        env["HF_ENDPOINT"] = options["hf_endpoint"]
-    if options.get("translate_enabled"):
-        env["SUBTITLE_LLM_API_KEY"] = raw_job.get("_api_key", "")
-
-    process = subprocess.Popen(
-        command,
-        cwd=str(PROJECT_ROOT),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
+    return cleanup_transient_files(
+        project_root=PROJECT_ROOT, work_dir=WORK_DIR, upload_dir=UPLOAD_DIR
     )
-
-    logs = get_job(job_id)["logs"]
-    assert process.stdout is not None
-    for line in process.stdout:
-        logs = append_log(job_id, line.rstrip())
-
-    returncode = process.wait()
-    source_output, translated_output = find_output_paths(raw_job)
-    quality_report = ""
-    review_needed = ""
-    if returncode == 0:
-        # ── 质量检查 ──
-        try:
-            from quality_checker import run_quality_check
-            from language_profile_store import get_language_profile, get_active_language_profile
-            report_dir = OUTPUT_DIR / "reports"
-            report_dir.mkdir(parents=True, exist_ok=True)
-            source_path = Path(source_output) if source_output else None
-            translated_path = Path(translated_output) if translated_output else None
-            if source_path and source_path.exists():
-                # 获取 Language Profile 质检阈值
-                profile_id = options.get("language_profile", "")
-                if not profile_id:
-                    active = get_active_language_profile()
-                    if active:
-                        profile_id = active.get("id", "")
-                thresholds = {}
-                if profile_id:
-                    profile = get_language_profile(profile_id)
-                    if profile:
-                        thresholds = profile.get("quality", {})
-                _ = run_quality_check(
-                    source_srt=source_path,
-                    translated_srt=translated_path if translated_path and translated_path.exists() else None,
-                    target_language=options.get("target_language", "zh-CN"),
-                    output_dir=report_dir,
-                    quality_thresholds=thresholds,
-                )
-                quality_report = str(report_dir / f"{source_path.stem}.quality_report.json")
-                review_needed = str(report_dir / f"{source_path.stem}.review_needed.srt")
-                logs = append_log(job_id, "Quality check completed.")
-        except Exception as exc:
-            logs = append_log(job_id, f"Quality check failed: {exc}")
-
-        set_job(job_id, status="done", returncode=returncode,
-                output=translated_output or source_output,
-                source_output=source_output,
-                translated_output=translated_output,
-                quality_report=quality_report,
-                review_needed=review_needed,
-                logs=logs + ["Finished."])
-    else:
-        set_job(job_id, status="failed", returncode=returncode,
-                output=translated_output or source_output,
-                source_output=source_output,
-                translated_output=translated_output,
-                logs=logs + [f"Failed with code {returncode}."])
-
-    # Clear API key from memory after job completes
-    with JOBS_LOCK:
-        job_record = JOBS.get(job_id)
-        if job_record:
-            job_record.pop("_api_key", None)
-
-
-def find_output_paths(job: dict | None) -> tuple[str, str]:
-    """Return (source_output, translated_output) paths."""
-    if not job:
-        return ("", "")
-    input_path = Path(job["input"])
-    model = job["options"]["model"]
-    options = job["options"]
-
-    source = OUTPUT_DIR / f"{input_path.stem}.{model}.srt"
-    source_str = str(source.resolve()) if source.exists() else ""
-
-    translated_str = ""
-    if options.get("translate_enabled"):
-        target = options.get("target_language", "zh-CN")
-        mode_tag = "bilingual" if options.get("translation_mode", "bilingual") == "bilingual" else "translated"
-        translated = OUTPUT_DIR / f"{input_path.stem}.{model}.{mode_tag}.{target}.srt"
-        translated_str = str(translated.resolve()) if translated.exists() else ""
-
-    return (source_str, translated_str)
-
-
-def mask_secret(value: str) -> str:
-    """Mask a secret value, showing only a prefix and suffix."""
-    if not value:
-        return ""
-    if len(value) <= 8:
-        return value[:2] + "***"
-    return value[:3] + "..." + value[-4:]
-
-
-def get_text(form: dict, key: str, default_value: str) -> str:
-    value = form.get(key, default_value)
-    return value if isinstance(value, str) else default_value
-
-
-def sanitize_filename(name: str) -> str:
-    clean = "".join(char for char in name if char not in '<>:"/\\|?*').strip()
-    return clean or "upload.bin"
-
-
-def get_job(job_id: str) -> dict | None:
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
-        if not job:
-            return None
-        # Exclude internal keys from serialization
-        safe = {k: v for k, v in job.items() if not k.startswith("_")}
-        return json.loads(json.dumps(safe, ensure_ascii=False))
-
-
-def set_job(job_id: str, **updates) -> None:
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
-        if not job:
-            return
-        job.update(updates)
-        job["updated_at"] = time.time()
-
-
-def append_log(job_id: str, line: str) -> list[str]:
-    with JOBS_LOCK:
-        job = JOBS[job_id]
-        if line:
-            job["logs"].append(clean_log_line(line))
-            job["logs"] = job["logs"][-300:]
-        job["updated_at"] = time.time()
-        return list(job["logs"])
-
-
-def clean_log_line(line: str) -> str:
-    """Keep browser logs readable and avoid long Chinese absolute paths."""
-    project = str(PROJECT_ROOT)
-    project_alt = project.replace("\\", "/")
-    cleaned = line.replace(project, ".").replace(project_alt, ".")
-    return cleaned
-
-
-def list_jobs() -> list[dict]:
-    with JOBS_LOCK:
-        return [
-            {
-                "id": job["id"],
-                "status": job["status"],
-                "input": job["input"],
-                "output": job.get("output", ""),
-                "source_output": job.get("source_output", ""),
-                "translated_output": job.get("translated_output", ""),
-                "quality_report": job.get("quality_report", ""),
-                "review_needed": job.get("review_needed", ""),
-                "options": job["options"],
-                "created_at": job["created_at"],
-                "updated_at": job["updated_at"],
-            }
-            for job in sorted(JOBS.values(), key=lambda item: item["created_at"], reverse=True)
-        ]
-
-
-def clear_proxy_env(env: dict[str, str]) -> None:
-    for key in (
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "ALL_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "all_proxy",
-        "GIT_HTTP_PROXY",
-        "GIT_HTTPS_PROXY",
-    ):
-        env.pop(key, None)
-
-
-def force_utf8_env(env: dict[str, str]) -> None:
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
 
 
 if __name__ == "__main__":

@@ -1,0 +1,38 @@
+[project]
+name = "cinesub-studio"
+version = "0.6.2"
+description = "Local subtitle transcription and translation studio"
+requires-python = ">=3.10,<3.14"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+    "src/core",
+    "src/pipeline",
+    "src/config",
+    "src/web",
+    "src/tools",
+]
+addopts = "-q -p no:cacheprovider"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+cache-dir = "work/ruff-cache"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501"]

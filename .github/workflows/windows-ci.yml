@@ -1,0 +1,51 @@
+name: Windows CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    env:
+      PYTHONPATH: src/core;src/pipeline;src/config;src/web;src/tools
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt -e .[dev]
+      - name: Version baseline
+        run: python -B src/tools/versioning.py check
+      - name: Python tests
+        run: python -m pytest
+      - name: Ruff
+        run: >-
+          python -m ruff check
+          src/web/request_security.py src/config/config_recovery.py src/tools/versioning.py
+          src/tools/venv_config.py
+          scripts/ci_policy_check.py tests/test_web_local_security.py
+          tests/test_config_recovery.py tests/test_config_recovery_http.py
+          tests/test_version_baseline.py tests/test_venv_config.py
+      - name: Import and core self-tests
+        shell: pwsh
+        run: |
+          python -B -c "import transcribe, subtitle_translate, quality_checker, batch_worker, web_server, download_model_file, runtime_env, runtime_paths, subtitle_model, runtime_api, pipeline_api; print('imports ok')"
+          python -B src/core/subtitle_translate.py --self-test
+          python -B src/core/quality_checker.py --self-test
+      - name: Node syntax
+        run: node --check desktop/main.js && node --check desktop/preload.js && node --check desktop/launch.js
+      - name: Repository policy scan
+        run: python -B scripts/ci_policy_check.py
+      - name: Web smoke
+        shell: pwsh
+        run: .\start_web.ps1 -Smoke -NoBrowser -NonInteractive
+      - name: Diff hygiene
+        run: git diff --check

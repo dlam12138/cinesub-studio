@@ -1,0 +1,852 @@
+from __future__ import annotations
+
+import json
+import hashlib
+import re
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from pathlib import Path
+
+from process_env import build_child_process_env, redact_project_path
+from runtime_paths import resolve_runtime_paths
+
+
+PATHS = resolve_runtime_paths()
+PROJECT_ROOT = PATHS.project_root
+APP_ROOT = PATHS.app_root
+SRC_ROOT = PATHS.src_root
+UPLOAD_DIR = PROJECT_ROOT / "uploads"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+MODEL_DIR = PROJECT_ROOT / "models"
+WORK_DIR = PROJECT_ROOT / "work"
+
+JOBS: dict[str, dict] = {}
+JOBS_LOCK = threading.Lock()
+
+SECRET_PATTERNS = (
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{4,}\b", re.IGNORECASE), "sk-***"),
+    (
+        re.compile(
+            r"([\"']?(?:api[_-]?key|token|secret)[\"']?\s*[:=]\s*)"
+            r"[\"']?[^\"'\s,}]+[\"']?",
+            re.IGNORECASE,
+        ),
+        r"\1***",
+    ),
+    (re.compile(r"((?:authorization\s*[:=]\s*)?bearer\s+)\S+", re.IGNORECASE), r"\1***"),
+)
+
+
+def start_job(form: dict) -> dict:
+    job = create_job(form)
+    thread = threading.Thread(target=run_job, args=(job["id"],), daemon=True)
+    thread.start()
+    safe_job = get_job(job["id"])
+    return safe_job if safe_job is not None else job
+
+
+def create_job(form: dict) -> dict:
+    from subtitle_model import DEFAULT_ASS_STYLE_ID, normalize_subtitle_formats, subtitle_format_status
+
+    input_path = resolve_input(form)
+    model = get_text(form, "model", "small")
+    device = get_text(form, "device", "auto")
+    compute_type = get_text(form, "compute_type", "")
+    language = get_text(form, "language", "")
+    asr_mode = get_text(form, "asr_mode", "").strip()
+    language_profile = get_text(form, "language_profile", "").strip()
+    if not asr_mode and not language and language_profile:
+        from language_profile_store import resolve_language_profile_config
+
+        profile = resolve_language_profile_config(language_profile)
+        asr_mode = str(profile.get("asr_mode") or "")
+        profile_asr = profile.get("asr", {})
+        language = str(profile_asr.get("language") or "")
+    from asr_runtime import normalize_asr_request
+
+    asr_mode, language = normalize_asr_request(asr_mode, language)
+    hf_endpoint = get_text(form, "hf_endpoint", "").strip()
+    local_files_only = get_text(form, "local_files_only", "") == "on"
+    beam_size = get_text(form, "beam_size", "5")
+    vad = get_text(form, "vad", "on") == "on"
+    condition_on_previous_text = get_text(form, "condition_on_previous_text", "on") == "on"
+
+    if device not in {"cpu", "cuda", "auto"}:
+        raise ValueError("Invalid device.")
+
+    try:
+        beam_size_int = int(beam_size)
+    except ValueError as exc:
+        raise ValueError("Beam size must be a number.") from exc
+
+    if beam_size_int < 1 or beam_size_int > 10:
+        raise ValueError("Beam size must be between 1 and 10.")
+    translate_enabled = get_text(form, "translate_enabled", "") == "on"
+    provider_select = get_text(form, "provider_select", "").strip()
+    api_provider = get_text(form, "api_provider", "openai-compatible")
+    api_base = get_text(form, "api_base", "").strip()
+    api_key = get_text(form, "api_key", "").strip()
+    llm_model = get_text(form, "llm_model", "").strip()
+    translation_quality_model = get_text(
+        form, "translation_quality_model", ""
+    ).strip()
+    target_language = get_text(form, "target_language", "zh-CN").strip()
+    translation_batch_size = get_text(form, "translation_batch_size", "20")
+    translation_temperature = get_text(form, "translation_temperature", "0.2")
+    translation_mode = get_text(form, "translation_mode", "bilingual")
+    context_window = get_text(form, "context_window", "3")
+    translation_prompt = get_text(form, "translation_prompt", "")
+    reliability_mode_raw = get_text(form, "translation_reliability_mode", "").strip()
+    reliability_limit_raw = get_text(form, "translation_max_extra_requests", "").strip()
+    reliability = None
+    if reliability_mode_raw or reliability_limit_raw:
+        from translation_reliability import normalize_reliability_config
+
+        reliability = normalize_reliability_config(
+            reliability_mode_raw or "off",
+            max_extra_requests=reliability_limit_raw or 12,
+        )
+    from translation_strategy import normalize_translation_strategy
+
+    translation_strategy = normalize_translation_strategy({
+        "mode": get_text(form, "translation_strategy_mode", "standard"),
+        "scene_gap_seconds": get_text(
+            form, "translation_scene_gap_seconds", "30"
+        ),
+    })
+    requested_formats = get_text(form, "subtitle_formats", "")
+    if get_text(form, "format_ass", "") == "on":
+        requested_formats = "srt,ass"
+    subtitle_formats = normalize_subtitle_formats(requested_formats)
+    ass_style_id = get_text(form, "ass_style_id", DEFAULT_ASS_STYLE_ID).strip() or DEFAULT_ASS_STYLE_ID
+    subtitle_status = subtitle_format_status(subtitle_formats, ass_style_id)
+
+    if translate_enabled:
+        if provider_select:
+            try:
+                from provider_store import resolve_provider_config
+
+                provider_config = resolve_provider_config(provider_select)
+            except Exception as exc:
+                raise ValueError(f"Provider config error: {exc}") from exc
+            api_provider = api_provider or provider_config.get("api_provider", "openai-compatible")
+            api_base = api_base or provider_config.get("api_base", "")
+            api_key = api_key or provider_config.get("api_key", "")
+            llm_model = llm_model or provider_config.get("llm_model", "")
+            translation_quality_model = (
+                translation_quality_model
+                or provider_config.get("translation_quality_model", "")
+            )
+        if not api_base:
+            raise ValueError("Translation enabled but API Base is empty.")
+        if not api_key:
+            raise ValueError("Translation enabled but API Key is empty.")
+        if not llm_model:
+            raise ValueError("Translation enabled but LLM Model is empty.")
+        if (
+            translation_strategy["mode"] in {
+                "wenyi_review", "semantic_wenyi_review"
+            }
+            and not translation_quality_model
+        ):
+            raise ValueError(
+                f"{translation_strategy['mode']} requires a configured Pro / "
+                "translation quality model."
+            )
+        if api_provider not in {"openai-compatible", "anthropic"}:
+            raise ValueError("Invalid API provider.")
+        try:
+            batch_size_int = int(translation_batch_size)
+            if batch_size_int < 1 or batch_size_int > 50:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("Translation batch size must be a number between 1 and 50.")
+        try:
+            temperature_float = float(translation_temperature)
+            if temperature_float < 0 or temperature_float > 1:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("Translation temperature must be a number between 0 and 1.")
+        try:
+            context_window_int = int(context_window)
+            if context_window_int < 0 or context_window_int > 10:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("Context window must be a number between 0 and 10.")
+
+    job_id = uuid.uuid4().hex[:12]
+    asr_signature_payload = {
+        "schema": 1,
+        "mode": asr_mode,
+        "language": language,
+        "model": model,
+        "device": device,
+        "compute_type": compute_type,
+        "beam_size": beam_size_int,
+        "vad": vad,
+    }
+    asr_signature = hashlib.sha256(
+        json.dumps(asr_signature_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    job = {
+        "id": job_id,
+        "status": "queued",
+        "stage": "queued",
+        "progress": 0,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "completed_at": None,
+        "input": str(input_path),
+        "output": "",
+        "source_output": "",
+        "translated_output": "",
+        "returncode": None,
+        "error_summary": "",
+        "semantic_review_report": "",
+        "asr_mode": asr_mode,
+        "language": language or "",
+        "language_detection": {},
+        "options": {
+            "model": model,
+            "device": device,
+            "compute_type": compute_type,
+            "asr_mode": asr_mode,
+            "language": language,
+            "asr_config_signature": asr_signature,
+            "hf_endpoint": hf_endpoint,
+            "local_files_only": local_files_only,
+            "beam_size": beam_size_int,
+            "vad": vad,
+            "condition_on_previous_text": condition_on_previous_text,
+            "translate_enabled": translate_enabled,
+            "provider_id": provider_select,
+            "api_provider": api_provider,
+            "api_base": api_base,
+            "api_key_masked": mask_secret(api_key) if api_key else "",
+            "llm_model": llm_model,
+            "translation_quality_model": translation_quality_model,
+            "target_language": target_language,
+            "language_profile": language_profile,
+            "translation_batch_size": translation_batch_size,
+            "translation_temperature": translation_temperature,
+            "translation_mode": translation_mode,
+            "context_window": context_window,
+            "translation_prompt": translation_prompt,
+            "translation_reliability_mode": reliability["mode"] if reliability else None,
+            "translation_max_extra_requests": reliability["max_extra_requests"] if reliability else None,
+            "translation_strategy_mode": translation_strategy["mode"],
+            "translation_scene_gap_seconds": translation_strategy["scene_gap_seconds"],
+            "subtitle_formats": subtitle_formats,
+            "ass_style_id": ass_style_id,
+            "subtitle_status": subtitle_status,
+        },
+        "_api_key": api_key,
+        "logs": ["Queued."],
+    }
+
+    with JOBS_LOCK:
+        JOBS[job_id] = job
+
+    return job
+
+
+def resolve_input(form: dict) -> Path:
+    upload = form.get("file")
+    path_text = get_text(form, "path", "").strip()
+
+    if path_text:
+        path = Path(path_text).expanduser().resolve()
+        if not path.exists():
+            raise ValueError(f"Input path does not exist: {path}")
+        return path
+
+    if isinstance(upload, dict) and upload.get("content"):
+        filename = sanitize_filename(str(upload.get("filename") or "upload.bin"))
+        saved_path = UPLOAD_DIR / f"{int(time.time())}-{uuid.uuid4().hex[:8]}-{filename}"
+        saved_path.parent.mkdir(parents=True, exist_ok=True)
+        saved_path.write_bytes(upload["content"])
+        return saved_path.resolve()
+
+    raise ValueError("Enter a local target file path, or upload a small sample file.")
+
+
+def run_job(job_id: str) -> None:
+    try:
+        _run_job_impl(job_id)
+    except Exception as exc:
+        message = clean_log_line(str(exc)) or exc.__class__.__name__
+        logs = append_log(job_id, f"Job failed: {message}")
+        set_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            progress=100,
+            returncode=-1,
+            error_summary=message,
+            completed_at=time.time(),
+            logs=logs,
+        )
+    finally:
+        with JOBS_LOCK:
+            job_record = JOBS.get(job_id)
+            if job_record:
+                job_record.pop("_api_key", None)
+
+
+def _run_job_impl(job_id: str) -> None:
+    with JOBS_LOCK:
+        raw_job = JOBS.get(job_id)
+    if raw_job is None:
+        return
+
+    logs = list(raw_job.get("logs", [])) + ["Starting transcription..."]
+    set_job(job_id, status="running", stage="transcribing", progress=10, logs=logs)
+
+    options = raw_job["options"]
+    command = [
+        sys.executable,
+        str(SRC_ROOT / "core" / "transcribe.py"),
+        raw_job["input"],
+        "--model",
+        options["model"],
+        "--device",
+        options["device"],
+        "--output-dir",
+        str(OUTPUT_DIR),
+        "--model-dir",
+        str(MODEL_DIR),
+        "--work-dir",
+        str(WORK_DIR),
+        "--beam-size",
+        str(options["beam_size"]),
+    ]
+
+    if options["compute_type"]:
+        command += ["--compute-type", options["compute_type"]]
+    command += ["--asr-mode", str(options.get("asr_mode", "auto"))]
+    if options["language"]:
+        command += ["--language", options["language"]]
+    if options["local_files_only"]:
+        command += ["--local-files-only"]
+    if not options["vad"]:
+        command += ["--no-vad"]
+    if not options.get("condition_on_previous_text", True):
+        command += ["--no-condition-on-previous-text"]
+    command += ["--subtitle-formats", ",".join(options.get("subtitle_formats", ["srt"]))]
+    command += ["--ass-style-id", str(options.get("ass_style_id", "clean-cn"))]
+
+    lang_profile = options.get("language_profile", "")
+    if lang_profile:
+        command += ["--language-profile", lang_profile]
+
+    if options.get("translate_enabled"):
+        command += [
+            "--translate",
+            "--api-provider",
+            str(options.get("api_provider", "openai-compatible")),
+            "--api-base",
+            str(options.get("api_base", "")),
+            "--llm-model",
+            str(options.get("llm_model", "")),
+            "--target-language",
+            str(options.get("target_language", "zh-CN")),
+            "--translation-batch-size",
+            str(options.get("translation_batch_size", "20")),
+            "--translation-temperature",
+            str(options.get("translation_temperature", "0.2")),
+            "--translation-mode",
+            str(options.get("translation_mode", "bilingual")),
+            "--context-window",
+            str(options.get("context_window", "3")),
+            "--translation-strategy-mode",
+            str(options.get("translation_strategy_mode", "standard")),
+            "--translation-scene-gap-seconds",
+            str(options.get("translation_scene_gap_seconds", "30")),
+        ]
+        quality_model = str(options.get("translation_quality_model") or "")
+        if quality_model:
+            command += ["--translation-quality-model", quality_model]
+        prompt = str(options.get("translation_prompt", ""))
+        if prompt:
+            command += ["--translation-prompt", prompt]
+        reliability_mode = options.get("translation_reliability_mode")
+        reliability_limit = options.get("translation_max_extra_requests")
+        if reliability_mode is not None:
+            command += ["--translation-reliability-mode", str(reliability_mode)]
+        if reliability_limit is not None:
+            command += ["--translation-max-extra-requests", str(reliability_limit)]
+
+    env = _job_env()
+    if options["hf_endpoint"]:
+        env["HF_ENDPOINT"] = options["hf_endpoint"]
+    if options.get("translate_enabled"):
+        env["SUBTITLE_LLM_API_KEY"] = raw_job.get("_api_key", "")
+
+    process = subprocess.Popen(
+        command,
+        cwd=str(PROJECT_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+
+    assert process.stdout is not None
+    for line in process.stdout:
+        logs = append_log(job_id, line.rstrip(), logs)
+        _infer_stage_from_logs(job_id, logs)
+
+    returncode = process.wait()
+    source_output, translated_output = find_output_paths(raw_job)
+    quality_report = ""
+    review_needed = ""
+    semantic_review_report = ""
+    language_detection: dict = {}
+    if returncode == 0:
+        try:
+            from language_profile_store import get_active_language_profile, get_language_profile
+            from quality_checker import run_quality_check
+
+            report_dir = OUTPUT_DIR / "reports"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            source_path = Path(source_output) if source_output else None
+            translated_path = Path(translated_output) if translated_output else None
+            if source_path and source_path.exists():
+                language_report = source_path.with_suffix(".lang.json")
+                if language_report.is_file():
+                    loaded = json.loads(language_report.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        language_detection = loaded
+                profile_id = options.get("language_profile", "")
+                if not profile_id:
+                    active = get_active_language_profile()
+                    if active:
+                        profile_id = active.get("id", "")
+                thresholds = {}
+                if profile_id:
+                    profile = get_language_profile(profile_id)
+                    if profile:
+                        thresholds = profile.get("quality", {})
+                _ = run_quality_check(
+                    source_srt=source_path,
+                    translated_srt=translated_path if translated_path and translated_path.exists() else None,
+                    target_language=options.get("target_language", "zh-CN"),
+                    output_dir=report_dir,
+                    quality_thresholds=thresholds,
+                )
+                quality_report = str(report_dir / f"{source_path.stem}.quality_report.json")
+                review_needed = str(report_dir / f"{source_path.stem}.review_needed.srt")
+                logs = append_log(job_id, "Quality check completed.", logs)
+        except Exception as exc:
+            logs = append_log(job_id, f"Quality check failed: {exc}", logs)
+        if "ass" in options.get("subtitle_formats", []):
+            from subtitle_model import ASS_RESERVED_MESSAGE
+
+            logs = append_log(job_id, f"ASS: {ASS_RESERVED_MESSAGE}", logs)
+        if translated_output:
+            translated_path = Path(translated_output)
+            strategy_mode = str(options.get("translation_strategy_mode", "standard"))
+            if strategy_mode == "semantic_review":
+                candidate = translated_path.with_name(
+                    f"{translated_path.stem}.semantic_review_report.json"
+                )
+                if candidate.is_file():
+                    semantic_review_report = str(candidate.resolve())
+            elif strategy_mode == "wenyi_review":
+                candidate = translated_path.with_name(
+                    f"{translated_path.stem}.wenyi_review_report.json"
+                )
+                if candidate.is_file():
+                    semantic_review_report = str(candidate.resolve())
+            elif strategy_mode == "semantic_wenyi_review":
+                candidate = translated_path.with_name(
+                    f"{translated_path.stem}.semantic_wenyi_review_report.json"
+                )
+                if candidate.is_file():
+                    semantic_review_report = str(candidate.resolve())
+
+        set_job(
+            job_id,
+            status="done",
+            stage="completed",
+            progress=100,
+            returncode=returncode,
+            output=translated_output or source_output,
+            source_output=source_output,
+            translated_output=translated_output,
+            quality_report=quality_report,
+            review_needed=review_needed,
+            semantic_review_report=semantic_review_report,
+            language_detection=language_detection,
+            completed_at=time.time(),
+            logs=logs + ["Finished."],
+        )
+    else:
+        error_summary = _compute_error_summary(logs)
+        set_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            progress=100,
+            returncode=returncode,
+            output=translated_output or source_output,
+            source_output=source_output,
+            translated_output=translated_output,
+            error_summary=error_summary,
+            completed_at=time.time(),
+            logs=logs + [f"Failed with code {returncode}."],
+        )
+
+def _infer_stage_from_logs(job_id: str, logs: list[str]) -> None:
+    """Infer current stage from the most recent log lines."""
+    if not logs:
+        return
+    recent = "\n".join(logs[-10:]).lower()
+    stage = "transcribing"
+    progress = 30
+    if "translation stage: semantic_consistency" in recent:
+        stage = "semantic_consistency"
+        progress = 88
+    elif "translation stage: semantic_judge" in recent:
+        stage = "semantic_judgment"
+        progress = 78
+    elif "translation stage: semantic_repair" in recent:
+        stage = "semantic_repair"
+        progress = 70
+    elif "translation stage: semantic_review" in recent:
+        stage = "semantic_review"
+        progress = 62
+    elif "translation stage: semantic_initial" in recent:
+        stage = "semantic_initial"
+        progress = 50
+    elif "translation stage: semantic_analysis" in recent:
+        stage = "semantic_analysis"
+        progress = 40
+    elif "translation stage: final" in recent:
+        stage = "translation_final"
+        progress = 80
+    elif "translation stage: reflection" in recent:
+        stage = "translation_reflection"
+        progress = 65
+    elif "translation stage: initial" in recent:
+        stage = "translation_initial"
+        progress = 50
+    elif "translation" in recent or "translat" in recent or "翻译" in recent:
+        stage = "translating"
+        progress = 60
+    if "quality" in recent or "质检" in recent or "checking" in recent:
+        stage = "quality_checking"
+        progress = 90
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job and job.get("status") == "running":
+            job["stage"] = stage
+            job["progress"] = progress
+
+
+def _compute_error_summary(logs: list[str]) -> str:
+    """Extract a concise error summary from logs."""
+    if not logs:
+        return "Unknown error"
+    # Look for common error patterns in last 20 lines
+    for line in reversed(logs[-20:]):
+        text = str(line or "").strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if "error" in lowered or "exception" in lowered or "失败" in lowered or "failed" in lowered:
+            # Truncate and clean
+            summary = text
+            if len(summary) > 200:
+                summary = summary[:200] + "..."
+            return summary
+    last = logs[-1].strip() if logs else "Unknown error"
+    if len(last) > 200:
+        last = last[:200] + "..."
+    return last
+
+
+def retry_job(job_id: str) -> dict | None:
+    """Retry a failed job by creating a new job with the same options.
+
+    Returns the new safe job dict, or None if retry is not safe.
+    """
+    with JOBS_LOCK:
+        raw_job = JOBS.get(job_id)
+    if raw_job is None:
+        return None
+
+    # Only retry failed jobs
+    if raw_job.get("status") != "failed":
+        return None
+
+    options = raw_job.get("options", {})
+    # Must have a complete original request/options snapshot
+    if not options or not raw_job.get("input"):
+        return None
+
+    # Build a synthetic form from saved options
+    form = _options_to_form(options, raw_job["input"])
+    try:
+        new_job = create_job(form)
+        thread = threading.Thread(target=run_job, args=(new_job["id"],), daemon=True)
+        thread.start()
+    except ValueError as exc:
+        # Retry creation failed (e.g., input file no longer exists)
+        return None
+
+    safe = get_job(new_job["id"])
+    return safe if safe is not None else new_job
+
+
+def _options_to_form(options: dict, input_path: str) -> dict:
+    """Convert saved job options back into a form dict for create_job."""
+    form: dict[str, object] = {"path": input_path}
+
+    # Map option keys back to form keys
+    mappings = {
+        "model": "model",
+        "device": "device",
+        "compute_type": "compute_type",
+        "asr_mode": "asr_mode",
+        "language": "language",
+        "hf_endpoint": "hf_endpoint",
+        "local_files_only": "local_files_only",
+        "beam_size": "beam_size",
+        "vad": "vad",
+        "condition_on_previous_text": "condition_on_previous_text",
+        "translate_enabled": "translate_enabled",
+        "provider_id": "provider_select",
+        "api_provider": "api_provider",
+        "api_base": "api_base",
+        "llm_model": "llm_model",
+        "translation_quality_model": "translation_quality_model",
+        "target_language": "target_language",
+        "language_profile": "language_profile",
+        "translation_batch_size": "translation_batch_size",
+        "translation_temperature": "translation_temperature",
+        "translation_mode": "translation_mode",
+        "context_window": "context_window",
+        "translation_prompt": "translation_prompt",
+        "translation_strategy_mode": "translation_strategy_mode",
+        "translation_scene_gap_seconds": "translation_scene_gap_seconds",
+        "subtitle_formats": "subtitle_formats",
+        "ass_style_id": "ass_style_id",
+    }
+
+    for opt_key, form_key in mappings.items():
+        value = options.get(opt_key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            form[form_key] = "on" if value else ""
+        elif isinstance(value, (list, tuple)):
+            form[form_key] = ",".join(str(v) for v in value)
+        else:
+            form[form_key] = str(value)
+
+    # Handle API key: if provider_id is set, we don't need api_key in form
+    # because create_job will resolve provider config. But if no provider_id,
+    # we need the raw api_key which we no longer have in safe options.
+    # In that case, retry is not safe unless provider_id is set or we have _api_key.
+    # This is checked by the caller before retrying.
+    if not options.get("provider_id") and options.get("api_base") and options.get("api_key_masked"):
+        # We cannot reconstruct the key; retry will likely fail at validation
+        # But we still set empty api_key to let create_job validate it
+        form["api_key"] = ""
+
+    return form
+
+
+def _can_retry_job(job: dict) -> bool:
+    """Check whether a job can be safely retried."""
+    if job.get("status") != "failed":
+        return False
+    options = job.get("options", {})
+    if not options or not job.get("input"):
+        return False
+    # Need a valid input path
+    try:
+        p = Path(job["input"])
+        if not p.exists():
+            return False
+    except Exception:
+        return False
+    # Need complete original request/options
+    # If translate was enabled, we need either a provider_id or a complete api setup
+    if options.get("translate_enabled"):
+        if not options.get("provider_id"):
+            # Without provider_id, we need api_base and api_key; api_key is masked
+            if not options.get("api_base") or not options.get("api_key_masked"):
+                return False
+            # Cannot retry if we don't have the actual api_key (it's masked in safe options)
+            # But in raw job dict, _api_key might still be present if the job hasn't been cleaned
+            pass
+    return True
+
+
+def find_output_paths(job: dict | None) -> tuple[str, str]:
+    if not job:
+        return ("", "")
+    input_path = Path(job["input"])
+    model = job["options"]["model"]
+    options = job["options"]
+
+    source = OUTPUT_DIR / f"{input_path.stem}.{model}.srt"
+    source_str = str(source.resolve()) if source.exists() else ""
+
+    translated_str = ""
+    if options.get("translate_enabled"):
+        target = options.get("target_language", "zh-CN")
+        mode_tag = "bilingual" if options.get("translation_mode", "bilingual") == "bilingual" else "translated"
+        translated = OUTPUT_DIR / f"{input_path.stem}.{model}.{mode_tag}.{target}.srt"
+        translated_str = str(translated.resolve()) if translated.exists() else ""
+
+    return (source_str, translated_str)
+
+
+def get_job(job_id: str) -> dict | None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return None
+        safe = {k: v for k, v in job.items() if not k.startswith("_")}
+        return json.loads(json.dumps(safe, ensure_ascii=False))
+
+
+def set_job(job_id: str, **updates) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["updated_at"] = time.time()
+
+
+def append_log(job_id: str, line: str, fallback_logs: list[str] | None = None) -> list[str]:
+    cleaned = clean_log_line(line) if line else ""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is not None:
+            if cleaned:
+                job["logs"].append(cleaned)
+            job["logs"] = job["logs"][-300:]
+            job["updated_at"] = time.time()
+            return list(job["logs"])
+
+    logs = list(fallback_logs or [])
+    if cleaned:
+        logs.append(cleaned)
+    return logs[-300:]
+
+
+def list_jobs() -> list[dict]:
+    with JOBS_LOCK:
+        jobs = sorted(JOBS.values(), key=lambda item: item["updated_at"], reverse=True)
+        return [_normalize_job_for_ui(job) for job in jobs]
+
+
+def _normalize_job_for_ui(job: dict) -> dict:
+    """Return a UI-friendly job dict with safe fields and computed properties."""
+    status = job.get("status", "queued")
+    stage = job.get("stage", "")
+    progress = job.get("progress")
+    if progress is None:
+        # Fallback for jobs created before M10
+        if status == "running":
+            progress = 10
+        elif status in ("done", "failed"):
+            progress = 100
+        else:
+            progress = 0
+    options = job.get("options", {})
+    can_retry = False
+    retry_reason = ""
+    if status == "failed":
+        can_retry = _can_retry_job(job)
+        retry_reason = "" if can_retry else "无法重试：缺少原始任务参数或输入文件已不存在，请重新提交"
+
+    # Status label mapping (Chinese)
+    status_labels = {
+        "queued": "等待中",
+        "running": "处理中",
+        "done": "已完成",
+        "failed": "失败",
+    }
+    stage_labels = {
+        "queued": "排队中",
+        "starting": "启动中",
+        "transcribing": "转写",
+        "translating": "翻译",
+        "translation_initial": "翻译 · 初译",
+        "translation_reflection": "翻译 · 反思",
+        "translation_final": "翻译 · 终稿",
+        "semantic_analysis": "翻译 · 整片预分析",
+        "semantic_initial": "翻译 · Flash 初译",
+        "semantic_review": "翻译 · 保真审校",
+        "semantic_repair": "翻译 · 定向修复",
+        "semantic_judgment": "翻译 · 匿名裁决",
+        "semantic_consistency": "翻译 · 全片一致性",
+        "quality_checking": "质检",
+        "completed": "已完成",
+        "failed": "失败",
+    }
+
+    return {
+        "id": job["id"],
+        "status": status,
+        "status_label": status_labels.get(status, status),
+        "stage": stage,
+        "stage_label": stage_labels.get(stage, stage),
+        "progress": progress,
+        "input": job["input"],
+        "output": job.get("output", ""),
+        "source_output": job.get("source_output", ""),
+        "translated_output": job.get("translated_output", ""),
+        "quality_report": job.get("quality_report", ""),
+        "review_needed": job.get("review_needed", ""),
+        "semantic_review_report": job.get("semantic_review_report", ""),
+        "returncode": job.get("returncode"),
+        "error_summary": job.get("error_summary", ""),
+        "options": options,
+        "created_at": job["created_at"],
+        "updated_at": job["updated_at"],
+        "completed_at": job.get("completed_at"),
+        "can_retry": can_retry,
+        "retry_reason": retry_reason,
+    }
+
+
+def get_text(form: dict, key: str, default_value: str) -> str:
+    value = form.get(key, default_value)
+    return value if isinstance(value, str) else default_value
+
+
+def sanitize_filename(name: str) -> str:
+    clean = "".join(char for char in name if char not in '<>:"/\\|?*').strip()
+    return clean or "upload.bin"
+
+
+def mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return value[:2] + "***"
+    return value[:3] + "..." + value[-4:]
+
+
+def clean_log_line(line: str) -> str:
+    cleaned = redact_project_path(line, PROJECT_ROOT)
+    for pattern, replacement in SECRET_PATTERNS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
+
+def _job_env() -> dict[str, str]:
+    return build_child_process_env(PROJECT_ROOT, PATHS)
