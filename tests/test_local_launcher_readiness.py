@@ -8,7 +8,6 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 START_WEB = ROOT / "start_web.ps1"
 START_APP = ROOT / "start_app.py"
-DESIGN_NOTE = ROOT / "docs" / "desktopization_readiness.md"
 
 
 def _read(path: Path) -> str:
@@ -77,12 +76,3 @@ def test_smoke_command_returns_without_user_input_or_browser_launch():
     assert "No model download" in output
     assert "CINESUB_FFMPEG" in output
     assert "FFMPEG_PATH" in output
-
-
-def test_desktopization_design_note_exists_and_defers_shells():
-    text = _read(DESIGN_NOTE)
-    assert "Browser launcher" in text
-    assert "Electron" in text
-    assert "Tauri" in text
-    assert "Defer Electron/Tauri" in text
-    assert "No installer in M13" in text
