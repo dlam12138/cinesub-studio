@@ -46,6 +46,6 @@ jobs:
         run: python -B scripts/ci_policy_check.py
       - name: Web smoke
         shell: pwsh
-        run: .\start_web.ps1 -Smoke -NoBrowser -NonInteractive
+        run: python -B start_app.py -Smoke -NoBrowser -NonInteractive
       - name: Diff hygiene
         run: git diff --check
