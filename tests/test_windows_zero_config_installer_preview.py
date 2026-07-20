@@ -208,7 +208,7 @@ def test_third_party_notices_mentions_driver_not_bundled():
 
 def test_readme_mentions_portable_packaged_mode():
     readme = _read(README)
-    assert "Packaged mode" in readme
+    assert "packaged 布局" in readme
     assert "CineSubStudio.exe" in readme
     assert "portable" in readme.lower()
 

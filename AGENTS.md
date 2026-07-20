@@ -1,239 +1,166 @@
 # AGENTS.md
 
-本文件只面向 agent 和后续维护者，不面向普通用户。用户说明写在 `README.md`。
+本文件面向 agent 和源码维护者。普通用户说明只写在 `README.md`。
 
-## 项目结构
+## 当前交付边界
 
-源码目录：
-
-- `src/core/transcribe.py`：转写入口，负责 FFmpeg 抽音频、faster-whisper 加载、SRT 输出、语言检测 JSON。
-- `src/core/subtitle_model.py`：统一字幕模型、格式注册和输出规划接口；当前 `srt` 启用，`ass` 只预留。
-- `src/core/subtitle_translate.py`：SRT 解析、LLM 翻译、双语/译文 SRT、翻译缓存。
-- `src/core/quality_checker.py`：SRT 格式检查、翻译质量检查、质量报告、`review_needed.srt`。
-- `src/pipeline/batch_worker.py`：批量流水线，扫描输入、抽音频、转写、翻译、质检、归档、断点续跑。
-- `src/config/provider_store.py`：Provider 配置读写、脱敏、原子写入。
-- `src/config/language_profile_store.py`：Language Profile 配置读写和内置 profile。
-- `src/web/web_server.py`：本地 Web 后端，处理任务、下载、Provider、Language Profile、Pipeline、运行环境 API。
-- `src/web/runtime_api.py`：运行环境 Web API 的薄模块，转调 `runtime_env.py`。
-- `src/web/pipeline_api.py`：Pipeline Web API 辅助模块，负责只读状态、日志、后台任务启动和子进程环境。
-- `src/web/subtitle_preview_api.py`：任务产物 SRT 的只读分页预览；只解析任务元数据指向的项目 `output/` 文件，不接受任意路径。
-- `src/tools/ffmpeg_locator.py`：唯一 FFmpeg 查找入口。
-- `src/tools/runtime_paths.py`：源码布局 / 未来 release 布局的运行根、应用根、源码根、runtime 根解析入口；导入不得有副作用。
-- `src/tools/runtime_env.py`：统一运行环境管理，检测 Python、FFmpeg、CUDA、wheelhouse、模型，处理离线包导入和环境下载计划。
-- `src/tools/download_ffmpeg.py`：FFmpeg 下载兜底工具，写入 `tools/ffmpeg/bin/`。
-- `src/tools/ocr_evidence_compare.py`：硬字幕 OCR、ASR 与译文的离线弱证据对照；只产生 disagreement/coverage 和候选初筛，不把 OCR 当金标。
-
-入口脚本：
-
-- `start_app.py`：双击启动器，启动 Web 服务并打开浏览器。
-- `start_web.ps1`：本地 Web 启动器包装，调用 `.venv\Scripts\python.exe -B start_app.py`，支持 `-NoBrowser`、`-Smoke`、`-NonInteractive`、`-Port`。
-- `run_transcribe.ps1`：单文件转写便利入口。
-- `install.ps1`：创建/重建 `.venv`，支持项目内 `tools/python/python.exe` 和 `tools/wheelhouse/` 离线安装。
-- `analyze_subtitles.ps1`：薄包装，调用 `src/tools/analyze_subtitles_workflow.py`。
-
-前端：
-
-- `web/index.html`：单文件静态页面，不引入 React/Vue/CDN/npm。
-
-## 运行产物边界
-
-不要把以下目录当作源码修改或提交：
+仓库只维护 GitHub 已上传的源码；正式二进制交付物只有：
 
 ```text
-.venv/
-.cache/
-.tmp/
-models/
-uploads/
-output/
-work/
-input/
-archive/
-failed/
-logs/
-reports/
-tools/python/
-tools/wheelhouse/
-tools/ffmpeg/
-tools/cuda/
+CineSubStudio-0.6.2-windows-x64-portable.zip
+CineSubStudio-0.6.2-windows-x64-portable.zip.sha256
 ```
 
-`src/tools/` 是源码目录，不能和根目录 `tools/` 运行产物混淆。
+不要在源码或文档中恢复已退役的 NSIS、BAT/PowerShell 便携启动包、FunASR、WhisperX、ASR candidate、`mixed-route-v1` 或 segment routing 产品链路。
 
-## 环境策略
+0.6.2 的 Electron 目录布局和构建接口是冻结基线。改变 EXE 启动契约、资源目录、数据目录或发布文件名时必须升级版本并同步测试。
 
-- 设备默认语义是 `auto`：CUDA 可用时优先 CUDA，否则 CPU 兜底。
-- 诊断必须区分项目内 `.venv` 和项目内 portable Python。当前 `.venv` 可能由系统 Python 创建；只有 `tools/python/python.exe` 存在并用于重建 `.venv` 后，才算 portable Python 路径。
-- 推荐 portable Python 版本锁定 3.12。不要自动重建用户当前可用 `.venv`。
-- 明确选择 `cuda` 时必须严格检查 CUDA 环境；缺 DLL、驱动或依赖时快速失败并给出可诊断错误。
-- CUDA DLL 只允许通过当前进程或子进程环境注入，不修改系统 PATH。
-- `runtime_env.py` 是运行环境检测、CUDA 注入、离线包导入、下载计划的统一入口；新增代码不要重复硬编码 `tools/cuda` 诊断。
-- 模型和 Hugging Face 缓存必须留在项目内 `models/` 与 `.cache/huggingface/`。
-- pip 缓存必须留在项目内 `.cache/pip/`。
-- 离线包只允许解压到 `tools/python/`、`tools/wheelhouse/`、`tools/ffmpeg/`、`tools/cuda/`、`models/`。
-- 一键下载大组件前必须展示大小、来源和目标目录；CUDA、portable Python、wheelhouse、大模型不得静默下载。
+## 代码结构
 
-## FFmpeg 约束
+- `src/core/transcribe.py`：FFmpeg 抽音频、ASR 会话、三模式转写、SRT 与语言报告。
+- `src/core/subtitle_translate.py`：SRT 解析、翻译策略、缓存和译文输出。
+- `src/core/quality_checker.py`：格式、重复、低可信与人工复核报告。
+- `src/pipeline/`：批量扫描、阶段执行、断点续跑、状态和输出规划。
+- `src/config/`：Provider、Language Profile 与恢复逻辑。
+- `src/web/`：本地 HTTP API、单任务、Pipeline、诊断、设置和字幕预览。
+- `src/tools/runtime_paths.py`：源码与 packaged 路径解析的唯一入口。
+- `src/tools/runtime_env.py`：Python、FFmpeg、CUDA、模型和离线资源诊断。
+- `src/tools/ffmpeg_locator.py`：FFmpeg 查找的唯一入口。
+- `web/index.html`：无 CDN、无 npm 构建的单文件前端。
+- `desktop/`：Electron 壳，只负责启动后端、显示窗口和退出时清理进程。
+- `scripts/build_portable_release.py`：唯一正式发布构建入口。
 
-- 项目优先使用内置 FFmpeg。
-- 不要求用户手动安装 FFmpeg 或配置系统 PATH。
-- `ffmpeg_locator.py` 是唯一查找入口。
-- 新代码不得直接调用裸 `ffmpeg`。
-- 下载后的二进制放在 `tools/ffmpeg/bin/`。
-- 不得提交 `ffmpeg.exe`、`ffprobe.exe`、`ffplay.exe`。
+## 源码与 packaged 布局
 
-## Provider 约束
+源码模式：
 
-- `config/providers.local.json` 已 gitignore，绝对不要提交。
-- GET 接口必须返回脱敏后的 `api_key_masked`。
-- 日志、错误、stdout 不得输出完整 API Key。
-- 编辑 Provider 时，`api_key` 为空表示保留旧值。
-- Provider 只管 API Key / API Base / LLM 模型。
-- Provider 配置写入必须使用临时文件加 `os.replace()`。
+- 应用根为仓库根目录。
+- `.venv/`、`models/`、`tools/`、`input/`、`output/`、`work/`、`logs/` 和 `.cache/` 都位于仓库内。
+- `start_web.ps1` 只调用 `.venv\Scripts\python.exe -B start_app.py`。
 
-CLI 优先级：
+Electron 便携模式：
 
-1. CLI 显式参数
-2. `--provider <id>` 指定配置
-3. active provider
-4. 程序默认值
+- 入口为 `CineSubStudio.exe`。
+- 后端源码位于 `resources/app/backend/`。
+- portable Python 位于 `resources/app/python/`。
+- FFmpeg 与 CUDA 位于 `resources/app/tools/`。
+- 模型、配置、API Key、缓存、日志和字幕产物全部位于 EXE 同级 `data/`。
+- Electron userData、session cache 和日志必须定向到 `data/`，不得写 `%APPDATA%` 或 `%LOCALAPPDATA%`。
+- 关闭 Electron 后必须终止 `start_app.py`、Web 后端及其子进程。
 
-## Language Profile 约束
+`runtime_paths.py` 必须同时支持两种布局且导入无副作用。不得在业务模块重复推导 packaged 路径。
 
-- Language Profile 管语言、ASR 参数、质检阈值和翻译风格。
-- Language Profile 可预留 `subtitle_style`，包含 `formats` 和 `ass_style_id`。样式配置不属于 Provider。
-- 绝对不要把 API Key 写入 Language Profile。
-- 内置 profile 缺配置文件时必须可用。
-- 本地配置可覆盖内置 profile。
-- 禁止硬删除内置 profile，只能删除本地覆盖版本。
+## Git 与本地数据边界
+
+不得提交：
+
+```text
+.venv/                 .cache/                 .tmp/
+acceptance/            research/               .superdesign/
+.claude/               .agents/
+models/                tools/python/           tools/wheelhouse/
+tools/ffmpeg/          tools/cuda/
+input/                 output/                 work/
+archive/               failed/                 logs/
+reports/               uploads/                data/
+config/providers.local.json
+config/language_profiles.local.json
+```
+
+还不得提交 API Key、token、用户媒体、字幕产物、测试私有样本、构建 staging、EXE、DLL、模型或 Release ZIP。公开源码只保留 example 配置、代码、必要测试、许可证和当前用户/开发者文档。
+
+## ASR 约束
+
+产品只使用 faster-whisper：
+
+- `auto`：整片自动检测，`language=None`。
+- `fixed`：整片指定语言；缺少具体语言时拒绝启动。
+- `multilingual`：一次抽音频，VAD 分块，每块独立检测，恢复时间偏移并合并。
+
+兼容规则：
+
+- 显式 CLI/Web 参数优先于 Language Profile。
+- 未传 `asr_mode` 但传具体 `language` 时推断为 `fixed`。
+- 都未传时使用 `auto`。
+- `auto` 和 `multilingual` 不接受具体语言。
+
+多语言模式复用单个模型实例和一次 FFmpeg 抽取；无有效语音必须明确失败。诊断信息不得触发候选竞争、自动改写、换模型、局部重跑或输出替换。
+
+## 配置与安全
+
+- Provider 只管理 API Key、API Base 和 LLM 模型；GET 只能返回 `api_key_masked`。
+- Provider 写入必须使用临时文件加 `os.replace()`；空 API Key 表示保留旧值。
+- Language Profile 管语言、ASR 参数、质检阈值、术语和翻译风格，不得保存 API Key。
+- 前端提示词编辑入口冻结；后端 `translation_prompt`、Profile 字段和兼容测试保留。
+- Web 只绑定 `127.0.0.1`，下载和预览不得接受任意文件路径。
+- 日志、stderr、报告和诊断不得泄露完整密钥。
 
 优先级：
 
-1. CLI 显式参数
+1. CLI/Web 显式参数
 2. Language Profile
 3. Provider
 4. 默认值
 
-## Pipeline 约束
+## Pipeline 与输出
 
-- 后端执行 pipeline 必须使用 `sys.executable -B src\pipeline\batch_worker.py --<action>`。
-- 不要硬编码 `python` 或 `python3`。
-- `GET /api/pipeline/scan`、`status`、`review`、`logs`、`task` 必须只读。
-- `POST /api/pipeline/run` 执行完整 input 流水线。
-- `POST /api/pipeline/retry-failed` 只重试失败任务，不扫描新文件。
-- 同一时间只允许一个后台流水线任务运行；冲突返回 HTTP 409。
-- 后台日志写入 `logs/pipeline.log`。
+- 后端 Pipeline 必须使用 `sys.executable -B src\pipeline\batch_worker.py --<action>`。
+- 只读接口不得改变任务状态；同一时间只允许一个后台 Pipeline。
+- `--retry-failed` 只处理 `status == "failed"`，不扫描新文件或重置其他任务。
+- 完成任务只有在配置签名一致且最终产物存在、非空时才能跳过。
+- stale/running-after-crash 只显示 warning，不自动 reset。
+- 当前只稳定生成 SRT。ASS 参数仍可传递，但必须明确说明未生成 `.ass`。
 
-## 字幕格式与 ASS 预留
+## FFmpeg、CUDA 与缓存
 
-- 默认只启用 `srt`，不得在当前版本实际写 `.ass` 文件。
-- `subtitle_formats`、`ass_style_id`、`subtitle_style` 是预留参数，CLI/Web/Pipeline 可以接收并传递。
-- 请求 `ass` 时必须返回或记录明确状态：`ASS output is reserved for a future version; no .ass file was generated.`
-- `output/ass/` 只是未来输出规划路径；当前实现不要为了预留而创建实际 ASS 成品。
-- 后续真正实现 ASS 时，应优先扩展 `src/core/subtitle_model.py` 的格式规划/渲染接口，避免把 ASS 逻辑塞进 `web_server.py` 或 `batch_worker.py`。
+- `ffmpeg_locator.py` 是唯一 FFmpeg 入口，不得直接调用裸 `ffmpeg`。
+- 不修改系统 PATH；CUDA DLL 只通过当前进程或子进程环境注入。
+- `device=auto` 优先 CUDA，环境不兼容时回退 CPU；显式 `cuda` 必须快速失败并给出诊断。
+- 模型和缓存必须留在当前布局的项目目录或 `data/`，不得写入 C 盘全局缓存。
+- 大组件下载前必须显示大小、来源和目标，不得静默下载 CUDA、portable Python、wheelhouse 或大模型。
 
-## 维护拆分方向
+## Electron 发布
 
-- `web_server.py` 已先拆出 `runtime_api.py` 和 `pipeline_api.py`；后续可继续拆 `job_api.py`、`provider_profile_api.py`、`storage_api.py`，主文件只保留 HTTP 分发和通用响应能力。
-- `web/index.html` 必须保持单文件交付，但 JS 内部应按 runtime、pipeline、single-file、provider、language-profile、storage 分区维护。
-- `batch_worker.py` 后续应继续拆出输出路径规划、任务状态持久化、阶段执行 helper。新增字幕格式时优先走 `subtitle_model.py`，减少对批量流水线主流程的改动。
+正式构建：
 
-## Web 约束
+```powershell
+.\.venv\Scripts\python.exe -B scripts\build_portable_release.py
+```
 
-- Web 服务只绑定 `127.0.0.1`。
-- 不引入前端构建工具、npm、CDN。
-- 不破坏已有 `POST /api/jobs`、`GET /download`、Provider、Language Profile API。
-- 命令失败时前端必须展示 stderr 或 returncode。
-- 运行环境 UI 必须明确区分：诊断、离线包导入、下载计划、实际下载。
+构建器必须：
 
-## PowerShell 约束
+- 验证 portable Python、faster-whisper、CTranslate2、PyAV、NumPy、FFmpeg、FFprobe、CUDA DLL 和 `small`。
+- 调用 `electron-builder --win --dir`，不生成 NSIS 或自动更新产物。
+- 生成单顶层目录、`release_manifest.json`、包内文件 SHA256 和包外 ZIP SHA256。
+- 排除缓存、本地配置、用户数据、测试媒体、内部资料、启动脚本、`ffplay.exe` 和 `large-v3`。
+- 在单文件达到 GitHub 2 GiB 限制时生成 CPU 主包和 CUDA add-on，不得静默删减模型或 DLL。
 
-- PowerShell 只作为 Windows 启动器、安装器和便利入口。
-- 复杂流程、状态判断、路径扫描、JSON 读写、日志解析、进程调度优先放 Python。
-- `.ps1` 不得直接管理后台流水线任务。
-- `.ps1` 不得要求系统 PATH 已有 FFmpeg。
-- `.ps1` 不得打印 API Key、token、secret 或完整 Provider 配置。
-- 新增 PowerShell 文件必须说明为什么不能用 Python，并保持薄入口。
+发布前必须在中文和空格路径解压，直接启动 EXE，验证 packaged 诊断、`local_files_only=True`、三种 ASR 模式和退出进程清理。
 
 ## 测试命令
 
-基础导入检查：
-
 ```powershell
 $env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
+.\.venv\Scripts\python.exe -B -m pytest -q
 .\.venv\Scripts\python.exe -B -c "import transcribe, subtitle_translate, quality_checker, batch_worker, web_server, download_model_file, runtime_env, runtime_paths, subtitle_model, runtime_api, pipeline_api; print('imports ok')"
-```
-
-自测：
-
-```powershell
-$env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
 .\.venv\Scripts\python.exe -B src\core\subtitle_translate.py --self-test
 .\.venv\Scripts\python.exe -B src\core\quality_checker.py --self-test
-```
-
-运行环境诊断：
-
-```powershell
-$env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
-.\.venv\Scripts\python.exe -B src\tools\runtime_env.py diagnostics
-```
-
-Pipeline 只读检查：
-
-```powershell
-$env:PYTHONPATH = "src\core;src\pipeline;src\config;src\web;src\tools"
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --scan
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --status
-.\.venv\Scripts\python.exe -B src\pipeline\batch_worker.py --review
-```
-
-Web 检查：
-
-```powershell
-.\start_web.ps1
 .\start_web.ps1 -Smoke -NoBrowser -NonInteractive
-Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/ | Select-Object -ExpandProperty StatusCode
-Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:7860/api/runtime/diagnostics | Select-Object -ExpandProperty StatusCode
+node --check desktop/main.js
+node --check desktop/preload.js
+node --check desktop/launch.js
+git diff --check
 ```
 
-## 完成标准
-
-- CLI 和 Web 两条入口都不能被改坏。
-- 涉及 Web 的改动必须确认首页 200 和运行环境诊断 API 可用。
-- 涉及模型加载或下载时，必须说明是否验证 `local_files_only=True`。
-- 运行产物仍写入 `output/`、`uploads/`、`work/`、`models/`、`.cache/`、`tools/` 对应目录。
-- 基础导入检查必须通过。
-
-## Diagnostics API 稳定字段
-
-`GET /api/runtime/diagnostics` 的用户可读诊断结构是产品能力，不是临时调试输出。后续维护不要误删这些字段：
-
-- `ffmpeg_source`
-- `diagnostic_summary`
-- `diagnostic_items`
-- `diagnostic_items[].status`
-- `diagnostic_items[].blocking`
-
-`diagnostic_summary.status` 可以是 `ok`、`warning`、`error` 或 `not_configured`。当前 Python 版本不在推荐范围但基础流程可运行时，应保持 `warning`，不要误改为阻断错误。
-
-## Pipeline 恢复约束
-
-- `--retry-failed` 只重试 `status == "failed"` 的任务。
-- `--retry-failed` 不扫描 input，不加入新文件，不重置 `completed`、`pending` 或 `running`。
-- `completed` 只有在状态完成且当前配置对应的最终产物存在、非空时才可静默跳过。
-- `skip_completed` 表示跳过整任务；stage reuse 表示未完成任务复用已有有效中间产物。
-- stale/running-after-crash 只作为 warning 展示，不自动 reset。
-- Web 和 CLI 必须共用同一套 retry 判断，不允许 Web 另写重试逻辑。
+涉及 Web 时还要确认 `/` 和 `/api/runtime/diagnostics` 返回 200。涉及模型时必须明确使用 `local_files_only=True`，不得为测试触发下载。
 
 ## Review 标准
 
 优先检查：
 
-- 是否可能覆盖、删除、移动用户输入视频或输出字幕。
-- 是否新增 C 盘缓存、模型或临时文件。
-- 是否误改全局代理、PATH、系统 Python 或 Codex 配置。
-- 长任务是否有日志和可诊断失败。
-- 中文路径、空格路径、本机绝对路径、上传文件是否可用。
-- CUDA 首次使用、离线加载、镜像源、`local_files_only` 是否互相冲突。
-- 前端选项和后端参数是否一一对应。
+- 是否可能覆盖、删除或移动用户输入和字幕。
+- 是否写入全局 PATH、代理、系统 Python、APPDATA 或 C 盘缓存。
+- 中文路径、空格路径、绝对路径和上传文件是否可用。
+- 前端选项与 CLI/API/Profile 是否一致。
+- 失败是否包含用户可执行的处理建议和可诊断细节。
+- GitHub 源码、根 README、包内 README、Release 文件名和实际 ZIP 布局是否一致。

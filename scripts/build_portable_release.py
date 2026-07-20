@@ -217,18 +217,21 @@ def _build_electron_unpacked(root: Path, destination: Path) -> Path:
 def _portable_readme(version: str) -> str:
     return f"""智译字幕工坊 / CineSub Studio {version}
 
-启动：
+使用方法：
 1. 完整解压 ZIP，不要在压缩包内直接运行。
 2. 双击 CineSubStudio.exe。
 
-本目录是免安装便携版，不依赖系统 Python、FFmpeg 或 PATH。
-small 语音识别模型已内置，可离线使用自动检测、固定单语言和多语言模式。
-CUDA 运行库不包含 NVIDIA 显卡驱动；环境不兼容时应用会回退 CPU。
-large-v3 未随包提供，可在运行后导入到 data\\models\\。
+本包已内置 portable Python、FFmpeg、CUDA 运行库和 small 模型，不依赖系统 Python、FFmpeg、CUDA Toolkit 或 PATH。
+CUDA 运行库不包含 NVIDIA 驱动；环境不兼容时自动回退 CPU。large-v3 不随包提供。
 
-配置、API Key、缓存、模型、日志和字幕产物全部保存在同级 data\\ 目录。
-移动应用时请连同整个目录一起移动。应用未进行代码签名，Windows 可能显示来源提示。
-前端翻译提示词入口处于冻结状态，已有配置和后端接口仍然兼容。
+自动检测、固定单语言和多语言三种 ASR 模式都可使用内置 small 模型离线转写。
+翻译需要在应用中配置 Provider、API Key 和翻译模型。
+
+配置、API Key、缓存、模型、日志和字幕产物全部保存在 EXE 同级 data\\ 目录。
+移动或备份应用时请连同整个解压目录一起处理。
+
+前端翻译提示词入口处于冻结状态；已有配置和后端接口仍然兼容。
+应用未进行代码签名，Windows 可能显示来源提示。请只从项目正式 Release 下载并核对同名 .sha256 文件。
 """
 
 
