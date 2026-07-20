@@ -172,10 +172,10 @@ def test_readme_documents_setup_and_limitations():
     assert ".\\start_web.ps1 -Smoke -NoBrowser -NonInteractive" in readme
     assert "npm install" in readme
     assert "npm start" in readme
-    assert "开发模式使用项目 `.venv`" in readme
-    assert "不提供代码签名" in readme
+    assert "源码仓库中的 Electron 桌面壳" in readme
+    assert "不生成 NSIS" in readme
     assert "自动更新" in readme
-    assert "正式构建统一从仓库根目录调用" in readme
+    assert "唯一发布入口" in readme
 
 
 def test_gitignore_keeps_desktop_runtime_and_internal_artifacts_out():
