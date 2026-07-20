@@ -13,7 +13,6 @@ LAUNCH_JS = DESKTOP / "launch.js"
 PRELOAD_JS = DESKTOP / "preload.js"
 README = DESKTOP / "README.md"
 GITIGNORE = ROOT / ".gitignore"
-ACCEPTANCE = ROOT / "acceptance" / "v0_3_electron_desktop_shell_mvp.md"
 
 
 def _read(path: Path) -> str:
@@ -179,7 +178,7 @@ def test_readme_documents_setup_and_limitations():
     assert "正式构建统一从仓库根目录调用" in readme
 
 
-def test_gitignore_keeps_desktop_runtime_artifacts_out_and_acceptance_in():
+def test_gitignore_keeps_desktop_runtime_and_internal_artifacts_out():
     gitignore = _read(GITIGNORE)
     for marker in (
         "desktop/node_modules/",
@@ -189,30 +188,6 @@ def test_gitignore_keeps_desktop_runtime_artifacts_out_and_acceptance_in():
         "desktop/*.log",
     ):
         assert marker in gitignore
-    assert "!acceptance/v0_3_electron_desktop_shell_mvp.md" in gitignore
-    assert "!acceptance/v0_3_2_electron_folder_picker.md" in gitignore
-
-
-def test_acceptance_note_exists_with_required_evidence_sections():
-    assert ACCEPTANCE.exists()
-    text = _read(ACCEPTANCE)
-    for marker in (
-        "Starting commit",
-        "Branch",
-        "Backend launch command",
-        "Python resolution behavior",
-        "Port behavior",
-        "Server readiness behavior",
-        "Window behavior",
-        "Backend shutdown behavior",
-        "Manual Electron smoke result",
-        "Electron resolved version",
-        "No installer",
-        "No bundled Python",
-        "No bundled FFmpeg",
-        "No bundled models",
-        "No pipeline changes",
-        "No ASR or translation behavior changes",
-        "No Provider/Profile ownership changes",
-    ):
-        assert marker in text
+    assert "acceptance/" in gitignore
+    assert ".superdesign/" in gitignore
+    assert "research/" in gitignore
