@@ -19,6 +19,7 @@ Stages:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sys
 import time
@@ -65,16 +66,6 @@ from subtitle_model import (
     DEFAULT_ASS_STYLE_ID,
     normalize_subtitle_formats,
 )
-from segment_asr_routing_integration import (
-    DEFAULT_APPLY_WINDOW_SECONDS,
-    DEFAULT_MAX_APPLY_WINDOWS,
-    SegmentAsrRoutingError,
-    SegmentAsrRoutingOptions,
-    ensure_apply_is_not_strict,
-    routing_user_message,
-    run_segment_asr_routing,
-    validate_options as validate_segment_routing_options,
-)
 
 PATHS = resolve_runtime_paths(Path(__file__).resolve())
 PROJECT_ROOT = PATHS.project_root
@@ -90,23 +81,6 @@ DIR_FAILED = PROJECT_ROOT / "failed"
 DIR_MODELS = PROJECT_ROOT / "models"
 STAGE_EVENT_LOG = PATHS.logs_dir / "pipeline.events.jsonl"
 set_state_root_provider(lambda: DIR_WORK_STATES)
-
-
-MAJOR_LANGUAGES = {"en", "ja", "ko", "zh", "fr", "de", "es", "ru", "pt", "it", "ar", "th", "vi"}
-
-DEFAULT_MAJOR_PROMPT = ""
-
-MINOR_LANGUAGE_EXTRA_PROMPT = (
-    "The source language may be low-resource, dialectal, or uncertain. "
-    "Preserve uncertain names and terms, and mark unclear content as [needs review]."
-)
-
-LOW_CONFIDENCE_EXTRA_PROMPT = (
-    "The detected source language has low confidence. "
-    "Do not force a translation for garbled or incomplete source text."
-)
-
-LANG_CONFIDENCE_THRESHOLD = 0.7
 
 
 VIDEO_EXTENSIONS = {
@@ -144,12 +118,11 @@ class BatchConfig:
     model: str = "large-v3"
     device: str = "auto"
     compute_type: str | None = None
+    asr_mode: str = "auto"
     language: str | None = None
     beam_size: int = 5
     vad_filter: bool = True
     local_files_only: bool = False
-    asr_experiment_mode: str = "off"
-    asr_candidate_id: str = ""
 
     translate: bool = True
     api_provider: str = "openai-compatible"
@@ -165,17 +138,11 @@ class BatchConfig:
     translation_prompt: str = ""
     translation_reliability_mode: str = "off"
     translation_max_extra_requests: int = 12
+    translation_strategy_mode: str = "standard"
+    translation_scene_gap_seconds: float = 30.0
     subtitle_formats: list[str] = field(default_factory=lambda: ["srt"])
     ass_style_id: str = DEFAULT_ASS_STYLE_ID
     subtitle_style: dict | None = None
-    segment_asr_routing: str = "off"
-    segment_routing_confidence_threshold: float = 0.70
-    segment_routing_min_segments: int = 1
-    segment_routing_strict: bool = False
-    segment_routing_window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS
-    segment_routing_max_windows: int = DEFAULT_MAX_APPLY_WINDOWS
-    segment_routing_allow_large_run: bool = False
-
     language_profile_id: str = ""
     language_profile_name: str = ""
     lang_profile_config: dict | None = None
@@ -185,8 +152,47 @@ class BatchConfig:
     move_completed: bool = True
 
     def __post_init__(self):
+        from asr_runtime import normalize_asr_request
+        from translation_strategy import normalize_translation_strategy
+
+        self.asr_mode, self.language = normalize_asr_request(
+            self.asr_mode,
+            self.language,
+        )
+        strategy = normalize_translation_strategy({
+            "mode": self.translation_strategy_mode,
+            "scene_gap_seconds": self.translation_scene_gap_seconds,
+        })
+        self.translation_strategy_mode = strategy["mode"]
+        self.translation_scene_gap_seconds = strategy["scene_gap_seconds"]
+        if (
+            self.translate
+            and self.translation_strategy_mode in {
+                "wenyi_review", "semantic_wenyi_review"
+            }
+            and not str(self.translation_quality_model or "").strip()
+        ):
+            raise ValueError(
+                f"{self.translation_strategy_mode} requires "
+                "translation_quality_model; Pro stages do not fall back to "
+                "the Flash model"
+            )
         if not self.api_key:
             self.api_key = os.environ.get("SUBTITLE_LLM_API_KEY", "")
+
+    def asr_signature(self) -> str:
+        payload = {
+            "schema": 1,
+            "mode": self.asr_mode,
+            "language": self.language,
+            "model": self.model,
+            "device": self.device,
+            "compute_type": self.compute_type,
+            "beam_size": self.beam_size,
+            "vad_filter": self.vad_filter,
+        }
+        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
 
 
@@ -281,8 +287,10 @@ class BatchPipeline:
                     created_at=time.time(),
                     max_retries=self.config.max_retries,
                 )
-                task.save()
 
+            task.asr_mode = self.config.asr_mode
+            task.language = self.config.language or ""
+            task.save()
             tasks.append(task)
 
         return tasks
@@ -294,14 +302,15 @@ class BatchPipeline:
         print("=" * 60)
         print(f"  Model: {self.config.model}")
         print(f"  Device: {self.config.device}")
+        print(f"  ASR mode: {self.config.asr_mode}")
+        if self.config.language:
+            print(f"  Fixed language: {self.config.language}")
         print(f"  Translation: {'enabled' if self.config.translate else 'disabled'}")
         if self.config.translate:
             print(f"  LLM: {self.config.llm_model}")
             print(f"  Target language: {self.config.target_language}")
             print(f"  Translation mode: {self.config.translation_mode}")
         print(f"  Subtitle formats: {','.join(self.config.subtitle_formats)}")
-        if self.config.segment_asr_routing != "off":
-            print(f"  Segment ASR routing: {self.config.segment_asr_routing}")
         if "ass" in self.config.subtitle_formats:
             print(f"  ASS: {ASS_RESERVED_MESSAGE}")
         print(f"  Input directory: {self.config.input_dir}")
@@ -371,18 +380,6 @@ class BatchPipeline:
             target_language=self.config.target_language,
             translation_mode=self.config.translation_mode,
         )
-        ensure_apply_is_not_strict(
-            SegmentAsrRoutingOptions(
-                mode=self.config.segment_asr_routing,
-                confidence_threshold=self.config.segment_routing_confidence_threshold,
-                min_segments=self.config.segment_routing_min_segments,
-                strict=self.config.segment_routing_strict,
-                window_seconds=self.config.segment_routing_window_seconds,
-                max_windows=self.config.segment_routing_max_windows,
-                allow_large_run=self.config.segment_routing_allow_large_run,
-            )
-        )
-
         if not task.audio_path or not _is_valid_output_file(Path(task.audio_path)):
             task.stage = TaskStage.EXTRACTING_AUDIO
             task.status = "running"
@@ -394,7 +391,9 @@ class BatchPipeline:
             print("  [1/5] Audio already exists, skipping extraction")
 
         source_srt = outputs.source_srt
-        if not _is_valid_output_file(source_srt):
+        signature_matches = task.asr_config_signature == self.config.asr_signature()
+        transcribed_now = False
+        if not _is_valid_output_file(source_srt) or not signature_matches:
             task.stage = TaskStage.TRANSCRIBING
             task.status = "running"
             task.save()
@@ -402,7 +401,9 @@ class BatchPipeline:
             lang_info = self._transcribe(Path(task.audio_path), source_srt)
             task.source_srt = str(source_srt.resolve())
             task.language_detection = lang_info
+            task.asr_config_signature = self.config.asr_signature()
             task.save()
+            transcribed_now = True
         else:
             task.stage = TaskStage.TRANSCRIBING
             task.status = "running"
@@ -421,55 +422,13 @@ class BatchPipeline:
             print(f"      language: {ld.get('source_language', '?')} "
                   f"(confidence: {ld.get('language_probability', 'N/A')})")
 
-        routing_options = SegmentAsrRoutingOptions(
-            mode=self.config.segment_asr_routing,
-            confidence_threshold=self.config.segment_routing_confidence_threshold,
-            min_segments=self.config.segment_routing_min_segments,
-            strict=self.config.segment_routing_strict,
-            window_seconds=self.config.segment_routing_window_seconds,
-            max_windows=self.config.segment_routing_max_windows,
-            allow_large_run=self.config.segment_routing_allow_large_run,
-        )
-        routed_source_applied = False
-        if routing_options.mode != "off":
-            print("      segment ASR routing dry-run/apply metadata...")
-            try:
-                routing_result = run_segment_asr_routing(
-                    options=routing_options,
-                    media_path=input_path,
-                    routing_input_path=Path(task.audio_path),
-                    report_root=outputs.reports_dir,
-                    model_name=self.config.model,
-                    device=self.config.device,
-                    compute_type=self.config.compute_type,
-                    local_files_only=self.config.local_files_only,
-                    normal_srt_path=source_srt,
-                    routed_srt_path=source_srt,
-                )
-            except SegmentAsrRoutingError as exc:
-                task.segment_asr_routing_status = "failed"
-                task.segment_asr_routing_message = routing_user_message(
-                    user_status="failed",
-                    failure_reason=str(exc),
-                )
-                task.save()
-                raise
-            task.segment_asr_routing_status = routing_result.user_status
-            task.segment_asr_routing_report = routing_result.report_path
-            task.segment_asr_routing_message = routing_result.message
-            routed_source_applied = routing_result.subtitle_output_affected
-            task.save()
-            if routing_result.message:
-                print(f"      {routing_result.message}")
-            if routing_result.report_path:
-                print(f"      segment routing report: {routing_result.report_path}")
-
         if self.config.translate:
             translated_srt = outputs.translated_srt
             bilingual_srt = outputs.bilingual_srt
             output_translated = outputs.translation_output
+            translated_now = False
 
-            if routed_source_applied or not _is_valid_output_file(output_translated):
+            if transcribed_now or not _is_valid_output_file(output_translated):
                 task.stage = TaskStage.TRANSLATING
                 task.status = "running"
                 task.save()
@@ -482,18 +441,61 @@ class BatchPipeline:
                     output_path=output_translated,
                     effective_prompt=effective_prompt,
                 )
+                translated_now = True
                 task.translated_srt = str(output_translated.resolve())
                 task.bilingual_srt = str(bilingual_srt.resolve()) if self.config.translation_mode == "bilingual" else ""
+                if self.config.translation_strategy_mode == "semantic_review":
+                    candidate = output_translated.with_name(
+                        f"{output_translated.stem}.semantic_review_report.json"
+                    )
+                    task.semantic_review_report = (
+                        str(candidate.resolve()) if _is_valid_output_file(candidate) else ""
+                    )
+                elif self.config.translation_strategy_mode == "wenyi_review":
+                    candidate = output_translated.with_name(
+                        f"{output_translated.stem}.wenyi_review_report.json"
+                    )
+                    task.semantic_review_report = (
+                        str(candidate.resolve()) if _is_valid_output_file(candidate) else ""
+                    )
+                elif self.config.translation_strategy_mode == "semantic_wenyi_review":
+                    candidate = output_translated.with_name(
+                        f"{output_translated.stem}.semantic_wenyi_review_report.json"
+                    )
+                    task.semantic_review_report = (
+                        str(candidate.resolve()) if _is_valid_output_file(candidate) else ""
+                    )
                 task.save()
             else:
                 task.translated_srt = str(output_translated.resolve())
                 if self.config.translation_mode == "bilingual":
                     task.bilingual_srt = str(bilingual_srt.resolve())
+                if self.config.translation_strategy_mode == "semantic_review":
+                    candidate = output_translated.with_name(
+                        f"{output_translated.stem}.semantic_review_report.json"
+                    )
+                    task.semantic_review_report = (
+                        str(candidate.resolve()) if _is_valid_output_file(candidate) else ""
+                    )
+                elif self.config.translation_strategy_mode == "wenyi_review":
+                    candidate = output_translated.with_name(
+                        f"{output_translated.stem}.wenyi_review_report.json"
+                    )
+                    task.semantic_review_report = (
+                        str(candidate.resolve()) if _is_valid_output_file(candidate) else ""
+                    )
+                elif self.config.translation_strategy_mode == "semantic_wenyi_review":
+                    candidate = output_translated.with_name(
+                        f"{output_translated.stem}.semantic_wenyi_review_report.json"
+                    )
+                    task.semantic_review_report = (
+                        str(candidate.resolve()) if _is_valid_output_file(candidate) else ""
+                    )
                 task.save()
                 print("  [3/5] Translated SRT already exists, skipping translation")
 
             report_path = outputs.quality_report
-            if routed_source_applied or not _is_valid_output_file(report_path):
+            if transcribed_now or translated_now or not _is_valid_output_file(report_path):
                 task.stage = TaskStage.QUALITY_CHECKING
                 task.status = "running"
                 task.save()
@@ -540,7 +542,10 @@ class BatchPipeline:
 
     def completed_outputs_valid(self, task: TaskState) -> bool:
         """Return True only when completed status and configured final outputs agree."""
-        return validate_completed_outputs(task, self.config)
+        return (
+            task.asr_config_signature == self.config.asr_signature()
+            and validate_completed_outputs(task, self.config)
+        )
 
 
     def _extract_audio(self, input_path: Path) -> Path:
@@ -615,28 +620,8 @@ class BatchPipeline:
         self._record_stage_result(context, result)
 
     def _build_language_strategy(self, lang_detection: dict | None) -> str:
-        """Build the translation strategy prompt from language detection."""
-        if not lang_detection:
-            return self.config.translation_prompt
-
-        lang = lang_detection.get("source_language", "")
-        prob = lang_detection.get("language_probability")
-
-        extra_parts: list[str] = []
-
-        if self.config.translation_prompt.strip():
-            extra_parts.append(self.config.translation_prompt.strip())
-
-        if lang and lang not in MAJOR_LANGUAGES:
-            extra_parts.append(MINOR_LANGUAGE_EXTRA_PROMPT)
-
-        if prob is not None and prob < LANG_CONFIDENCE_THRESHOLD:
-            extra_parts.append(LOW_CONFIDENCE_EXTRA_PROMPT)
-
-        if extra_parts:
-            return "\n\n".join(extra_parts)
-
-        return ""
+        """Confidence is diagnostic only and never changes translation behavior."""
+        return self.config.translation_prompt
 
     def _archive_completed(self, task: TaskState) -> None:
         """Move a completed input file to the archive directory."""
@@ -657,20 +642,6 @@ class BatchPipeline:
 def main() -> int:
     parser = build_pipeline_parser()
     args = parser.parse_args()
-    try:
-        validate_segment_routing_options(
-            SegmentAsrRoutingOptions(
-                mode=args.segment_asr_routing,
-                confidence_threshold=args.segment_routing_confidence_threshold,
-                min_segments=args.segment_routing_min_segments,
-                strict=args.segment_routing_strict,
-                window_seconds=args.segment_routing_window_seconds,
-                max_windows=args.segment_routing_max_windows,
-                allow_large_run=args.segment_routing_allow_large_run,
-            )
-        )
-    except SegmentAsrRoutingError as exc:
-        parser.error(str(exc))
 
     os.environ.setdefault("HF_HOME", str(PROJECT_ROOT / ".cache" / "huggingface"))
     os.environ.setdefault("HF_HUB_CACHE", str(PROJECT_ROOT / ".cache" / "huggingface" / "hub"))
@@ -694,12 +665,11 @@ def main() -> int:
         model=effective["model"],
         device=effective["device"],
         compute_type=effective["compute_type"],
+        asr_mode=effective["asr_mode"],
         language=effective["language"],
         beam_size=effective["beam_size"],
         vad_filter=effective["vad_filter"],
         local_files_only=args.local_files_only,
-        asr_experiment_mode=effective["asr_strategy"]["mode"],
-        asr_candidate_id=effective["asr_strategy"]["candidate_id"],
         translate=not args.no_translate,
         api_provider=effective["api_provider"],
         api_base=effective["api_base"],
@@ -714,21 +684,11 @@ def main() -> int:
         context_window=args.context_window,
         translation_reliability_mode=effective["translation_reliability"]["mode"],
         translation_max_extra_requests=effective["translation_reliability"]["max_extra_requests"],
+        translation_strategy_mode=effective["translation_strategy"]["mode"],
+        translation_scene_gap_seconds=effective["translation_strategy"]["scene_gap_seconds"],
         subtitle_formats=effective["subtitle_formats"],
         ass_style_id=effective["ass_style_id"],
         subtitle_style=effective["subtitle_style"],
-        segment_asr_routing=(
-            "dry_run"
-            if effective["asr_strategy"]["candidate_id"] == "mixed-route-v1"
-            and effective["asr_strategy"]["mode"] == "dry_run"
-            else args.segment_asr_routing
-        ),
-        segment_routing_confidence_threshold=args.segment_routing_confidence_threshold,
-        segment_routing_min_segments=args.segment_routing_min_segments,
-        segment_routing_strict=args.segment_routing_strict,
-        segment_routing_window_seconds=args.segment_routing_window_seconds,
-        segment_routing_max_windows=args.segment_routing_max_windows,
-        segment_routing_allow_large_run=args.segment_routing_allow_large_run,
         language_profile_id=effective["profile_info"].get("profile_id", ""),
         language_profile_name=effective["profile_info"].get("profile_name", ""),
         lang_profile_config=effective["profile_info"],

@@ -47,11 +47,7 @@ class RuntimePaths:
     @property
     def config_root(self) -> Path:
         if self.layout == "packaged":
-            appdata = Path(
-                os.environ.get("APPDATA")
-                or Path.home() / "AppData" / "Roaming"
-            )
-            return (appdata / "CineSubStudio" / "config").resolve()
+            return (self.project_root / "config").resolve()
         return self.project_root / "config"
 
     @property

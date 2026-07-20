@@ -58,57 +58,10 @@
     }
 
     /* ── Header & Tabs ── */
-    header {
-      padding: 20px 28px 0;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
-    }
-
     h1 {
       margin: 0 0 4px;
       font-size: 24px;
       font-weight: 650;
-    }
-
-    .sub {
-      margin: 0 0 14px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .status-strip {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(170px, 1fr));
-      gap: 10px;
-      margin: 0 0 14px;
-    }
-
-    .status-pill {
-      min-height: 54px;
-      padding: 9px 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: linear-gradient(180deg, #fff, #f8fafc);
-    }
-
-    .status-pill span {
-      display: block;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: .02em;
-      text-transform: uppercase;
-    }
-
-    .status-pill strong {
-      display: block;
-      margin-top: 4px;
-      color: var(--ink);
-      font-size: 13px;
-      line-height: 1.25;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     .hint-inline {
@@ -337,11 +290,6 @@
       font-size: 13px;
     }
 
-    .experimental-routing {
-      border-color: #d6e4ff;
-      background: #f8fbff;
-    }
-
     .toolbar {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -515,11 +463,6 @@
       word-break: break-all;
     }
 
-    .asr-evidence-layout {
-      display: grid;
-      grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.4fr);
-      gap: 12px;
-    }
 
     .asr-report-list {
       display: flex;
@@ -558,16 +501,6 @@
       line-height: 1.35;
     }
 
-    .asr-evidence-summary {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(90px, 1fr));
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-
-    .asr-evidence-summary .storage-item {
-      min-height: 62px;
-    }
 
     .asr-sample-table {
       width: 100%;
@@ -1068,8 +1001,46 @@
     /* ── Transcribe Tab: two-column ── */
     .transcribe-layout {
       display: grid;
-      grid-template-columns: minmax(460px, 620px) minmax(0, 1fr);
-      gap: 18px;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .transcribe-layout > section {
+      min-width: 0;
+    }
+
+    .single-result-panel {
+      position: sticky;
+      top: 18px;
+      align-self: start;
+    }
+
+    .transcribe-layout .settings-head {
+      display: block;
+      margin-bottom: 18px;
+    }
+
+    .transcribe-layout .settings-head h3 {
+      line-height: 1.35;
+    }
+
+    .transcribe-layout .panel-copy {
+      margin-top: 8px;
+      line-height: 1.65;
+    }
+
+    .transcribe-layout .form-block {
+      margin-top: 20px;
+      padding: 18px 0 6px;
+    }
+
+    .transcribe-layout .form-block.settings-panel {
+      padding: 18px;
+    }
+
+    .transcribe-layout .row {
+      gap: 14px;
     }
 
     section {
@@ -1178,112 +1149,6 @@
     .badge-status.done { background: #dcfae6; color: var(--ok); }
     .badge-status.failed { background: #fee4e2; color: var(--danger); }
 
-    .job-queue {
-      display: grid;
-      gap: 8px;
-      max-height: 360px;
-      overflow: auto;
-      padding-right: 2px;
-    }
-
-    .job-queue-item {
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-    }
-
-    .job-queue-item.failed {
-      border-color: #fecaca;
-      background: #fffafa;
-    }
-
-    .job-queue-item.done {
-      border-color: #bbf7d0;
-      background: #fbfffc;
-    }
-
-    .job-queue-item.running {
-      border-color: #bfdbfe;
-      background: #f8fbff;
-    }
-
-    .job-queue-head {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-    }
-
-    .job-queue-name {
-      font-size: 13px;
-      font-weight: 650;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 100%;
-    }
-
-    .job-queue-meta {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin-top: 6px;
-      font-size: 12px;
-      color: #475569;
-    }
-
-    .job-queue-progress {
-      margin-top: 8px;
-    }
-
-    .job-queue-progress .progress-track {
-      height: 8px;
-    }
-
-    .job-queue-actions {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin-top: 8px;
-    }
-
-    .job-queue-actions button {
-      min-height: 28px;
-      padding: 4px 10px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--text);
-      font: inherit;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-
-    .job-queue-actions button:hover { background: #eef2f6; }
-    .job-queue-actions button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
-    .job-queue-actions button.primary:hover { background: var(--primary-dark); }
-    .job-queue-actions button:disabled { opacity: .5; cursor: not-allowed; }
-
-    .job-error-details {
-      margin-top: 8px;
-      padding: 8px 10px;
-      border: 1px solid #fecaca;
-      border-radius: 6px;
-      background: #fff7f6;
-      font-size: 12px;
-      color: var(--danger);
-      line-height: 1.5;
-    }
-
-    .job-error-details summary {
-      cursor: pointer;
-      font-weight: 650;
-    }
-
     .dl-link {
       color: var(--primary);
       font-weight: 650;
@@ -1303,6 +1168,12 @@
       font-size: 13px;
       line-height: 1.55;
       white-space: pre-wrap;
+    }
+
+    .single-result-panel .log-panel {
+      height: clamp(240px, 32vh, 320px);
+      min-height: 240px;
+      max-height: 320px;
     }
 
     .hint {
@@ -1514,28 +1385,6 @@
 
     .app-main { min-width: 0; }
 
-    .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      display: grid;
-      grid-template-columns: minmax(260px, .85fr) minmax(520px, 1.3fr);
-      gap: 22px;
-      align-items: center;
-      padding: 18px 28px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(9, 13, 20, .92);
-      backdrop-filter: blur(16px);
-    }
-
-    .topbar h2 {
-      margin: 4px 0 0;
-      color: var(--ink);
-      font-size: 21px;
-      font-weight: 760;
-      letter-spacing: 0;
-    }
-
     main {
       max-width: none;
       padding: 24px 28px 34px;
@@ -1551,30 +1400,17 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    .status-strip {
-      grid-template-columns: repeat(4, minmax(130px, 1fr));
-      margin: 0;
-    }
-
-    .status-pill,
     .settings-panel,
     .card,
     .runtime-section,
     .settings-intro,
     .provider-active-bar,
-    .option-card,
-    .jobs-workspace {
+    .option-card {
       border: 1px solid var(--line);
       background: linear-gradient(180deg, rgba(255, 255, 255, .072), rgba(255, 255, 255, .038));
       box-shadow: var(--shadow);
     }
 
-    .status-pill {
-      min-height: 60px;
-      border-radius: var(--radius);
-    }
-
-    .status-pill strong,
     .settings-head h2,
     .settings-head h3,
     .card h2,
@@ -1585,8 +1421,7 @@
     .settings-panel,
     .card,
     .settings-intro,
-    .provider-active-bar,
-    .jobs-workspace {
+    .provider-active-bar {
       border-radius: var(--radius);
     }
 
@@ -1605,7 +1440,6 @@
     .pipeline-stat,
     .task-filter-bar button,
     .task-row,
-    .job-queue-item,
     .asr-report-button {
       border-color: rgba(170, 188, 212, .18);
       background: rgba(255, 255, 255, .045);
@@ -1613,19 +1447,16 @@
     }
     .pipeline-stat.failed,
     .task-row.failed,
-    .task-row.stale,
-    .job-queue-item.failed {
+    .task-row.stale {
       border-color: rgba(255, 107, 107, .34);
       background: rgba(255, 107, 107, .09);
     }
     .pipeline-stat.completed,
-    .task-row.completed,
-    .job-queue-item.done {
+    .task-row.completed {
       border-color: rgba(73, 209, 141, .3);
       background: rgba(73, 209, 141, .075);
     }
-    .pipeline-stat.running,
-    .job-queue-item.running {
+    .pipeline-stat.running {
       border-color: rgba(99, 179, 255, .34);
       background: rgba(99, 179, 255, .09);
     }
@@ -1761,16 +1592,6 @@
       border-color: rgba(255, 107, 107, .3);
     }
 
-    .jobs-workspace { padding: 18px; }
-    .job-queue-panel { margin-top: 14px; }
-    .job-queue-toolbar {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      margin-bottom: 12px;
-      flex-wrap: wrap;
-    }
-
     .profile-scope-strip {
       display: flex;
       gap: 8px;
@@ -1795,7 +1616,6 @@
       text-align: center;
     }
 
-    .job-queue-item,
     .task-row,
     .storage-item,
     .diagnostic-row {
@@ -1865,6 +1685,19 @@
       .tab-content.active { animation: none; }
     }
 
+    @media (max-width: 1280px) {
+      .transcribe-layout {
+        grid-template-columns: 1fr;
+      }
+      .single-result-panel {
+        position: static;
+      }
+      .single-result-panel .log-panel {
+        height: 240px;
+        max-height: 300px;
+      }
+    }
+
     @media (max-width: 1100px) {
       .app-shell { grid-template-columns: 1fr; }
       .sidebar {
@@ -1878,27 +1711,18 @@
         font-size: 13px;
       }
       .rail-note { display: none; }
-      .topbar {
-        position: relative;
-        grid-template-columns: 1fr;
-      }
     }
 
     @media (max-width: 900px) {
       .rail-nav { grid-template-columns: 1fr 1fr; }
-      .topbar { padding: 16px; }
       main { padding: 14px; }
-      .status-strip { grid-template-columns: 1fr; }
       .cards { grid-template-columns: 1fr; }
-      .transcribe-layout { grid-template-columns: 1fr; }
       .toolbar { grid-template-columns: 1fr; }
       .toolbar .wide { grid-column: auto; }
       .directory-picker-row { flex-direction: column; }
       .directory-picker-btn { width: 100%; }
       .storage-grid { grid-template-columns: 1fr; }
       .runtime-diagnostics-layout { grid-template-columns: 1fr; }
-      .asr-evidence-layout,
-      .asr-evidence-summary { grid-template-columns: 1fr; }
       .actions { flex-direction: column; }
       .actions button { width: 100%; }
       .toolbar-actions button,
@@ -1922,7 +1746,6 @@
       box-shadow: 0 10px 28px rgba(49, 135, 216, .2);
     }
     .brand-block h1,
-    .topbar h2,
     .progress-header strong,
     .readiness-step strong {
       font-family: "CineSub Display", "Microsoft YaHei UI", sans-serif;
@@ -2030,7 +1853,6 @@
       transition: width .35s ease;
     }
     .option-card,
-    .status-pill,
     .settings-intro,
     .inspect-result,
     details.advanced-settings,
@@ -2268,7 +2090,116 @@
     .cue-lines div + div { margin-top: 3px; color: #b9dfff; }
     .preview-pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: var(--muted); font-size: 11px; }
     .preview-pager button { min-height: 30px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 5px; background: rgba(255,255,255,.05); color: var(--text); cursor: pointer; }
+    .review-center-head { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin-bottom: 8px; }
+    .review-center-head p { margin: 0; color: var(--muted); font-size: 10px; }
+    .review-filter-bar { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+    .review-filter-bar button { min-height: 29px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: #101925; color: var(--muted); font: inherit; font-size: 10px; cursor: pointer; }
+    .review-filter-bar button.active { border-color: rgba(247,185,85,.6); color: var(--warn); background: rgba(247,185,85,.1); }
+    .review-detail-list { display: grid; gap: 9px; }
+    .review-detail-item { border: 1px solid var(--line); border-left: 3px solid var(--primary); border-radius: 4px; background: rgba(5,9,14,.64); overflow: hidden; }
+    .review-detail-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font: 10px/1.3 Consolas,"Courier New",monospace; }
+    .review-detail-grid { display: grid; grid-template-columns: 1fr 1fr; }
+    .review-detail-cell { min-width: 0; padding: 9px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .review-detail-cell:nth-child(2n) { border-right: 0; }
+    .review-detail-cell span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 9px; letter-spacing: .07em; text-transform: uppercase; }
+    .review-detail-cell p { margin: 0; color: var(--text); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .review-detail-reason { padding: 7px 9px; color: var(--warn); font-size: 10px; line-height: 1.45; }
     body.drawer-open { overflow: hidden; }
+
+    .asr-mode-fieldset {
+      min-width: 0;
+      margin: 0;
+      padding: 0;
+      border: 0;
+    }
+    .asr-mode-fieldset legend {
+      width: 100%;
+      margin-bottom: 10px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .asr-mode-rail {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+    }
+    .asr-mode-card {
+      position: relative;
+      min-width: 0;
+      min-height: 116px;
+      display: grid;
+      align-content: start;
+      gap: 7px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(5, 9, 14, .52);
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+    .asr-mode-card:hover {
+      border-color: rgba(99, 179, 255, .38);
+      transform: translateY(-1px);
+    }
+    .asr-mode-card:has(input:checked) {
+      border-color: rgba(99, 179, 255, .72);
+      background: linear-gradient(145deg, rgba(99, 179, 255, .17), rgba(73, 209, 141, .075));
+      box-shadow: 0 0 0 1px rgba(99, 179, 255, .12);
+    }
+    .asr-mode-card input {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 18px;
+      height: 18px;
+      min-height: 0;
+      padding: 0;
+      accent-color: var(--primary);
+    }
+    .asr-mode-card strong {
+      padding-right: 22px;
+      color: var(--ink);
+      font-size: 13px;
+    }
+    .asr-mode-card span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .asr-mode-card code {
+      width: fit-content;
+      padding: 3px 6px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, .24);
+      color: var(--primary);
+      font: 11px/1.4 Consolas, "Microsoft YaHei", monospace;
+    }
+    .fixed-language-panel {
+      margin-top: 10px;
+      padding: 12px;
+      border: 1px solid rgba(99, 179, 255, .3);
+      border-radius: var(--radius);
+      background: var(--info-bg);
+    }
+    .fixed-language-panel[hidden] { display: none; }
+    .settings-section-label {
+      margin: 4px 0 10px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .08em;
+    }
+    .pipeline-control-rail .asr-mode-rail { grid-template-columns: 1fr; }
+    .pipeline-control-rail .asr-mode-card { min-height: 100px; }
+    .pipeline-control-rail .advanced-settings { margin-top: 0; }
+    .pipeline-control-rail .advanced-settings > summary { min-height: 44px; display: flex; align-items: center; }
+    .mode-diagnostic-note {
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.5;
+    }
 
     @media (prefers-reduced-motion: no-preference) {
       .task-detail-drawer { animation: drawerIn .18s ease-out; }
@@ -2281,7 +2212,7 @@
       .pipeline-control-rail .toolbar .wide { grid-column: 1 / -1; }
     }
     @media (max-width: 900px) {
-      .stage6-stage-ribbon { grid-template-columns: repeat(5, minmax(120px,1fr)); overflow-x: auto; }
+      .stage6-stage-ribbon { grid-template-columns: repeat(2, minmax(0,1fr)); overflow-x: visible; }
       .readiness-compact .readiness-grid { grid-template-columns: 1fr 1fr; }
       .stage6-progress-host .pipeline-stats { grid-template-columns: repeat(2,minmax(90px,1fr)); }
       .runtime-operations-grid { grid-template-columns: 1fr; }
@@ -2291,11 +2222,17 @@
     @media (max-width: 700px) {
       .pipeline-control-rail .toolbar { grid-template-columns: 1fr; }
       .pipeline-control-rail .toolbar .wide { grid-column: auto; }
+      .transcribe-layout .row { grid-template-columns: 1fr; }
       .pipeline-support { grid-template-columns: 1fr; }
       .readiness-compact .readiness-grid { grid-template-columns: 1fr; }
       .drawer-facts { grid-template-columns: 1fr; }
       .subtitle-preview-cue { grid-template-columns: 1fr; }
-      .ui-language-switch { width: 100%; justify-content: center; }
+      .review-detail-grid { grid-template-columns: 1fr; }
+      .review-detail-cell { border-right: 0; }
+      .asr-mode-rail { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 460px) {
+      .stage6-stage-ribbon { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -2303,7 +2240,7 @@
 
 <div class="app-shell" data-refresh="v0.6-stage2-ui">
   <aside class="sidebar" aria-label="主导航">
-    <div class="brand-block" aria-label="Local workstation / 本地字幕工作站">
+    <div class="brand-block" aria-label="本地字幕工作站">
       <div class="brand-lockup">
         <img class="brand-mark" src="/assets/brand-mark.png" alt="" width="46" height="46">
         <div>
@@ -2312,12 +2249,11 @@
           <strong>CineSub Studio</strong>
         </div>
       </div>
-      <span id="appVersionChip" class="version-chip">读取版本...</span><span id="appFlavorChip" class="build-chip">development</span>
+      <span id="appVersionChip" class="version-chip">读取版本...</span><span id="appFlavorChip" class="build-chip">开发版</span>
     </div>
     <nav class="tabs rail-nav">
       <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">批量处理</button>
       <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">单个处理</button>
-      <button class="tab-btn" data-tab="jobs" onclick="switchTab('jobs')">最近任务</button>
       <button class="tab-btn" data-tab="runtime" onclick="switchTab('runtime')">运行环境</button>
       <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">翻译接口</button>
       <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')">语言风格</button>
@@ -2326,33 +2262,16 @@
   </aside>
 
   <div class="app-main">
-    <header class="topbar">
-      <div>
-        <div class="ui-language-switch" aria-label="界面语言">
-          <button id="localeZhButton" type="button" class="active" aria-pressed="true" onclick="setUiLocale('zh-CN')">简中</button>
-          <button id="localeEnButton" type="button" aria-pressed="false" aria-disabled="true" title="English interface is reserved for a future version" onclick="setUiLocale('en')">English</button>
-        </div>
-        <p class="eyebrow" style="margin-top:8px">本地字幕生产控制台</p>
-        <h2>选择视频 → 语音识别 → 翻译 → 输出字幕</h2>
-      </div>
-      <div class="status-strip">
-        <div class="status-pill"><span>翻译接口</span><strong id="statusProvider">读取中...</strong></div>
-        <div class="status-pill"><span>语言风格</span><strong id="statusProfile">auto-detect</strong></div>
-        <div class="status-pill"><span>临时空间</span><strong id="statusTempSpace">读取中...</strong></div>
-        <div class="status-pill"><span>模型缓存</span><strong id="statusModelCache">项目内 .cache / models</strong></div>
-      </div>
-    </header>
-
 <main>
   <!-- ═══════════════ Pipeline Tab ═══════════════ -->
   <div id="tab-pipeline" class="tab-content active">
     <div class="stage6-pipeline-shell">
       <section class="stage6-stage-ribbon" aria-label="字幕处理阶段" data-i18n-en="Subtitle timeline">
-        <div class="stage6-stage active" data-pipeline-stage="pending"><span>STG 01</span><strong>扫描文件</strong><small>识别输入目录中的媒体</small></div>
-        <div class="stage6-stage" data-pipeline-stage="extracting_audio"><span>STG 02</span><strong>提取音频</strong><small>生成项目内临时音轨</small></div>
-        <div class="stage6-stage" data-pipeline-stage="transcribing"><span>STG 03</span><strong>语音转写</strong><small>生成原文 SRT</small></div>
-        <div class="stage6-stage" data-pipeline-stage="translating"><span>STG 04</span><strong>字幕翻译</strong><small>按需调用当前翻译接口</small></div>
-        <div class="stage6-stage" data-pipeline-stage="quality_checking"><span>STG 05</span><strong>质检输出</strong><small>生成字幕与复核报告</small></div>
+        <div class="stage6-stage active" data-pipeline-stage="pending"><span>阶段 01</span><strong>扫描文件</strong><small>识别输入目录中的媒体</small></div>
+        <div class="stage6-stage" data-pipeline-stage="extracting_audio"><span>阶段 02</span><strong>提取音频</strong><small>生成项目内临时音轨</small></div>
+        <div class="stage6-stage" data-pipeline-stage="transcribing"><span>阶段 03</span><strong>语音转写</strong><small>生成原文 SRT</small></div>
+        <div class="stage6-stage" data-pipeline-stage="translating"><span>阶段 04</span><strong>字幕翻译</strong><small>按需调用当前翻译接口</small></div>
+        <div class="stage6-stage" data-pipeline-stage="quality_checking"><span>阶段 05</span><strong>质检输出</strong><small>生成字幕与复核报告</small></div>
       </section>
 
       <div class="stage6-pipeline-layout">
@@ -2398,6 +2317,44 @@
         </div>
         <span class="help-text">相对路径会从项目目录开始找；蓝光电影建议放在任意磁盘目录，然后填完整路径。</span>
       </div>
+      <div class="wide option-card">
+        <fieldset class="asr-mode-fieldset">
+          <legend>识别方式<span class="recommend-badge">默认自动检测</span></legend>
+          <div class="asr-mode-rail">
+            <label class="asr-mode-card">
+              <input type="radio" name="pipelineAsrMode" value="auto" checked onchange="syncAsrModeUI('pipeline')">
+              <strong>自动检测</strong>
+              <span>适合大多数单语言视频，由整片音频自动判断语言。</span>
+              <code>整片 → 自动识别</code>
+            </label>
+            <label class="asr-mode-card">
+              <input type="radio" name="pipelineAsrMode" value="fixed" onchange="syncAsrModeUI('pipeline')">
+              <strong>固定单语言</strong>
+              <span>已经知道整批视频语言时使用，可减少语言误判。</span>
+              <code>整片 → 指定语言</code>
+            </label>
+            <label class="asr-mode-card">
+              <input type="radio" name="pipelineAsrMode" value="multilingual" onchange="syncAsrModeUI('pipeline')">
+              <strong>多语言</strong>
+              <span>按语音停顿分块识别并合并，处理时间可能更长。</span>
+              <code>VAD 分块 → 识别 → 合并</code>
+            </label>
+          </div>
+        </fieldset>
+        <div id="pipelineFixedLanguagePanel" class="fixed-language-panel" hidden>
+          <label for="pipelineLanguage">整批视频的语言</label>
+          <select id="pipelineLanguage" disabled>
+            <option value="en">英语 en</option><option value="zh">中文 zh</option>
+            <option value="ja">日语 ja</option><option value="ko">韩语 ko</option>
+            <option value="fr">法语 fr</option><option value="de">德语 de</option>
+            <option value="es">西班牙语 es</option><option value="ru">俄语 ru</option>
+            <option value="it">意大利语 it</option><option value="pt">葡萄牙语 pt</option>
+          </select>
+        </div>
+        <p class="mode-diagnostic-note">置信度仅用于日志和人工复核提示，不会触发换模型、重跑或自动改写。</p>
+      </div>
+      <details class="advanced-settings wide">
+        <summary>识别性能设置</summary>
       <div class="field option-card">
         <label for="pipelineModel">语音识别模型<span class="recommend-badge">small 稳妥</span></label>
         <select id="pipelineModel">
@@ -2429,21 +2386,7 @@
         </select>
         <span class="help-text">自动会按设备选择。CPU 通常 int8 省内存；CUDA 通常 float16；float32 最吃内存。</span>
       </div>
-      <div class="field option-card">
-        <label for="pipelineLanguage">视频语言</label>
-        <select id="pipelineLanguage">
-          <option value="" selected>自动检测</option>
-          <option value="en">英语</option>
-          <option value="zh">中文</option>
-          <option value="ja">日语</option>
-          <option value="ko">韩语</option>
-          <option value="fr">法语</option>
-          <option value="de">德语</option>
-          <option value="es">西语</option>
-          <option value="ru">俄语</option>
-        </select>
-        <span class="help-text">不知道就自动检测。明确知道电影语言时指定它，可减少识别误判。</span>
-      </div>
+      </details>
       <label class="check compact option-card">
         <input type="checkbox" id="pipelineTranslateEnabled" checked>
         启用翻译
@@ -2458,60 +2401,26 @@
       <div class="inline-field option-card">
         <label for="pipelineLangProfileSelect">语言风格</label>
         <select id="pipelineLangProfileSelect" onchange="updatePipelineLangProfile()"></select>
-        <span class="help-text">语言配置会带入识别、翻译风格和质检阈值；不懂就用 active profile。</span>
+        <span class="help-text">语言配置会带入识别、翻译风格和质检阈值；不懂就用当前默认配置。</span>
         <button type="button" class="settings-jump" onclick="switchTab('langprofiles')">管理语言风格</button>
+      </div>
+      <div class="field option-card">
+        <label for="pipelineTranslationStrategy">翻译质量策略</label>
+        <select id="pipelineTranslationStrategy">
+          <option value="" selected>跟随语言配置</option>
+          <option value="standard">标准翻译</option>
+          <option value="three_pass">高质量三步翻译（约 3 倍调用量）</option>
+          <option value="semantic_review">整片理解保真审校（相对推荐 · 实验）</option>
+          <option value="wenyi_review">WenYi 字幕审校（未通过）</option>
+          <option value="semantic_wenyi_review">Semantic + WenYi（未通过）</option>
+        </select>
+      </div>
+      <div class="field option-card">
+        <label for="pipelineTranslationSceneGap">场景静音间隔（秒）</label>
+        <input id="pipelineTranslationSceneGap" type="number" min="1" max="600" step="1" value="30">
       </div>
           </div>
 
-      <details class="advanced-settings experimental-routing">
-        <summary>实验功能：分段 ASR 路由（默认关闭）</summary>
-        <span class="help-text" data-i18n-en="Apply is experimental. It may fall back to normal ASR unless strict mode is enabled.">当前生产默认值为关闭。仅在明确进行实验评测时使用；失败可能回退到普通 ASR。</span>
-        <div class="row">
-          <div class="option-card">
-            <label for="pipelineSegmentAsrRouting">路由模式</label>
-            <select id="pipelineSegmentAsrRouting">
-              <option value="off" selected>关闭</option>
-              <option value="dry_run">仅生成证据报告</option>
-              <option value="apply">实验性应用路由结果</option>
-            </select>
-            <span class="help-text">实验能力只在显式选择后运行。dry_run 不改变字幕输出。</span>
-          </div>
-          <div class="option-card">
-            <label for="pipelineSegmentRoutingThreshold">置信阈值</label>
-            <input id="pipelineSegmentRoutingThreshold" type="number" min="0" max="1" step="0.01" value="0.70">
-            <span class="help-text">用于分析窗口分类；默认 0.70。</span>
-          </div>
-          <div class="option-card">
-            <label for="pipelineSegmentRoutingMinSegments">最少片段数</label>
-            <input id="pipelineSegmentRoutingMinSegments" type="number" min="0" max="20" step="1" value="1">
-            <span class="help-text">低于该片段数的窗口证据会被视为不足。</span>
-          </div>
-          <div class="option-card">
-            <label for="pipelineSegmentRoutingWindowSeconds">apply 窗口秒数</label>
-            <input id="pipelineSegmentRoutingWindowSeconds" type="number" min="1" step="1" value="120">
-            <span class="help-text">仅用于 apply 的全覆盖窗口；dry_run 采样不变。</span>
-          </div>
-          <div class="option-card">
-            <label for="pipelineSegmentRoutingMaxWindows">apply 最大窗口数</label>
-            <input id="pipelineSegmentRoutingMaxWindows" type="number" min="1" step="1" value="80">
-            <span class="help-text">按单个媒体文件计算，超出时回退或 strict 失败。</span>
-          </div>
-          <div class="option-card">
-            <label class="check">
-              <input id="pipelineSegmentRoutingStrict" type="checkbox">
-              strict：路由失败时直接失败
-            </label>
-            <span class="help-text">M8.1 的 apply strict 会在生成字幕前失败；普通 dry_run 建议不要勾。</span>
-          </div>
-          <div class="option-card">
-            <label class="check">
-              <input id="pipelineSegmentRoutingAllowLargeRun" type="checkbox">
-              允许超过最大窗口数
-            </label>
-            <span class="help-text">只绕过窗口数上限，不绕过覆盖率和候选 SRT 校验。</span>
-          </div>
-        </div>
-          </details>
         </aside>
       </div>
     </div>
@@ -2546,13 +2455,6 @@
             <button type="button" onclick="cleanupTransientFiles()" class="danger">释放临时空间</button>
           </div>
         </div>
-      </section>
-      <section class="card">
-        <details>
-          <summary>ASR 诊断证据（高级）</summary>
-          <p class="help-text">只读显示已有证据报告，不运行 Whisper，也不改变生产字幕。</p>
-          <div id="asr-evidence-result" class="placeholder">正在读取 ASR 证据报告...</div>
-        </details>
       </section>
     </div>
     <div class="runtime-diagnostics-layout">
@@ -2630,8 +2532,45 @@
           <div class="form-block settings-panel">
             <div class="settings-head">
               <h3 data-i18n-en="Step 2 · Speech recognition">步骤 2 · 语音识别</h3>
-              <p class="panel-copy">看不懂就保持默认：small + CPU + 自动语言，是最不容易翻车的组合。</p>
+              <p class="panel-copy">先选择视频的语言情况；不了解时使用默认的“自动检测”。</p>
             </div>
+            <div class="option-card">
+              <fieldset class="asr-mode-fieldset">
+                <legend>识别方式<span class="recommend-badge">默认自动检测</span></legend>
+                <div class="asr-mode-rail">
+                  <label class="asr-mode-card">
+                    <input type="radio" name="asr_mode" value="auto" checked onchange="syncAsrModeUI('single')">
+                    <strong>自动检测</strong>
+                    <span>适合大多数单语言视频，由整片音频自动判断语言。</span>
+                    <code>整片 → 自动识别</code>
+                  </label>
+                  <label class="asr-mode-card">
+                    <input type="radio" name="asr_mode" value="fixed" onchange="syncAsrModeUI('single')">
+                    <strong>固定单语言</strong>
+                    <span>明确知道整片语言时使用，整片不再做语言路由。</span>
+                    <code>整片 → 指定语言</code>
+                  </label>
+                  <label class="asr-mode-card">
+                    <input type="radio" name="asr_mode" value="multilingual" onchange="syncAsrModeUI('single')">
+                    <strong>多语言</strong>
+                    <span>按语音停顿分块识别并合并，处理时间可能更长。</span>
+                    <code>VAD 分块 → 识别 → 合并</code>
+                  </label>
+                </div>
+              </fieldset>
+              <div id="singleFixedLanguagePanel" class="fixed-language-panel" hidden>
+                <label for="language">整片视频的语言</label>
+                <select id="language" name="language" disabled>
+                  <option value="en">英语 en</option><option value="zh">中文 zh</option>
+                  <option value="ja">日语 ja</option><option value="ko">韩语 ko</option>
+                  <option value="fr">法语 fr</option><option value="de">德语 de</option>
+                  <option value="es">西班牙语 es</option><option value="ru">俄语 ru</option>
+                  <option value="it">意大利语 it</option><option value="pt">葡萄牙语 pt</option>
+                </select>
+              </div>
+              <p class="mode-diagnostic-note">识别置信度只会出现在日志和复核提示中，不会自动换模型或重跑。</p>
+            </div>
+            <p class="settings-section-label">识别性能</p>
             <div class="row">
               <div class="option-card">
                 <label for="model">语音识别模型<span class="recommend-badge">small 默认</span></label>
@@ -2653,24 +2592,6 @@
                   <option value="auto">自动</option>
                 </select>
                 <span class="help-text">CPU 最兼容；CUDA 速度更快但要求 NVIDIA 显卡环境；自动适合你不确定机器配置时。</span>
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="option-card">
-                <label for="language">视频语言</label>
-                <select id="language" name="language">
-                  <option value="">自动检测</option>
-                  <option value="en">英语 en</option>
-                  <option value="zh">中文 zh</option>
-                  <option value="ja">日语 ja</option>
-                  <option value="ko">韩语 ko</option>
-                  <option value="fr">法语 fr</option>
-                  <option value="de">德语 de</option>
-                  <option value="es">西语 es</option>
-                  <option value="ru">俄语 ru</option>
-                </select>
-                <span class="help-text">不确定就自动检测。明确知道是英语、日语、法语等，手动指定可减少误判。</span>
               </div>
             </div>
 
@@ -2698,7 +2619,7 @@
               </div>
               <div class="row">
                 <div class="option-card">
-                  <label for="beam_size">Beam size<span class="recommend-badge">5 稳</span></label>
+                  <label for="beam_size">束搜索宽度（Beam size）<span class="recommend-badge">5 稳</span></label>
                   <input id="beam_size" name="beam_size" type="number" min="1" max="10" value="5">
                   <span class="help-text">识别时同时尝试几条候选文本。默认 5 比较稳；越大越慢，不等于一定更准。</span>
                 </div>
@@ -2722,59 +2643,6 @@
                   <span class="help-text">让 Whisper 记住上一段内容。长对白建议开启；歌词、跳切、多语言混杂可关闭。</span>
                 </div>
               </div>
-              <details class="advanced-settings experimental-routing">
-                <summary>实验性分段 ASR 路由（默认关闭）</summary>
-                <span class="help-text">此功能仍处于实验阶段；失败时可能回退到普通 ASR。超大任务默认会被安全限制阻止。</span>
-                <div class="row">
-                  <div class="option-card">
-                    <label for="segment_asr_routing">路由模式</label>
-                    <select id="segment_asr_routing" name="segment_asr_routing">
-                      <option value="off" selected>off - 不运行</option>
-                      <option value="dry_run">dry_run - 只生成证据报告</option>
-                      <option value="apply">apply - 实验性应用路由结果</option>
-                    </select>
-                    <span class="help-text">dry_run 会额外生成路由证据报告，但不会改变 SRT 输出。</span>
-                  </div>
-                  <div class="option-card">
-                    <label for="segment_routing_confidence_threshold">置信阈值</label>
-                    <input id="segment_routing_confidence_threshold" name="segment_routing_confidence_threshold" type="number" min="0" max="1" step="0.01" value="0.70">
-                    <span class="help-text">用于窗口分类分析；默认 0.70。</span>
-                  </div>
-                </div>
-                <div class="row">
-                  <div class="option-card">
-                    <label for="segment_routing_min_segments">最少片段数</label>
-                    <input id="segment_routing_min_segments" name="segment_routing_min_segments" type="number" min="0" max="20" step="1" value="1">
-                    <span class="help-text">证据片段数不足时不会贸然采信窗口结果。</span>
-                  </div>
-                  <div class="option-card">
-                    <label for="segment_routing_window_seconds">apply 窗口秒数</label>
-                    <input id="segment_routing_window_seconds" name="segment_routing_window_seconds" type="number" min="1" step="1" value="120">
-                    <span class="help-text">仅用于 apply 的全覆盖窗口；dry_run 采样不变。</span>
-                  </div>
-                </div>
-                <div class="row">
-                  <div class="option-card">
-                    <label for="segment_routing_max_windows">apply 最大窗口数</label>
-                    <input id="segment_routing_max_windows" name="segment_routing_max_windows" type="number" min="1" step="1" value="80">
-                    <span class="help-text">按单个媒体文件计算，超出时回退或 strict 失败。</span>
-                  </div>
-                  <div class="option-card">
-                    <label class="check">
-                      <input id="segment_routing_strict" name="segment_routing_strict" type="checkbox">
-                      strict：路由失败时直接失败
-                    </label>
-                    <span class="help-text">M8.1 的 apply strict 会在生成字幕前失败；普通 dry_run 建议保持关闭。</span>
-                  </div>
-                  <div class="option-card">
-                    <label class="check">
-                      <input id="segment_routing_allow_large_run" name="segment_routing_allow_large_run" type="checkbox">
-                      允许超过最大窗口数
-                    </label>
-                    <span class="help-text">只绕过窗口数上限，不绕过覆盖率和候选 SRT 校验。</span>
-                  </div>
-                </div>
-              </details>
             </details>
           </div>
 
@@ -2789,7 +2657,7 @@
                 <select id="lang_profile_select" name="language_profile" onchange="onLangProfileSelect()">
                   <option value="">-- 手动设置 --</option>
                 </select>
-                <span class="help-text">不懂就用默认 active profile。它会自动带入源语言、目标语言、翻译风格和质检阈值。</span>
+                <span class="help-text">不懂就用当前默认语言配置。它会自动带入识别方式、目标语言、既有翻译风格和质检阈值。</span>
                 <button type="button" class="settings-jump" onclick="switchTab('langprofiles')">管理语言风格</button>
               </div>
               <div class="option-card">
@@ -2851,13 +2719,31 @@
 
             <div class="row">
               <div class="option-card">
+                <label for="translation_strategy_mode">翻译质量策略</label>
+                <select id="translation_strategy_mode" name="translation_strategy_mode">
+                  <option value="standard" selected>标准翻译（一次调用）</option>
+                  <option value="three_pass">高质量三步翻译</option>
+                  <option value="semantic_review">整片理解保真审校（相对推荐 · 实验）</option>
+                  <option value="wenyi_review">WenYi 字幕审校（未通过）</option>
+                  <option value="semantic_wenyi_review">Semantic + WenYi（未通过）</option>
+                </select>
+                <span class="help-text">高质量模式需要配置 Pro 模型并严格保留字幕 ID 和时间轴；WenYi 单独模式已有已知安全回归，仅供实验比较。</span>
+              </div>
+              <div class="option-card">
+                <label for="translation_scene_gap_seconds">场景静音间隔（秒）</label>
+                <input id="translation_scene_gap_seconds" name="translation_scene_gap_seconds" type="number" min="1" max="600" step="1" value="30">
+                <span class="help-text">达到该静音间隔时开始新场景；过大场景会优先在最长字幕间隔处分批。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="option-card">
                 <label for="translation_batch_size">批量大小 (1-50)<span class="recommend-badge">20 推荐</span></label>
                 <span class="hint-inline">每批翻译多少条字幕</span>
                 <input id="translation_batch_size" name="translation_batch_size" type="number" min="1" max="50" value="20">
                 <span class="help-text">每次丢给大模型多少条字幕。越大请求越少，但失败后重试成本更高。</span>
               </div>
               <div class="option-card">
-                <label for="translation_temperature">Temperature (0-1)<span class="recommend-badge">0.2 稳</span></label>
+                <label for="translation_temperature">生成随机度（Temperature，0–1）<span class="recommend-badge">0.2 稳</span></label>
                 <span class="hint-inline">0=保守，1=创意</span>
                 <input id="translation_temperature" name="translation_temperature" type="number" min="0" max="1" step="0.1" value="0.2">
                 <span class="help-text">控制翻译发挥程度。字幕要稳，默认 0.2；越高越自由，也越可能跑偏。</span>
@@ -2882,11 +2768,6 @@
                 </div>
               </div>
 
-              <div class="option-card">
-                <label for="translation_prompt">自定义翻译提示词（追加到默认提示词后）</label>
-                <textarea id="translation_prompt" name="translation_prompt" rows="3" placeholder="例如：保持电影口语感；人名不翻译；术语按科幻片风格处理。"></textarea>
-                <span class="help-text">写给大模型的额外要求。留空就用系统默认字幕翻译策略。</span>
-              </div>
             </details>
             </div>
           </div>
@@ -2903,7 +2784,7 @@
               <option value="">自定义</option>
             </select>
 
-            <label for="api_base">API Base URL</label>
+            <label for="api_base">API 服务地址（Base URL）</label>
             <input id="api_base" name="api_base" type="text" placeholder="https://api.openai.com/v1">
 
             <label for="api_key">API Key</label>
@@ -2919,10 +2800,10 @@
         </form>
       </section>
 
-      <section>
+      <section class="single-result-panel" aria-label="当前任务状态与结果">
         <h2 data-i18n-en="Step 4 · Results">步骤 4 · 任务状态与结果</h2>
         <div class="job-status">
-          <span id="badge" class="badge-status">idle</span>
+          <span id="badge" class="badge-status">等待开始</span>
           <a id="downloadSource" class="dl-link" href="#" hidden>下载原文 SRT</a>
           <a id="downloadTranslated" class="dl-link" href="#" hidden>下载双语 SRT</a>
         </div>
@@ -2930,25 +2811,6 @@
 
       </section>
     </div>
-  </div>
-
-  <!-- ═══════════════ Recent Jobs Tab ═══════════════ -->
-  <div id="tab-jobs" class="tab-content">
-    <section class="jobs-workspace">
-      <div class="settings-head">
-        <h2>最近任务</h2>
-        <p class="panel-copy">查看本次本地服务会话中的字幕任务、进度、输出文件和失败复核入口。</p>
-      </div>
-      <div id="jobQueuePanel" class="job-queue-panel">
-        <div id="jobQueueActions" class="job-queue-toolbar">
-          <button type="button" class="secondary-btn" onclick="loadJobQueue()">刷新</button>
-          <span class="help-text">自动刷新会在有运行中任务时开启。</span>
-        </div>
-        <div id="jobQueueList">
-          <div class="placeholder empty-state">还没有任务，先选择一个视频开始处理</div>
-        </div>
-      </div>
-    </section>
   </div>
 
   <!-- ═══════════════ Provider Tab ═══════════════ -->
@@ -2980,7 +2842,7 @@
   <div id="tab-langprofiles" class="tab-content">
     <div class="settings-intro">
       <strong>语言风格管理 ASR 默认值、翻译偏好和术语表。</strong>
-      Provider 不参与识别参数；任务页显式填写的 ASR 参数仍然优先于这里的默认值。
+      Provider 不参与识别参数；任务页显式填写的 ASR 参数仍然优先于这里的默认值。翻译提示词编辑入口当前冻结，已有配置继续在后端生效。
     </div>
     <div class="profile-scope-strip" aria-label="语言风格配置范围">
       <span>基本信息</span>
@@ -2991,7 +2853,7 @@
     </div>
     <div class="provider-active-bar" id="lpActiveBar">
       <span>当前默认：</span>
-      <strong id="activeLPName">auto-detect</strong>
+      <strong id="activeLPName">自动检测</strong>
     </div>
     <div id="lpSettingsNotice" class="settings-notice"></div>
 
@@ -3013,14 +2875,19 @@
       <h3 id="lpModalTitle">新增语言配置</h3>
       <input type="hidden" id="lpEditId">
       <div class="row">
-        <div><label>Profile ID</label><input id="lpEditIdField" type="text" placeholder="my-french"></div>
+        <div><label>配置 ID</label><input id="lpEditIdField" type="text" placeholder="my-french"></div>
         <div><label>名称</label><input id="lpEditName" type="text" placeholder="我的法语配置"></div>
       </div>
       <label>描述</label><input id="lpEditDesc" type="text" placeholder="可选">
       <div class="row">
-        <div><label>源语言</label><select id="lpEditSrcLang">
-          <option value="auto">自动检测 (auto)</option><option value="fr">法语 (fr)</option><option value="es">西班牙语 (es)</option><option value="de">德语 (de)</option><option value="it">意大利语 (it)</option><option value="pt">葡萄牙语 (pt)</option><option value="ru">俄语 (ru)</option><option value="ja">日语 (ja)</option><option value="ko">韩语 (ko)</option><option value="en">英语 (en)</option><option value="zh">中文 (zh)</option>
+        <div><label>默认识别方式</label><select id="lpEditAsrMode" onchange="syncProfileAsrModeUI()">
+          <option value="auto">自动检测</option><option value="fixed">固定单语言</option><option value="multilingual">多语言</option>
         </select></div>
+        <div id="lpFixedLanguagePanel"><label>固定语言</label><select id="lpEditSrcLang">
+          <option value="fr">法语 fr</option><option value="es">西班牙语 es</option><option value="de">德语 de</option><option value="it">意大利语 it</option><option value="pt">葡萄牙语 pt</option><option value="ru">俄语 ru</option><option value="ja">日语 ja</option><option value="ko">韩语 ko</option><option value="en">英语 en</option><option value="zh">中文 zh</option>
+        </select></div>
+      </div>
+      <div class="row">
         <div><label>目标语言</label><select id="lpEditTgtLang">
           <option value="zh-CN">中文 zh-CN</option><option value="zh-TW">繁体中文 zh-TW</option><option value="en">英文 en</option>
         </select></div>
@@ -3034,13 +2901,13 @@
         </select></div>
       </div>
       <div class="row">
-        <div><label>compute_type</label><select id="lpEditComputeType">
+        <div><label>计算精度（compute_type）</label><select id="lpEditComputeType">
           <option value="float16">float16 (GPU)</option><option value="int8">int8 (CPU)</option><option value="auto">自动</option>
         </select></div>
-        <div><label>beam_size</label><input id="lpEditBeamSize" type="number" min="1" max="10" value="5"></div>
+        <div><label>束搜索宽度（beam_size）</label><input id="lpEditBeamSize" type="number" min="1" max="10" value="5"></div>
       </div>
       <label class="check"><input id="lpEditVAD" type="checkbox" checked> 启用 VAD 静音过滤</label>
-      <label class="check"><input id="lpEditCondPrev" type="checkbox" checked> condition_on_previous_text</label>
+      <label class="check"><input id="lpEditCondPrev" type="checkbox" checked> 参考前文识别</label>
 
       <h3 style="margin:14px 0 8px;font-size:14px">质检阈值</h3>
       <div class="row">
@@ -3053,15 +2920,23 @@
       </div>
       <label>单条最大字数</label><input id="lpEditSubChars" type="number" value="36">
 
-      <h3 style="margin:14px 0 8px;font-size:14px">LLM 阶段与翻译风格</h3>
-      <label class="check"><input id="lpEditProofread" type="checkbox"> 启用原文校对 (proofread_source)</label>
-      <label class="check"><input id="lpEditPolish" type="checkbox"> 启用译文润色 (polish_translation)</label>
-      <label>翻译风格提示词</label>
-      <textarea id="lpEditStyle" rows="4" placeholder="将原文字幕翻译为自然、简洁、适合观影的简体中文字幕..."></textarea>
-
-      <label>Glossary terms</label>
+      <h3 style="margin:14px 0 8px;font-size:14px">翻译阶段与风格</h3>
+      <label class="check"><input id="lpEditProofread" type="checkbox"> 启用原文校对</label>
+      <label class="check"><input id="lpEditPolish" type="checkbox"> 启用译文润色</label>
+      <div class="row">
+        <div><label>翻译质量策略</label><select id="lpEditTranslationStrategy">
+          <option value="standard">标准翻译</option>
+          <option value="three_pass">高质量三步翻译（约 3 倍调用量）</option>
+          <option value="semantic_review">整片理解保真审校（相对推荐 · 实验）</option>
+          <option value="wenyi_review">WenYi 字幕审校（未通过）</option>
+          <option value="semantic_wenyi_review">Semantic + WenYi（未通过）</option>
+        </select></div>
+        <div><label>场景静音间隔（秒）</label><input id="lpEditSceneGap" type="number" min="1" max="600" step="1" value="30"></div>
+      </div>
+      <label>术语表</label>
       <textarea id="lpEditGlossary" rows="4" placeholder="source term => target term # optional note"></textarea>
-      <span class="help-text">One term per line. Rows missing source or target are ignored; glossary is appended even when a custom prompt is used.</span>
+      <span class="help-text">每行填写“原词 => 译词 # 可选备注”。缺少原词或译词的行会被忽略。</span>
+      <input id="lpExistingStyle" type="hidden" value="">
 
       <div class="btn-row">
         <button class="btn-cancel" onclick="closeLPModal()">取消</button>
@@ -3108,18 +2983,20 @@
       </div>
 
       <div id="provAdvancedFields" style="display:none">
-        <label>Provider ID <span style="color:var(--muted);font-weight:400">(自动生成)</span></label>
+        <label>接口配置 ID <span style="color:var(--muted);font-weight:400">(自动生成)</span></label>
         <input id="provEditIdField" type="text" placeholder="自动生成">
         <div class="row">
           <div><label>协议</label>
             <select id="provEditProtocol"><option value="openai-compatible">OpenAI-Compatible</option></select>
           </div>
-          <div><label>API Base URL</label>
+          <div><label>API 服务地址（Base URL）</label>
             <input id="provEditBase" type="text" placeholder="https://api.deepseek.com">
           </div>
         </div>
         <label>自定义模型名</label>
         <input id="provEditTransModel" type="text" placeholder="手动输入模型名">
+        <label>质量模型 <span style="color:var(--muted);font-weight:400">(三步反思/终稿；留空则复用翻译模型)</span></label>
+        <input id="provEditQualityModel" type="text" placeholder="例如 deepseek-v4-pro">
         <label>备注</label>
         <input id="provEditNotes" type="text" placeholder="可选">
         <label class="check"><input id="provEditEnabled" type="checkbox" checked> 启用</label>
@@ -3163,6 +3040,16 @@
       <div id="taskPreviewState" class="placeholder">选择可用的字幕产物开始预览。</div>
       <div id="taskPreviewList" class="subtitle-preview-list" aria-live="polite"></div>
       <div id="taskPreviewPager" class="preview-pager" hidden></div>
+    </section>
+    <section id="taskReviewSection" class="drawer-section" hidden>
+      <div class="review-center-head">
+        <div><h3>高风险复核中心</h3><p>只读证据视图，不会修改字幕</p></div>
+        <button type="button" class="secondary-btn" onclick="loadTaskReviewDetail(0)">刷新</button>
+      </div>
+      <div id="taskReviewFilters" class="review-filter-bar"></div>
+      <div id="taskReviewState" class="placeholder">等待读取结构化复核报告。</div>
+      <div id="taskReviewList" class="review-detail-list" aria-live="polite"></div>
+      <div id="taskReviewPager" class="preview-pager" hidden></div>
     </section>
   </div>
 </aside>
@@ -3215,29 +3102,49 @@ var pipelinePollTimer = null;
 var pipelineCanRetryFailed = false;
 var pipelineCurrentFilter = 'all';
 var pipelineLastProgress = null;
-var asrEvidenceCurrentFile = '';
 var taskDrawerReturnFocus = null;
 var taskDrawerContext = null;
 var taskPreviewArtifact = '';
 var taskPreviewOffset = 0;
 var taskPreviewLimit = 60;
+var taskReviewOffset = 0;
+var taskReviewLimit = 30;
+var taskReviewCategory = '';
 
-function setUiLocale(locale) {
-  var zhButton = document.getElementById('localeZhButton');
-  var enButton = document.getElementById('localeEnButton');
-  if (locale !== 'zh-CN') {
-    showToast('English 界面已预留，将在后续版本完成；当前继续使用简体中文。', true);
-    if (zhButton) zhButton.focus();
-    return;
+function selectedAsrMode(scope) {
+  var name = scope === 'pipeline' ? 'pipelineAsrMode' : 'asr_mode';
+  var selected = document.querySelector('input[name="' + name + '"]:checked');
+  return selected ? selected.value : 'auto';
+}
+
+function setSelectedAsrMode(scope, mode) {
+  var name = scope === 'pipeline' ? 'pipelineAsrMode' : 'asr_mode';
+  var radio = document.querySelector('input[name="' + name + '"][value="' + (mode || 'auto') + '"]');
+  if (radio) radio.checked = true;
+  syncAsrModeUI(scope);
+}
+
+function syncAsrModeUI(scope) {
+  var pipeline = scope === 'pipeline';
+  var panel = document.getElementById(pipeline ? 'pipelineFixedLanguagePanel' : 'singleFixedLanguagePanel');
+  var select = document.getElementById(pipeline ? 'pipelineLanguage' : 'language');
+  var isFixed = selectedAsrMode(scope) === 'fixed';
+  if (panel) panel.hidden = !isFixed;
+  if (select) {
+    select.disabled = !isFixed;
+    select.required = isFixed;
   }
-  document.documentElement.lang = 'zh-CN';
-  if (zhButton) {
-    zhButton.classList.add('active');
-    zhButton.setAttribute('aria-pressed', 'true');
-  }
-  if (enButton) {
-    enButton.classList.remove('active');
-    enButton.setAttribute('aria-pressed', 'false');
+}
+
+function syncProfileAsrModeUI() {
+  var modeSelect = document.getElementById('lpEditAsrMode');
+  var panel = document.getElementById('lpFixedLanguagePanel');
+  var languageSelect = document.getElementById('lpEditSrcLang');
+  var isFixed = modeSelect && modeSelect.value === 'fixed';
+  if (panel) panel.hidden = !isFixed;
+  if (languageSelect) {
+    languageSelect.disabled = !isFixed;
+    languageSelect.required = isFixed;
   }
 }
 
@@ -3275,6 +3182,8 @@ function openPipelineTaskDrawer(taskId, trigger) {
   facts += drawerFact('当前阶段', task.stage_label || task.stage);
   facts += drawerFact('处理进度', String(task.progress || 0) + '%');
   facts += drawerFact('恢复状态', recoveryActionLabel(task.recovery_action, task.recovery_label) || '无需恢复');
+  var drawerModeLabels = {auto:'自动检测', fixed:'固定单语言', multilingual:'多语言'};
+  facts += drawerFact('识别方式', drawerModeLabels[task.asr_mode || (task.language_detection || {}).asr_mode] || '自动检测');
   facts += drawerFact('识别语言', (task.language_detection || {}).source_language || '未记录');
   facts += drawerFact('目标语言', task.target_language || '仅原文');
   document.getElementById('taskDrawerFacts').innerHTML = facts;
@@ -3283,6 +3192,7 @@ function openPipelineTaskDrawer(taskId, trigger) {
   if (task.error) signalHtml += '<details open><summary>失败详情</summary><pre class="mini-log">' + escapeHtml(task.error) + '</pre></details>';
   document.getElementById('taskDrawerSignals').innerHTML = signalHtml || '<div class="placeholder">当前任务没有额外诊断信息。</div>';
   renderDrawerArtifacts(task.artifacts || {});
+  setupTaskReview(Boolean((task.artifacts || {}).semantic_review_report && (task.artifacts || {}).semantic_review_report.exists));
   document.getElementById('taskDrawerBackdrop').hidden = false;
   document.getElementById('taskDrawer').hidden = false;
   document.body.classList.add('drawer-open');
@@ -3362,6 +3272,87 @@ function renderTaskPreview(data) {
     '<span>第 ' + (Number(data.offset || 0) + 1) + '–' + (Number(data.offset || 0) + cues.length) + ' 条，共 ' + Number(data.total || 0) + ' 条</span>' +
     '<button type="button" ' + (data.has_more ? '' : 'disabled') + ' onclick="loadTaskPreview(taskPreviewArtifact,' + nextOffset + ')">下一页</button>';
   pager.hidden = Number(data.total || 0) <= Number(data.limit || taskPreviewLimit);
+}
+
+var reviewCategoryLabels = {
+  adopted_repair:'已采用修复',
+  unresolved_budget:'仍超预算',
+  consistency_definite:'确定一致性错误',
+  consistency_variant:'可接受变体',
+  asr_warning:'疑似 ASR',
+  cross_line_window:'跨行窗口',
+  random_sample:'固定抽查'
+};
+
+function setupTaskReview(available) {
+  var section = document.getElementById('taskReviewSection');
+  section.hidden = !available;
+  document.getElementById('taskReviewList').innerHTML = '';
+  document.getElementById('taskReviewFilters').innerHTML = '';
+  document.getElementById('taskReviewPager').hidden = true;
+  taskReviewOffset = 0;
+  taskReviewCategory = '';
+  if (available) loadTaskReviewDetail(0);
+}
+
+async function loadTaskReviewDetail(offset) {
+  if (!taskDrawerContext) return;
+  taskReviewOffset = Math.max(0, Number(offset || 0));
+  renderAsyncState('taskReviewState', 'loading', '正在读取复核证据', '报告只读，筛选不会触发模型调用。');
+  var base = taskDrawerContext.scope === 'pipeline'
+    ? '/api/pipeline/review-detail?task=' + encodeURIComponent(taskDrawerContext.id)
+    : '/api/jobs/' + encodeURIComponent(taskDrawerContext.id) + '/review-detail?';
+  var joiner = base.indexOf('?') >= 0 && !base.endsWith('?') ? '&' : '';
+  var url = base + joiner + 'offset=' + taskReviewOffset + '&limit=' + taskReviewLimit;
+  if (taskReviewCategory) url += '&categories=' + encodeURIComponent(taskReviewCategory);
+  try {
+    var response = await fetch(url);
+    var data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || '复核报告读取失败');
+    renderTaskReviewDetail(data);
+  } catch (error) {
+    renderAsyncState('taskReviewState', 'error', '复核报告不可用', safeUiText(error.message), {label:'重试', onclick:'loadTaskReviewDetail(taskReviewOffset)'});
+  }
+}
+
+function selectTaskReviewCategory(category) {
+  taskReviewCategory = category || '';
+  loadTaskReviewDetail(0);
+}
+
+function renderTaskReviewDetail(data) {
+  document.getElementById('taskReviewState').innerHTML = '';
+  var counts = data.category_counts || {};
+  var filters = '<button type="button" class="' + (!taskReviewCategory ? 'active' : '') + '" onclick="selectTaskReviewCategory(\'\')">全部 ' + Number(data.total || 0) + '</button>';
+  Object.keys(counts).sort().forEach(function(category) {
+    filters += '<button type="button" class="' + (taskReviewCategory === category ? 'active' : '') + '" onclick="selectTaskReviewCategory(\'' + escapeJsString(category) + '\')">' +
+      escapeHtml(reviewCategoryLabels[category] || category) + ' ' + Number(counts[category] || 0) + '</button>';
+  });
+  document.getElementById('taskReviewFilters').innerHTML = filters;
+  var rows = data.review_items || [];
+  if (!rows.length) renderAsyncState('taskReviewState', 'empty', '当前筛选没有复核项', '可切换上方分类查看其他证据。');
+  var html = '';
+  rows.forEach(function(row) {
+    html += '<article class="review-detail-item"><div class="review-detail-meta"><strong>#' + escapeHtml(String(row.id)) + '</strong><span>' + escapeHtml(reviewCategoryLabels[row.category] || row.category) + '</span></div>';
+    html += '<div class="review-detail-grid">';
+    html += reviewDetailCell('原文', row.source);
+    html += reviewDetailCell('Flash 初译', row.flash_translation);
+    html += reviewDetailCell('候选 / 修复稿', row.candidate);
+    html += reviewDetailCell('最终采用稿', row.final_translation);
+    html += '</div><div class="review-detail-reason">采用 / 保留原因：' + escapeHtml(row.reason || '—') + '</div></article>';
+  });
+  document.getElementById('taskReviewList').innerHTML = html;
+  var pager = document.getElementById('taskReviewPager');
+  var previous = Math.max(0, Number(data.offset || 0) - Number(data.limit || taskReviewLimit));
+  var next = Number(data.offset || 0) + rows.length;
+  pager.innerHTML = '<button type="button" ' + (data.offset ? '' : 'disabled') + ' onclick="loadTaskReviewDetail(' + previous + ')">上一页</button>' +
+    '<span>' + (Number(data.offset || 0) + 1) + '–' + (Number(data.offset || 0) + rows.length) + ' / ' + Number(data.total || 0) + '</span>' +
+    '<button type="button" ' + (next < Number(data.total || 0) ? '' : 'disabled') + ' onclick="loadTaskReviewDetail(' + next + ')">下一页</button>';
+  pager.hidden = Number(data.total || 0) <= Number(data.limit || taskReviewLimit);
+}
+
+function reviewDetailCell(label, value) {
+  return '<div class="review-detail-cell"><span>' + escapeHtml(label) + '</span><p>' + escapeHtml(String(value || '—')) + '</p></div>';
 }
 
 function closeTaskDrawer() {
@@ -3518,13 +3509,8 @@ async function pipelineAction(action) {
     var computeTypeSel = document.getElementById('pipelineComputeType');
     var languageSel = document.getElementById('pipelineLanguage');
     var translateCb = document.getElementById('pipelineTranslateEnabled');
-    var segmentRoutingSel = document.getElementById('pipelineSegmentAsrRouting');
-    var segmentThresholdEl = document.getElementById('pipelineSegmentRoutingThreshold');
-    var segmentMinEl = document.getElementById('pipelineSegmentRoutingMinSegments');
-    var segmentStrictEl = document.getElementById('pipelineSegmentRoutingStrict');
-    var segmentWindowEl = document.getElementById('pipelineSegmentRoutingWindowSeconds');
-    var segmentMaxWindowsEl = document.getElementById('pipelineSegmentRoutingMaxWindows');
-    var segmentAllowLargeRunEl = document.getElementById('pipelineSegmentRoutingAllowLargeRun');
+    var translationStrategySel = document.getElementById('pipelineTranslationStrategy');
+    var translationSceneGapEl = document.getElementById('pipelineTranslationSceneGap');
     var body = { input_dir: input_dir };
     if (provSel && provSel.value) body.provider_id = provSel.value;
     if (lpSel && lpSel.value) body.language_profile_id = lpSel.value;
@@ -3532,14 +3518,20 @@ async function pipelineAction(action) {
     body.device = deviceSel ? deviceSel.value : 'cpu';
     if (computeTypeSel && computeTypeSel.value) body.compute_type = computeTypeSel.value;
     body.translate_enabled = translateCb ? translateCb.checked : true;
-    if (languageSel && languageSel.value) body.language = languageSel.value;
-    if (segmentRoutingSel) body.segment_asr_routing = segmentRoutingSel.value || 'off';
-    if (segmentThresholdEl) body.segment_routing_confidence_threshold = segmentThresholdEl.value || '0.70';
-    if (segmentMinEl) body.segment_routing_min_segments = segmentMinEl.value || '1';
-    if (segmentStrictEl) body.segment_routing_strict = segmentStrictEl.checked;
-    if (segmentWindowEl) body.segment_routing_window_seconds = segmentWindowEl.value || '120';
-    if (segmentMaxWindowsEl) body.segment_routing_max_windows = segmentMaxWindowsEl.value || '80';
-    if (segmentAllowLargeRunEl) body.segment_routing_allow_large_run = segmentAllowLargeRunEl.checked;
+    body.asr_mode = selectedAsrMode('pipeline');
+    if (translationStrategySel && translationStrategySel.value) {
+      body.translation_strategy_mode = translationStrategySel.value;
+      body.translation_scene_gap_seconds = translationSceneGapEl ? translationSceneGapEl.value : '30';
+    }
+    if (body.asr_mode === 'fixed') {
+      if (!languageSel || !languageSel.value) {
+        setLoading(action, false);
+        showToast('请选择整批视频的语言，再开始固定单语言识别。', false);
+        if (languageSel) languageSel.focus();
+        return;
+      }
+      body.language = languageSel.value;
+    }
     fetchOpts.headers = { 'Content-Type': 'application/json' };
     fetchOpts.body = JSON.stringify(body);
   } else {
@@ -3941,8 +3933,9 @@ function renderTaskSignals(task) {
   if (ld.source_language) {
     var prob = ld.language_probability;
     var probText = (prob === null || prob === undefined || prob === '') ? '' : ' / ' + Math.round(Number(prob) * 100) + '%';
-    var forced = ld.forced_language ? ' / forced ' + ld.forced_language : ' / auto';
-    html += '<div class="task-sub"><span class="badge badge-pending">源语言 ' + escapeHtml(ld.source_language + probText + forced) + '</span></div>';
+    var modeLabels = {auto:'自动检测', fixed:'固定单语言', multilingual:'多语言'};
+    var modeText = modeLabels[ld.asr_mode || task.asr_mode] || '自动检测';
+    html += '<div class="task-sub"><span class="badge badge-pending">源语言 ' + escapeHtml(ld.source_language + probText + ' / ' + modeText) + '</span></div>';
   }
   if (task.target_language) {
     html += '<div class="task-sub"><span class="badge badge-ok">目标语言 ' + escapeHtml(task.target_language) + '</span></div>';
@@ -3951,18 +3944,9 @@ function renderTaskSignals(task) {
     var issueText = '质检 ' + qs.status + ' / ' + String(qs.total_issues || 0) + ' 个问题';
     html += '<div class="task-sub"><span class="badge ' + (qs.errors ? 'badge-err' : (qs.warnings ? 'badge-warn' : 'badge-ok')) + '">' + escapeHtml(issueText) + '</span></div>';
   }
-  if (task.segment_asr_routing_status || task.segment_asr_routing_message || task.segment_asr_routing_report) {
-    var routingText = task.segment_asr_routing_message || ('Segment ASR routing: ' + task.segment_asr_routing_status);
-    var routingClass = task.segment_asr_routing_status === 'failed' ? 'badge-err' : (task.segment_asr_routing_status === 'fallback' ? 'badge-warn' : 'badge-pending');
-    html += '<div class="task-sub"><span class="badge ' + routingClass + '">' + escapeHtml(routingText) + '</span></div>';
-    if (task.segment_asr_routing_report) {
-      var routingFile = String(task.segment_asr_routing_report).split(/[\\/]/).pop();
-      html += '<div class="task-sub"><span class="badge badge-pending">路由报告 ' + escapeHtml(routingFile) + '</span></div>';
-    }
-  }
   var issueTypes = qs.issue_types || {};
   if (issueTypes.mixed_language || issueTypes.possibly_untranslated) {
-    html += '<div class="task-sub"><span class="badge badge-warn">可能有混合语言或未翻译残留。当前流水线按一个主源语言处理；混合语言素材可尝试更大 Whisper 模型或官方源字幕。</span></div>';
+    html += '<div class="task-sub"><span class="badge badge-warn">可能有混合语言或未翻译残留。若素材确实包含多种语言，请改用“多语言”识别方式并人工复核标记片段。</span></div>';
   }
   return html;
 }
@@ -4084,7 +4068,7 @@ function renderPipelineProgress(progress) {
   if (progress.stale_running_count) {
     html += '<div class="hint">检测到 ' + escapeHtml(String(progress.stale_running_count)) + ' 个可能中断的运行中任务。本轮不会自动重置，请先确认后台任务是否仍在执行。</div>';
   }
-  html += '<div class="hint">语言提示：当前每个任务按一个主源语言处理。单语素材自动识别错误时可手动指定源语言；法英等混合语言素材不建议把一个全局源语言当成完整修复。</div>';
+  html += '<div class="hint">语言提示：大多数视频使用“自动检测”；明确知道整片语言时使用“固定单语言”；法英等混合素材请选择“多语言”，系统会按语音停顿分块识别。</div>';
   html += renderTaskFilters(progress, counts);
   html += '<div class="task-table-wrap"><table class="task-table">';
   html += '<thead><tr><th>文件名</th><th>任务状态</th><th>当前阶段</th><th>质检</th><th>处理进度</th></tr></thead><tbody>';
@@ -4162,8 +4146,7 @@ function refreshAll() {
   pipelineAction('status');
   pipelineAction('review');
   loadStorageStatus();
-  loadAsrEvidenceReports();
-  loadTopStatus();
+  loadRuntimeDiagnostics();
   loadAppInfo();
   loadReadinessChecklist();
 }
@@ -4183,28 +4166,6 @@ function formatBytes(bytes) {
 function setStatusText(id, text) {
   var el = document.getElementById(id);
   if (el) el.textContent = text;
-}
-
-async function loadTopStatus() {
-  try {
-    var providerResp = await fetch('/api/providers/active');
-    var providerData = await providerResp.json();
-    var p = providerData.active;
-    setStatusText('statusProvider', p ? ((p.name || p.id || '已配置') + ' | ' + (p.translation_model || '?')) : '未配置翻译接口');
-  } catch(e) {
-    setStatusText('statusProvider', '读取失败');
-  }
-  try {
-    var profileResp = await fetch('/api/language-profiles/active');
-    var profileData = await profileResp.json();
-    var lp = profileData.active;
-    setStatusText('statusProfile', lp ? ((lp.name || lp.id || 'auto-detect') + ' | ' + (lp.target_language || 'zh-CN')) : 'auto-detect');
-  } catch(e) {
-    setStatusText('statusProfile', 'auto-detect');
-  }
-  loadStorageStatus();
-  loadAsrEvidenceReports();
-  loadRuntimeDiagnostics();
 }
 
 function diagnosticBadgeClass(status) {
@@ -4470,8 +4431,6 @@ function renderStorageStatus(data) {
   var tcache = data.translation_cache || {};
   var modelCache = data.model_cache || {};
   var cleanupBytes = Number(work.bytes || 0) + Number(uploads.bytes || 0);
-  setStatusText('statusTempSpace', '可释放 ' + formatBytes(cleanupBytes));
-  setStatusText('statusModelCache', modelCache.path ? '模型留在项目目录' : '项目内模型缓存');
   var html = '<div class="storage-grid">';
   html += '<div class="storage-item"><strong>临时音频</strong><span>' + escapeHtml(work.display || '0 B') + ' / ' + (work.count || 0) + ' 个文件<br>' + escapeHtml(work.path || 'work') + '</span></div>';
   html += '<div class="storage-item"><strong>旧上传副本</strong><span>' + escapeHtml(uploads.display || '0 B') + ' / ' + (uploads.count || 0) + ' 个文件<br>' + escapeHtml(uploads.path || 'uploads') + '</span></div>';
@@ -4496,107 +4455,6 @@ async function loadStorageStatus() {
     var el = document.getElementById('storage-result');
     if (el) el.innerHTML = '<div class="placeholder">缓存状态读取失败: ' + escapeHtml(err.message) + '</div>';
   }
-}
-
-function renderAsrEvidenceReports(data) {
-  var el = document.getElementById('asr-evidence-result');
-  if (!el) return;
-  if (!data || data.ok === false) {
-    el.innerHTML = '<div class="placeholder">ASR evidence reports could not be loaded.</div>';
-    return;
-  }
-  var reports = data.reports || [];
-  if (!reports.length) {
-    renderAsyncState('asr-evidence-result', 'empty', '暂无 ASR 证据报告', '运行证据分析工具后，报告会出现在 output/reports/asr_evidence/。');
-    return;
-  }
-  var hasCurrent = reports.some(function(report) { return report.file === asrEvidenceCurrentFile; });
-  if (!asrEvidenceCurrentFile || !hasCurrent) asrEvidenceCurrentFile = reports[0].file || '';
-  var html = '<div class="asr-evidence-layout">';
-  html += '<div class="asr-report-list">';
-  for (var i = 0; i < reports.length; i++) {
-    var report = reports[i];
-    var summary = report.summary || {};
-    var active = report.file === asrEvidenceCurrentFile ? ' active' : '';
-    html += '<button type="button" class="asr-report-button' + active + '" data-file="' + escapeHtml(report.file || '') + '" onclick="loadAsrEvidenceReport(\'' + escapeJsString(report.file || '') + '\')">';
-    html += '<strong>' + escapeHtml(report.input_name || report.file || 'report') + '</strong>';
-    html += '<span>' + escapeHtml(summary.mixed_language_likelihood || 'none') + ' / ' + escapeHtml(summary.dominant_language || 'unknown') + '</span>';
-    html += '<span>' + escapeHtml(report.generated_at || '') + ' · ' + escapeHtml(report.display_size || '') + '</span>';
-    html += '</button>';
-  }
-  html += '</div>';
-  html += '<div id="asr-evidence-detail"><div class="placeholder">正在读取所选报告...</div></div>';
-  html += '</div>';
-  el.innerHTML = html;
-  loadAsrEvidenceReport(asrEvidenceCurrentFile);
-}
-
-async function loadAsrEvidenceReports() {
-  var el = document.getElementById('asr-evidence-result');
-  if (!el) return;
-  try {
-    var resp = await fetch('/api/asr-evidence/reports');
-    var data = await resp.json();
-    renderAsrEvidenceReports(data);
-  } catch (err) {
-    el.innerHTML = '<div class="placeholder">ASR evidence reports failed to load: ' + escapeHtml(err.message) + '</div>';
-  }
-}
-
-async function loadAsrEvidenceReport(file) {
-  if (!file) return;
-  asrEvidenceCurrentFile = file;
-  document.querySelectorAll('.asr-report-button').forEach(function(button) {
-    button.classList.toggle('active', button.getAttribute('data-file') === file);
-  });
-  var detail = document.getElementById('asr-evidence-detail');
-  if (detail) detail.innerHTML = '<div class="placeholder">正在读取报告...</div>';
-  try {
-    var resp = await fetch('/api/asr-evidence/report?file=' + encodeURIComponent(file));
-    var data = await resp.json();
-    if (!resp.ok || !data.ok) {
-      throw new Error(data.error || 'Report could not be loaded.');
-    }
-    renderAsrEvidenceDetail(data.report || {});
-  } catch (err) {
-    if (detail) detail.innerHTML = '<div class="placeholder">ASR evidence report failed to load: ' + escapeHtml(err.message) + '</div>';
-  }
-}
-
-function renderAsrEvidenceDetail(report) {
-  var detail = document.getElementById('asr-evidence-detail');
-  if (!detail) return;
-  var metadata = report.metadata || {};
-  var summary = report.summary || {};
-  var languages = summary.distinct_detected_languages || [];
-  var html = '<div class="asr-evidence-summary">';
-  html += '<div class="storage-item"><strong>Likelihood</strong><span>' + escapeHtml(summary.mixed_language_likelihood || 'none') + '</span></div>';
-  html += '<div class="storage-item"><strong>Dominant</strong><span>' + escapeHtml(summary.dominant_language || 'unknown') + '</span></div>';
-  html += '<div class="storage-item"><strong>Languages</strong><span>' + escapeHtml(languages.join(', ') || '(none)') + '</span></div>';
-  html += '<div class="storage-item"><strong>Low confidence</strong><span>' + escapeHtml(String(summary.low_confidence_count || 0)) + '</span></div>';
-  html += '</div>';
-  html += '<div class="hint">Input: ' + escapeHtml(metadata.input_path || '') + '<br>Model: ' + escapeHtml(metadata.model || '') + ' · ' + escapeHtml(metadata.device || '') + ' / ' + escapeHtml(metadata.compute_type || '') + ' · local-only=' + escapeHtml(String(metadata.local_files_only !== false)) + '</div>';
-  html += '<table class="asr-sample-table"><thead><tr><th>#</th><th>时间</th><th>语言</th><th>概率</th><th>预览 / 错误</th></tr></thead><tbody>';
-  var samples = report.samples || [];
-  for (var i = 0; i < samples.length; i++) {
-    var sample = samples[i];
-    var prob = sample.language_probability;
-    var probText = (prob === null || prob === undefined || prob === '') ? '' : String(Math.round(Number(prob) * 100)) + '%';
-    var preview = sample.error || sample.text_preview || '';
-    html += '<tr>';
-    html += '<td>' + escapeHtml(String(sample.sample_index || i + 1)) + '</td>';
-    html += '<td>' + escapeHtml(String(sample.start_seconds || 0)) + '-' + escapeHtml(String(sample.end_seconds || 0)) + 's</td>';
-    html += '<td>' + escapeHtml(sample.detected_language || '') + '</td>';
-    html += '<td>' + escapeHtml(probText) + '</td>';
-    html += '<td>' + escapeHtml(preview) + '</td>';
-    html += '</tr>';
-  }
-  html += '</tbody></table>';
-  var limitations = summary.limitations || [];
-  if (limitations.length) {
-    html += '<div class="hint" style="margin-top:10px"><strong>Limitations:</strong> ' + escapeHtml(limitations.join(' ')) + '</div>';
-  }
-  detail.innerHTML = html;
 }
 
 async function cleanupTransientFiles() {
@@ -4662,160 +4520,6 @@ async function inspectInputFile() {
     renderInspectResult({ok: false, error: '预检请求失败: ' + err.message});
   } finally {
     if (btn) btn.disabled = false;
-  }
-}
-
-// ═══════════════════ Job Queue / History / Progress ═══════════════════
-
-var jobQueueTimer = null;
-var jobQueueLastActive = false;
-var jobQueueCache = {};
-
-function formatTime(ts) {
-  if (!ts) return '-';
-  var d = new Date(ts * 1000);
-  return d.toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-function jobStatusBadgeClass(status) {
-  if (status === 'done') return 'badge-ok';
-  if (status === 'failed') return 'badge-err';
-  if (status === 'running') return 'badge-running';
-  return 'badge-pending';
-}
-
-function renderJobQueueItem(job) {
-  var statusClass = job.status || 'queued';
-  var html = '<div class="job-queue-item ' + escapeHtml(statusClass) + '">';
-  html += '<div class="job-queue-head">';
-  html += '<div class="job-queue-name" title="' + escapeHtml(job.input || '') + '">' + escapeHtml(job.input ? String(job.input).replace(/^.*[\\\/]/, '') : '-') + '</div>';
-  html += '<span class="badge ' + jobStatusBadgeClass(job.status) + '">' + escapeHtml(job.status_label || job.status) + '</span>';
-  html += '</div>';
-
-  html += '<div class="job-queue-meta">';
-  html += '<span>' + escapeHtml(job.stage_label || job.stage || '-') + '</span>';
-  if (job.progress !== undefined && job.progress !== null) {
-    html += '<span>' + escapeHtml(String(job.progress)) + '%</span>';
-  }
-  html += '<span>更新于 ' + formatTime(job.updated_at) + '</span>';
-  html += '</div>';
-
-  if (job.status === 'running' && job.progress !== undefined && job.progress !== null) {
-    html += '<div class="job-queue-progress">' + renderProgressBar(job.progress) + '</div>';
-  }
-
-  html += '<div class="job-queue-actions">';
-  html += '<button type="button" onclick="openJobTaskDrawer(\'' + escapeJsString(job.id) + '\',this)">查看详情</button>';
-  if (job.status === 'done') {
-    if (job.source_output) html += '<a class="dl-link" href="/download?job=' + encodeURIComponent(job.id) + '&type=source">下载原文</a>';
-    if (job.translated_output) html += '<a class="dl-link" href="/download?job=' + encodeURIComponent(job.id) + '&type=translated">下载双语</a>';
-  } else if (job.status === 'failed') {
-    if (job.can_retry) {
-      html += '<button class="primary" onclick="retryJob(\'' + escapeJsString(job.id) + '\')">重新提交</button>';
-    } else {
-      html += '<button disabled title="' + escapeHtml(job.retry_reason || '无法重试') + '">无法重试</button>';
-    }
-  }
-  html += '</div>';
-
-  if (job.status === 'failed' && job.error_summary) {
-    html += '<details class="job-error-details"><summary>错误详情</summary>' + escapeHtml(job.error_summary) + '</details>';
-  }
-
-  html += '</div>';
-  return html;
-}
-
-async function loadJobQueue() {
-  var el = document.getElementById('jobQueueList');
-  if (!el) return;
-  try {
-    var resp = await fetch('/api/jobs');
-    var data = await resp.json();
-    var jobs = data.jobs || [];
-    jobQueueCache = {};
-    for (var cacheIndex = 0; cacheIndex < jobs.length; cacheIndex++) jobQueueCache[jobs[cacheIndex].id] = jobs[cacheIndex];
-    var active = false;
-    if (!jobs.length) {
-      el.innerHTML = '<div class="placeholder">暂无任务记录。</div>';
-    } else {
-      var html = '<div class="job-queue">';
-      for (var i = 0; i < jobs.length; i++) {
-        html += renderJobQueueItem(jobs[i]);
-        if (jobs[i].status === 'running' || jobs[i].status === 'queued') active = true;
-      }
-      html += '</div>';
-      el.innerHTML = html;
-    }
-    jobQueueLastActive = active;
-    _scheduleJobQueuePoll();
-  } catch (err) {
-    el.innerHTML = '<div class="placeholder">加载失败: ' + escapeHtml(err.message) + '</div>';
-  }
-}
-
-async function openJobTaskDrawer(jobId, trigger) {
-  taskDrawerReturnFocus = trigger || document.activeElement;
-  try {
-    var response = await fetch('/api/jobs/' + encodeURIComponent(jobId));
-    var job = await response.json();
-    if (!response.ok) throw new Error(job.error || '任务详情读取失败');
-    taskDrawerContext = {scope:'job', id:jobId, task:job};
-    taskPreviewArtifact = '';
-    taskPreviewOffset = 0;
-    var filename = String(job.input || '').replace(/^.*[\\\/]/, '') || '单文件任务';
-    setStatusText('taskDrawerTitle', filename);
-    setStatusText('taskDrawerSubtitle', (job.status === 'done' ? '已完成' : (job.status === 'failed' ? '失败' : '处理中')) + ' · ' + (job.stage || '等待阶段'));
-    var facts = '';
-    facts += drawerFact('任务状态', job.status || '未知');
-    facts += drawerFact('当前阶段', job.stage || '等待');
-    facts += drawerFact('处理进度', String(job.progress || 0) + '%');
-    facts += drawerFact('更新时间', formatTime(job.updated_at));
-    document.getElementById('taskDrawerFacts').innerHTML = facts;
-    var signals = '';
-    if (job.segment_asr_routing_message) signals += '<div class="settings-notice warn">' + escapeHtml(job.segment_asr_routing_message) + '</div>';
-    if (job.error_summary) signals += '<details open><summary>失败详情</summary><pre class="mini-log">' + escapeHtml(job.error_summary) + '</pre></details>';
-    var logs = (job.logs || []).slice(-30).join('\n');
-    if (logs) signals += '<details><summary>最近日志</summary><pre class="mini-log">' + escapeHtml(logs) + '</pre></details>';
-    document.getElementById('taskDrawerSignals').innerHTML = signals || '<div class="placeholder">当前任务没有额外诊断信息。</div>';
-    var artifacts = {
-      source: {downloadable:!!job.source_output, download_url:'/download?job=' + encodeURIComponent(jobId) + '&type=source'},
-      translated: {downloadable:!!job.translated_output, download_url:'/download?job=' + encodeURIComponent(jobId) + '&type=translated'},
-      review_needed: {downloadable:!!job.review_needed, download_url:'/download?job=' + encodeURIComponent(jobId) + '&type=review_needed'}
-    };
-    renderDrawerArtifacts(artifacts);
-    document.getElementById('taskDrawerBackdrop').hidden = false;
-    document.getElementById('taskDrawer').hidden = false;
-    document.body.classList.add('drawer-open');
-    document.getElementById('taskDrawerClose').focus();
-  } catch (error) {
-    taskDrawerReturnFocus = null;
-    showToast('任务详情读取失败：' + safeUiText(error.message), false);
-  }
-}
-
-function _scheduleJobQueuePoll() {
-  if (jobQueueTimer) {
-    clearTimeout(jobQueueTimer);
-    jobQueueTimer = null;
-  }
-  var interval = jobQueueLastActive ? 2000 : 8000;
-  jobQueueTimer = setTimeout(loadJobQueue, interval);
-}
-
-async function retryJob(jobId) {
-  if (!confirm('确定要重新提交这个失败任务？将使用相同的参数创建一个新任务。')) return;
-  try {
-    var resp = await fetch('/api/jobs/' + encodeURIComponent(jobId) + '/retry', { method: 'POST' });
-    var data = await resp.json();
-    if (resp.ok && data.ok) {
-      showToast('重试已创建: ' + (data.job && data.job.id ? data.job.id : ''), true);
-      loadJobQueue();
-    } else {
-      showToast('重试失败: ' + safeUiText(data.error || '未知错误'), false);
-    }
-  } catch (err) {
-    showToast('重试请求失败: ' + safeUiText(err.message), false);
   }
 }
 
@@ -5032,6 +4736,11 @@ function showToast(message, ok) {
       showToast("上传入口只适合小样本。大文件请填写本机路径，后台会直接读取原文件，不复制原片。", false);
       return;
     }
+    if (selectedAsrMode('single') === 'fixed' && !document.getElementById('language').value) {
+      showToast("请选择整片视频的语言，再开始固定单语言识别。", false);
+      document.getElementById('language').focus();
+      return;
+    }
 
     if (translateCheck.checked) {
       var apiBase = document.getElementById("api_base").value.trim();
@@ -5059,11 +4768,10 @@ function showToast(message, ok) {
       activeJob = payload.id;
       pollJob();
       timer = setInterval(pollJob, 1200);
-      // Also refresh the job queue immediately
-      loadJobQueue();
     } catch (err) {
       setStatus("failed");
-      logBox.textContent += String(err.message || err) + "\n";
+      logBox.textContent += "请按错误提示检查输入与设置后重试。\n" + String(err.message || err) + "\n";
+      showToast("任务未能启动，请查看下方错误详情。", false);
       startBtn.disabled = false;
     }
   });
@@ -5120,6 +4828,7 @@ async function loadPipelineSelects() {
     try {
       var r2 = await fetch('/api/language-profiles');
       var d2 = await r2.json();
+      langProfileCache = d2.profiles || [];
       (d2.profiles || []).forEach(function(p) {
         ls.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>';
       });
@@ -5136,8 +4845,25 @@ async function loadPipelineSelects() {
   }
 }
 
-function updatePipelineProvider() {}  // No-op, value used at submit time
-function updatePipelineLangProfile() {}  // No-op, value used at submit time
+function updatePipelineProvider() {}  // 提交时读取当前值
+function updatePipelineLangProfile() {
+  var select = document.getElementById('pipelineLangProfileSelect');
+  if (!select || !select.value) return;
+  for (var i = 0; i < langProfileCache.length; i++) {
+    var profile = langProfileCache[i];
+    if (profile.id !== select.value) continue;
+    var mode = profile.asr_mode || ((profile.source_language && profile.source_language !== 'auto') ? 'fixed' : 'auto');
+    setSelectedAsrMode('pipeline', mode);
+    if (mode === 'fixed' && profile.source_language && profile.source_language !== 'auto') {
+      document.getElementById('pipelineLanguage').value = profile.source_language;
+    }
+    var asr = profile.asr || {};
+    if (asr.whisper_model) document.getElementById('pipelineModel').value = asr.whisper_model;
+    if (asr.whisper_device) document.getElementById('pipelineDevice').value = asr.whisper_device;
+    if (asr.compute_type) document.getElementById('pipelineComputeType').value = asr.compute_type;
+    return;
+  }
+}
 
 // ═══════════════════ Language Profiles ═══════════════════
 
@@ -5179,7 +4905,7 @@ function renderLPList() {
     html += '<td>' + escapeHtml(p.id) + '</td>';
     html += '<td>' + escapeHtml(p.source_language || 'auto') + ' → ' + escapeHtml(p.target_language || 'zh-CN') + '</td>';
     html += '<td>' + escapeHtml(asr.whisper_model || '?') + ' / ' + escapeHtml(asr.whisper_device || 'cpu') + ' / ' + escapeHtml(asr.compute_type || '-') + '</td>';
-    html += '<td>' + (p.translation_style ? 'style ' : '') + ((p.glossary || []).length ? ('glossary ' + (p.glossary || []).length) : 'no glossary') + '</td>';
+    html += '<td>' + (p.translation_style ? '已有风格 ' : '') + ((p.glossary || []).length ? ('术语 ' + (p.glossary || []).length + ' 条') : '无术语表') + '</td>';
     html += '<td>' + badge + '</td>';
     html += '<td class="col-act">';
     html += '<button class="btn-primary" onclick="setActiveLP(\'' + p.id + '\')">默认</button>';
@@ -5199,7 +4925,8 @@ function showLPModal(editId) {
   var modal = document.getElementById('lpModal');
   var title = document.getElementById('lpModalTitle');
   ['lpEditId','lpEditIdField','lpEditName','lpEditDesc'].forEach(function(id) { document.getElementById(id).value = ''; });
-  document.getElementById('lpEditSrcLang').value = 'auto';
+  document.getElementById('lpEditAsrMode').value = 'auto';
+  document.getElementById('lpEditSrcLang').value = 'en';
   document.getElementById('lpEditTgtLang').value = 'zh-CN';
   document.getElementById('lpEditWhisperModel').value = 'large-v3';
   document.getElementById('lpEditWhisperDevice').value = 'cuda';
@@ -5214,7 +4941,9 @@ function showLPModal(editId) {
   document.getElementById('lpEditSubChars').value = '36';
   document.getElementById('lpEditProofread').checked = false;
   document.getElementById('lpEditPolish').checked = false;
-  document.getElementById('lpEditStyle').value = '';
+  document.getElementById('lpEditTranslationStrategy').value = 'standard';
+  document.getElementById('lpEditSceneGap').value = '30';
+  document.getElementById('lpExistingStyle').value = '';
   document.getElementById('lpEditGlossary').value = '';
 
   if (editId) {
@@ -5229,7 +4958,9 @@ function showLPModal(editId) {
       document.getElementById('lpEditIdField').disabled = true;
       document.getElementById('lpEditName').value = p.name || '';
       document.getElementById('lpEditDesc').value = p.description || '';
-      document.getElementById('lpEditSrcLang').value = p.source_language || 'auto';
+      var migratedMode = p.asr_mode || ((p.source_language && p.source_language !== 'auto') ? 'fixed' : 'auto');
+      document.getElementById('lpEditAsrMode').value = migratedMode;
+      document.getElementById('lpEditSrcLang').value = (p.source_language && p.source_language !== 'auto') ? p.source_language : 'en';
       document.getElementById('lpEditTgtLang').value = p.target_language || 'zh-CN';
       var a = p.asr || {};
       document.getElementById('lpEditWhisperModel').value = a.whisper_model || 'large-v3';
@@ -5247,13 +4978,17 @@ function showLPModal(editId) {
       var s = p.llm_stages || {};
       document.getElementById('lpEditProofread').checked = s.proofread_source === true;
       document.getElementById('lpEditPolish').checked = s.polish_translation === true;
-      document.getElementById('lpEditStyle').value = p.translation_style || '';
+      var strategy = p.translation_strategy || {};
+      document.getElementById('lpEditTranslationStrategy').value = strategy.mode || 'standard';
+      document.getElementById('lpEditSceneGap').value = strategy.scene_gap_seconds || 30;
+      document.getElementById('lpExistingStyle').value = p.translation_style || '';
       document.getElementById('lpEditGlossary').value = formatGlossary(p.glossary || []);
     }
   } else {
     title.textContent = '新增语言配置';
     document.getElementById('lpEditIdField').disabled = false;
   }
+  syncProfileAsrModeUI();
   modal.classList.add('active');
 }
 
@@ -5298,7 +5033,7 @@ async function saveLP() {
   var editId = document.getElementById('lpEditId').value;
   var isEdit = !!editId;
   var pid = document.getElementById('lpEditIdField').value.trim();
-  if (!pid) { showToast('Profile ID 不能为空', false); return; }
+  if (!pid) { showToast('配置 ID 不能为空', false); return; }
   if (!document.getElementById('lpEditName').value.trim()) { showToast('名称不能为空', false); return; }
 
   var existingReliability = { mode: 'off', max_extra_requests: 12 };
@@ -5315,7 +5050,10 @@ async function saveLP() {
     id: pid,
     name: document.getElementById('lpEditName').value.trim(),
     description: document.getElementById('lpEditDesc').value.trim(),
-    source_language: document.getElementById('lpEditSrcLang').value,
+    asr_mode: document.getElementById('lpEditAsrMode').value,
+    source_language: document.getElementById('lpEditAsrMode').value === 'fixed'
+      ? document.getElementById('lpEditSrcLang').value
+      : 'auto',
     target_language: document.getElementById('lpEditTgtLang').value,
     asr: {
       whisper_model: document.getElementById('lpEditWhisperModel').value,
@@ -5336,7 +5074,11 @@ async function saveLP() {
       proofread_source: document.getElementById('lpEditProofread').checked,
       polish_translation: document.getElementById('lpEditPolish').checked,
     },
-    translation_style: document.getElementById('lpEditStyle').value.trim(),
+    translation_strategy: {
+      mode: document.getElementById('lpEditTranslationStrategy').value,
+      scene_gap_seconds: parseFloat(document.getElementById('lpEditSceneGap').value) || 30,
+    },
+    translation_style: document.getElementById('lpExistingStyle').value,
     // Preview is intentionally hidden until manual A/B approval; preserve it when editing.
     translation_reliability: existingReliability,
     glossary: parseGlossaryText(document.getElementById('lpEditGlossary').value),
@@ -5356,7 +5098,6 @@ async function saveLP() {
       loadLangProfiles();
       loadPipelineSelects();
       loadLangProfileSelect();
-      loadTopStatus();
       loadReadinessChecklist();
       loadEffectiveConfigPreview();
       showSettingsNotice('lpSettingsNotice', '语言风格已保存。', true);
@@ -5374,7 +5115,7 @@ async function deleteLP(id) {
   try {
     var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
-    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadTopStatus(); loadReadinessChecklist(); showSettingsNotice('lpSettingsNotice', '语言风格已删除；内置配置只会移除本地覆盖。', true); }
+    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadReadinessChecklist(); showSettingsNotice('lpSettingsNotice', '语言风格已删除；内置配置只会移除本地覆盖。', true); }
     else { showSettingsNotice('lpSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); showToast('删除失败: ' + safeUiText(result.error || '未知错误'), false); }
   } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
@@ -5383,7 +5124,7 @@ async function setActiveLP(id) {
   try {
     var resp = await fetch('/api/language-profiles/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
     var result = await resp.json();
-    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadTopStatus(); loadReadinessChecklist(); showSettingsNotice('lpSettingsNotice', '默认语言风格已更新。', true); }
+    if (resp.ok) { loadLangProfiles(); loadPipelineSelects(); loadLangProfileSelect(); loadReadinessChecklist(); showSettingsNotice('lpSettingsNotice', '默认语言风格已更新。', true); }
     else { showSettingsNotice('lpSettingsNotice', '设置失败: ' + (result.error || '未知错误'), false); showToast('设置失败: ' + safeUiText(result.error || '未知错误'), false); }
   } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
@@ -5398,6 +5139,7 @@ async function loadLangProfileSelect() {
   try {
     var resp = await fetch('/api/language-profiles');
     var data = await resp.json();
+    langProfileCache = data.profiles || [];
     (data.profiles || []).forEach(function(p) {
       sel.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + ' (' + (p.source_language || 'auto') + ' → ' + (p.target_language || 'zh-CN') + ')</option>';
     });
@@ -5424,25 +5166,30 @@ function onLangProfileSelect() {
   if (!p) { loadLangProfileSelect(); return; }
   // Auto-fill fields
   var a = p.asr || {};
-  if (p.source_language && p.source_language !== 'auto') {
+  var profileMode = p.asr_mode || ((p.source_language && p.source_language !== 'auto') ? 'fixed' : 'auto');
+  setSelectedAsrMode('single', profileMode);
+  if (profileMode === 'fixed' && p.source_language && p.source_language !== 'auto') {
     document.getElementById('language').value = p.source_language;
-  } else {
-    document.getElementById('language').value = '';
   }
   if (a.whisper_model) document.getElementById('model').value = a.whisper_model;
   if (a.whisper_device) document.getElementById('device').value = a.whisper_device;
   if (a.compute_type) document.getElementById('compute_type').value = a.compute_type;
   if (a.beam_size) document.getElementById('beam_size').value = a.beam_size;
   document.getElementById('vad').checked = a.vad_filter !== false;
-  if (p.translation_style) document.getElementById('translation_prompt').value = p.translation_style;
   if (p.target_language) document.getElementById('target_language').value = p.target_language;
+  var strategy = p.translation_strategy || {};
+  document.getElementById('translation_strategy_mode').value = strategy.mode || 'standard';
+  document.getElementById('translation_scene_gap_seconds').value = strategy.scene_gap_seconds || 30;
   loadEffectiveConfigPreview();
 }
 
 // Load pipeline selects on page load
 setupDesktopDirectoryPicker();
+syncAsrModeUI('single');
+syncAsrModeUI('pipeline');
 loadPipelineSelects();
-loadTopStatus();
+loadStorageStatus();
+loadRuntimeDiagnostics();
 loadLangProfileSelect();
 
 var providerCache = [];
@@ -5559,11 +5306,10 @@ function switchTab(name) {
     c.classList.toggle('active', !!activeTabs[c.id]);
   });
   if (name === 'providers') loadProviders();
-  if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); loadJobQueue(); }
-  if (name === 'jobs') loadJobQueue();
+  if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); }
   if (name === 'langprofiles') loadLangProfiles();
-  if (name === 'runtime') loadRuntimeDiagnostics();
-  if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); }
+  if (name === 'runtime') { loadRuntimeDiagnostics(); loadStorageStatus(); }
+  if (name === 'pipeline') loadPipelineSelects();
 }
 
 async function loadProviders() {
@@ -5650,6 +5396,7 @@ function showProviderModal(editId) {
     document.getElementById('provEditProtocol').value = 'openai-compatible';
     document.getElementById('provEditBase').value = 'https://api.deepseek.com';
     document.getElementById('provEditTransModel').value = '';
+    document.getElementById('provEditQualityModel').value = '';
     document.getElementById('provEditNotes').value = '';
     document.getElementById('provEditEnabled').checked = true;
     document.getElementById('provDeprecWarn').style.display = 'none';
@@ -5674,6 +5421,7 @@ function showProviderModal(editId) {
         document.getElementById('provEditProtocol').value = p.protocol || 'openai-compatible';
         document.getElementById('provEditBase').value = p.api_base || '';
         document.getElementById('provEditTransModel').value = p.translation_model || '';
+        document.getElementById('provEditQualityModel').value = p.translation_quality_model || '';
         document.getElementById('provEditNotes').value = p.notes || '';
         document.getElementById('provEditEnabled').checked = p.enabled !== false;
         if (p.template_id && findTemplate(p.template_id)) { tsel.value = p.template_id; }
@@ -5759,6 +5507,7 @@ async function saveProvider() {
     api_base: document.getElementById('provEditBase').value.trim(),
     api_key: document.getElementById('provEditKey').value.trim(),
     model: model,
+    translation_quality_model: document.getElementById('provEditQualityModel').value.trim(),
     notes: document.getElementById('provEditNotes').value.trim(),
     enabled: document.getElementById('provEditEnabled').checked,
   };
@@ -5769,17 +5518,17 @@ async function saveProvider() {
     var url = isEdit ? '/api/providers/' + encodeURIComponent(data.id || editId) : '/api/providers';
     var resp = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     var result = await resp.json();
-    if (resp.ok) { closeProviderModal(); loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadTopStatus(); loadReadinessChecklist(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '翻译接口已保存，API Key 仍只以脱敏状态显示。', true); }
+    if (resp.ok) { closeProviderModal(); loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadReadinessChecklist(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '翻译接口已保存，API Key 仍只以脱敏状态显示。', true); }
     else { showSettingsNotice('providerSettingsNotice', '保存失败: ' + (result.error || '未知错误'), false); showToast('保存失败: ' + safeUiText(result.error || '未知错误'), false); }
   } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
 
 async function deleteProvider(id) {
-  if (!confirm('Delete provider "' + id + '"?')) return;
+  if (!confirm('确定删除翻译接口“' + id + '”吗？')) return;
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
     var result = await resp.json();
-    if (resp.ok) { loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadTopStatus(); loadReadinessChecklist(); showSettingsNotice('providerSettingsNotice', '翻译接口已删除。', true); } else { showSettingsNotice('providerSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); showToast('删除失败: ' + safeUiText(result.error || '未知错误'), false); }
+    if (resp.ok) { loadProviders(); loadPipelineSelects(); loadProviderSelect(); loadReadinessChecklist(); showSettingsNotice('providerSettingsNotice', '翻译接口已删除。', true); } else { showSettingsNotice('providerSettingsNotice', '删除失败: ' + (result.error || '未知错误'), false); showToast('删除失败: ' + safeUiText(result.error || '未知错误'), false); }
   } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
 
@@ -5787,7 +5536,7 @@ async function setActiveProvider(id) {
   try {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/activate', { method: 'POST' });
     var result = await resp.json();
-    if (resp.ok) { loadProviders(); loadProviderSelect(); loadPipelineSelects(); loadTopStatus(); loadReadinessChecklist(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '默认翻译接口已更新。', true); }
+    if (resp.ok) { loadProviders(); loadProviderSelect(); loadPipelineSelects(); loadReadinessChecklist(); loadEffectiveConfigPreview(); showSettingsNotice('providerSettingsNotice', '默认翻译接口已更新。', true); }
     else { showSettingsNotice('providerSettingsNotice', '设置失败: ' + (result.error || '未知错误'), false); showToast('设置失败: ' + safeUiText(result.error || '未知错误'), false); }
   } catch (err) { showToast('请求失败: ' + safeUiText(err.message), false); }
 }
@@ -5800,8 +5549,12 @@ async function testProvider(id) {
     var resp = await fetch('/api/providers/' + encodeURIComponent(id) + '/test', { method: 'POST' });
     var result = await resp.json();
     if (result.ok) {
-      showSettingsNotice('providerSettingsNotice', '连接成功：' + result.latency_ms + 'ms，模型 ' + result.model, true);
-      showToast('连接成功 · ' + result.latency_ms + 'ms · ' + result.model, true);
+      var tested = (result.models || []).map(function (row) {
+        return (row.role === 'quality' ? '质检' : '初译') + ' ' + row.model + ' ' + row.latency_ms + 'ms';
+      });
+      var detail = tested.length ? tested.join('；') : (result.model + ' ' + result.latency_ms + 'ms');
+      showSettingsNotice('providerSettingsNotice', '连接成功：' + detail, true);
+      showToast('连接成功 · ' + detail, true);
     } else {
       showSettingsNotice('providerSettingsNotice', '连接失败: ' + safeUiText(result.error || '未知错误'), false);
       showToast('连接失败: ' + safeUiText(result.error || '未知错误'), false);
@@ -5949,7 +5702,6 @@ async function loadConfigStatus() {
 document.getElementById('api_key').addEventListener('focus', function() { /* manual override */ });
 loadProviderSelect();
 loadEffectiveConfigPreview();
-loadJobQueue();
 loadAppInfo();
 loadReadinessChecklist();
 loadPipelineProgress();

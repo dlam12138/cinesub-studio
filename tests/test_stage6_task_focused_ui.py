@@ -9,15 +9,17 @@ def _html() -> str:
     return HTML.read_text(encoding="utf-8")
 
 
-def test_stage6_keeps_six_workspaces_and_chinese_first_shell():
+def test_stage6_keeps_five_workspaces_and_chinese_first_shell():
     html = _html()
-    for tab in ("pipeline", "transcribe", "jobs", "runtime", "providers", "langprofiles"):
+    for tab in ("pipeline", "transcribe", "runtime", "providers", "langprofiles"):
         assert f'data-tab="{tab}"' in html
+    assert 'data-tab="jobs"' not in html
     assert "本地字幕工作站" in html
-    assert "本地字幕生产控制台" in html
-    assert 'id="localeZhButton"' in html
-    assert 'id="localeEnButton"' in html
-    assert "English 界面已预留" in html
+    assert "本地字幕生产控制台" not in html
+    assert "选择视频 → 语音识别 → 翻译 → 输出字幕" not in html
+    assert 'id="localeZhButton"' not in html
+    assert 'id="localeEnButton"' not in html
+    assert "English 界面已预留" not in html
     assert "data-i18n-en=" in html
 
 
@@ -56,8 +58,8 @@ def test_stage6_moves_operational_diagnostics_to_runtime_workspace():
     assert 'id="runtime-summary-result"' in runtime
     assert 'id="pipeline-log"' in runtime
     assert 'id="storage-result"' in runtime
-    assert 'id="asr-evidence-result"' in runtime
-    assert "ASR 诊断证据（高级）" in runtime
+    assert 'id="asr-evidence-result"' not in runtime
+    assert "ASR 诊断证据（高级）" not in runtime
 
 
 def test_stage6_uses_only_existing_local_frontend_delivery():

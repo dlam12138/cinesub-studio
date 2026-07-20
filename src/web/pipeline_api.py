@@ -12,7 +12,6 @@ from urllib.parse import quote
 
 from process_env import build_child_process_env, redact_project_path
 from runtime_paths import resolve_runtime_paths
-from segment_asr_routing_integration import DEFAULT_APPLY_WINDOW_SECONDS, DEFAULT_MAX_APPLY_WINDOWS
 from subtitle_model import ASS_RESERVED_MESSAGE, DEFAULT_ASS_STYLE_ID, normalize_subtitle_formats
 from task_state import is_valid_output_file, recovery_state as shared_recovery_state
 
@@ -32,6 +31,7 @@ ARTIFACT_TYPES = {
     "bilingual",
     "quality_report",
     "review_needed",
+    "semantic_review_report",
 }
 
 PIPELINE_TASK: dict[str, Any] = {
@@ -129,12 +129,12 @@ def pipeline_progress() -> dict:
             "recoverable": recovery["recoverable"],
             "recovery_action": recovery["recovery_action"],
             "recovery_label": recovery["recovery_label"],
+            "asr_mode": raw.get("asr_mode", ""),
+            "language": raw.get("language", ""),
+            "asr_config_signature": raw.get("asr_config_signature", ""),
             "language_detection": _language_detection_summary(raw.get("language_detection")),
             "target_language": _target_language_from_state(raw),
             "quality_summary": _quality_summary(raw),
-            "segment_asr_routing_status": raw.get("segment_asr_routing_status", ""),
-            "segment_asr_routing_report": raw.get("segment_asr_routing_report", ""),
-            "segment_asr_routing_message": raw.get("segment_asr_routing_message", ""),
             "artifacts": pipeline_artifacts_for_state(raw),
         })
 
@@ -211,22 +211,16 @@ def start_pipeline_background(
     device: str = "auto",
     compute_type: str = "",
     translate_enabled: bool = True,
+    asr_mode: str,
     language: str = "",
     hf_endpoint: str = "",
     local_files_only: bool = False,
-    asr_experiment_mode: str = "off",
-    asr_candidate_id: str = "",
     translation_reliability_mode: str | None = None,
     translation_max_extra_requests: int | None = None,
+    translation_strategy_mode: str | None = None,
+    translation_scene_gap_seconds: float | None = None,
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
-    segment_asr_routing: str = "off",
-    segment_routing_confidence_threshold: float = 0.70,
-    segment_routing_min_segments: int = 1,
-    segment_routing_strict: bool = False,
-    segment_routing_window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS,
-    segment_routing_max_windows: int = DEFAULT_MAX_APPLY_WINDOWS,
-    segment_routing_allow_large_run: bool = False,
 ) -> tuple[dict, int]:
     with PIPELINE_TASK_LOCK:
         if PIPELINE_TASK["running"]:
@@ -252,22 +246,16 @@ def start_pipeline_background(
             "device": device,
             "compute_type": compute_type,
             "translate_enabled": translate_enabled,
+            "asr_mode": asr_mode,
             "language": language,
             "hf_endpoint": hf_endpoint,
             "local_files_only": local_files_only,
-            "asr_experiment_mode": asr_experiment_mode,
-            "asr_candidate_id": asr_candidate_id,
             "translation_reliability_mode": translation_reliability_mode,
             "translation_max_extra_requests": translation_max_extra_requests,
+            "translation_strategy_mode": translation_strategy_mode,
+            "translation_scene_gap_seconds": translation_scene_gap_seconds,
             "subtitle_formats": subtitle_formats,
             "ass_style_id": ass_style_id,
-            "segment_asr_routing": segment_asr_routing,
-            "segment_routing_confidence_threshold": segment_routing_confidence_threshold,
-            "segment_routing_min_segments": segment_routing_min_segments,
-            "segment_routing_strict": segment_routing_strict,
-            "segment_routing_window_seconds": segment_routing_window_seconds,
-            "segment_routing_max_windows": segment_routing_max_windows,
-            "segment_routing_allow_large_run": segment_routing_allow_large_run,
         },
         daemon=True,
     )
@@ -285,22 +273,16 @@ def run_pipeline_background(
     device: str = "auto",
     compute_type: str = "",
     translate_enabled: bool = True,
+    asr_mode: str = "",
     language: str = "",
     hf_endpoint: str = "",
     local_files_only: bool = False,
-    asr_experiment_mode: str = "off",
-    asr_candidate_id: str = "",
     translation_reliability_mode: str | None = None,
     translation_max_extra_requests: int | None = None,
+    translation_strategy_mode: str | None = None,
+    translation_scene_gap_seconds: float | None = None,
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
-    segment_asr_routing: str = "off",
-    segment_routing_confidence_threshold: float = 0.70,
-    segment_routing_min_segments: int = 1,
-    segment_routing_strict: bool = False,
-    segment_routing_window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS,
-    segment_routing_max_windows: int = DEFAULT_MAX_APPLY_WINDOWS,
-    segment_routing_allow_large_run: bool = False,
 ) -> None:
     subtitle_formats_list = normalize_subtitle_formats(subtitle_formats)
     ass_style_id = ass_style_id or DEFAULT_ASS_STYLE_ID
@@ -314,21 +296,15 @@ def run_pipeline_background(
         device=device,
         compute_type=compute_type,
         translate_enabled=translate_enabled,
+        asr_mode=asr_mode,
         language=language,
         local_files_only=local_files_only,
-        asr_experiment_mode=asr_experiment_mode,
-        asr_candidate_id=asr_candidate_id,
         translation_reliability_mode=translation_reliability_mode,
         translation_max_extra_requests=translation_max_extra_requests,
+        translation_strategy_mode=translation_strategy_mode,
+        translation_scene_gap_seconds=translation_scene_gap_seconds,
         subtitle_formats=subtitle_formats_list,
         ass_style_id=ass_style_id,
-        segment_asr_routing=segment_asr_routing,
-        segment_routing_confidence_threshold=segment_routing_confidence_threshold,
-        segment_routing_min_segments=segment_routing_min_segments,
-        segment_routing_strict=segment_routing_strict,
-        segment_routing_window_seconds=segment_routing_window_seconds,
-        segment_routing_max_windows=segment_routing_max_windows,
-        segment_routing_allow_large_run=segment_routing_allow_large_run,
     )
     env = _pipeline_env()
     if hf_endpoint:
@@ -343,7 +319,6 @@ def run_pipeline_background(
         hf_endpoint=hf_endpoint,
         local_files_only=local_files_only,
         subtitle_formats=subtitle_formats_list,
-        segment_asr_routing=segment_asr_routing,
     )
 
     returncode = None
@@ -461,6 +436,7 @@ def _artifact_paths(raw: dict) -> dict[str, str]:
         "bilingual": str(raw.get("bilingual_srt") or ""),
         "quality_report": str(raw.get("quality_report") or ""),
         "review_needed": "",
+        "semantic_review_report": str(raw.get("semantic_review_report") or ""),
     }
     quality_report = paths["quality_report"]
     if quality_report:
@@ -512,6 +488,7 @@ def _artifact_label(kind: str) -> str:
         "bilingual": "Bilingual SRT",
         "quality_report": "Quality report",
         "review_needed": "Review SRT",
+        "semantic_review_report": "Semantic review report",
     }
     return labels.get(kind, kind)
 
@@ -544,9 +521,14 @@ def _language_detection_summary(value: Any) -> dict:
     if not isinstance(value, dict):
         return {}
     return {
+        "asr_mode": value.get("asr_mode", ""),
         "source_language": value.get("source_language", ""),
         "language_probability": value.get("language_probability"),
         "forced_language": value.get("forced_language"),
+        "distinct_languages": value.get("distinct_languages", []),
+        "block_count": value.get("block_count", 0),
+        "manual_review_count": value.get("manual_review_count", 0),
+        "blocks": value.get("blocks", []),
         "model": value.get("model", ""),
         "device": value.get("device", ""),
         "compute_type": value.get("compute_type", ""),
@@ -634,21 +616,15 @@ def _build_background_command(
     device: str,
     compute_type: str,
     translate_enabled: bool,
+    asr_mode: str = "",
     language: str,
     local_files_only: bool,
     subtitle_formats: list[str],
     ass_style_id: str,
-    asr_experiment_mode: str = "off",
-    asr_candidate_id: str = "",
     translation_reliability_mode: str | None = None,
     translation_max_extra_requests: int | None = None,
-    segment_asr_routing: str = "off",
-    segment_routing_confidence_threshold: float = 0.70,
-    segment_routing_min_segments: int = 1,
-    segment_routing_strict: bool = False,
-    segment_routing_window_seconds: float = DEFAULT_APPLY_WINDOW_SECONDS,
-    segment_routing_max_windows: int = DEFAULT_MAX_APPLY_WINDOWS,
-    segment_routing_allow_large_run: bool = False,
+    translation_strategy_mode: str | None = None,
+    translation_scene_gap_seconds: float | None = None,
 ) -> list[str]:
     if action == "run":
         command = [
@@ -680,40 +656,26 @@ def _build_background_command(
         command += ["--device", device]
     if compute_type:
         command += ["--compute-type", compute_type]
+    if asr_mode:
+        command += ["--asr-mode", asr_mode]
     if language:
         command += ["--language", language]
     if local_files_only:
         command += ["--local-files-only"]
-    if asr_experiment_mode and asr_experiment_mode != "off":
-        command += ["--asr-experiment-mode", asr_experiment_mode]
-    if asr_candidate_id:
-        command += ["--asr-candidate-id", asr_candidate_id]
     if translation_reliability_mode is not None:
         command += ["--translation-reliability-mode", translation_reliability_mode]
     if translation_max_extra_requests is not None:
         command += ["--translation-max-extra-requests", str(translation_max_extra_requests)]
+    if translation_strategy_mode is not None:
+        command += ["--translation-strategy-mode", translation_strategy_mode]
+    if translation_scene_gap_seconds is not None:
+        command += [
+            "--translation-scene-gap-seconds", str(translation_scene_gap_seconds)
+        ]
     if not translate_enabled:
         command += ["--no-translate"]
     command += ["--subtitle-formats", ",".join(subtitle_formats)]
     command += ["--ass-style-id", ass_style_id]
-    if (
-        segment_asr_routing != "off"
-        or float(segment_routing_confidence_threshold) != 0.70
-        or int(segment_routing_min_segments) != 1
-        or segment_routing_strict
-        or float(segment_routing_window_seconds) != DEFAULT_APPLY_WINDOW_SECONDS
-        or int(segment_routing_max_windows) != DEFAULT_MAX_APPLY_WINDOWS
-        or segment_routing_allow_large_run
-    ):
-        command += ["--segment-asr-routing", segment_asr_routing]
-        command += ["--segment-routing-confidence-threshold", str(segment_routing_confidence_threshold)]
-        command += ["--segment-routing-min-segments", str(segment_routing_min_segments)]
-        command += ["--segment-routing-window-seconds", str(segment_routing_window_seconds)]
-        command += ["--segment-routing-max-windows", str(segment_routing_max_windows)]
-        if segment_routing_strict:
-            command += ["--segment-routing-strict"]
-        if segment_routing_allow_large_run:
-            command += ["--segment-routing-allow-large-run"]
     return command
 
 
@@ -730,7 +692,6 @@ def _append_pipeline_log_header(
     hf_endpoint: str,
     local_files_only: bool,
     subtitle_formats: list[str],
-    segment_asr_routing: str = "off",
 ) -> None:
     started_at = time.strftime("%Y-%m-%d %H:%M:%S")
     with PIPELINE_LOG.open("a", encoding="utf-8") as log:
@@ -746,8 +707,6 @@ def _append_pipeline_log_header(
         if local_files_only:
             log.write("  Local files only: true\n")
         log.write(f"  Subtitle formats: {','.join(subtitle_formats)}\n")
-        if segment_asr_routing and segment_asr_routing != "off":
-            log.write(f"  Segment ASR routing: {segment_asr_routing}\n")
         if "ass" in subtitle_formats:
             log.write(f"  ASS: {ASS_RESERVED_MESSAGE}\n")
         log.write(f"{'=' * 60}\n")

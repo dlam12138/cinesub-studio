@@ -1,6 +1,6 @@
 {
   "name": "cinesub-studio-desktop",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "cinesubBuildFlavor": "unified",
   "private": true,
   "productName": "智译字幕工坊",
@@ -8,8 +8,7 @@
   "main": "main.js",
   "scripts": {
     "start": "node launch.js",
-    "pack:win": "electron-builder --win --dir",
-    "dist:win": "electron-builder --win nsis"
+    "pack:win": "electron-builder --win --dir"
   },
   "devDependencies": {
     "electron": "37.10.3",
@@ -35,17 +34,20 @@
         "filter": [
           "src/**/*",
           "web/**/*",
-          "config/**/*",
           "start_app.py",
-          "start_web.ps1",
-          "run_transcribe.ps1",
-          "analyze_subtitles.ps1",
-          "install.ps1",
-          "requirements.txt",
-          "pyproject.toml",
           "VERSION",
           "README.md",
-          "AGENTS.md"
+          "!src/tools/asr_benchmark.py",
+          "!src/tools/capture_stage5_baseline.py",
+          "!src/tools/code_switch_metrics.py",
+          "!src/tools/mixed_language_asr_evidence.py",
+          "!src/tools/prepare_*.py",
+          "!src/tools/segment_asr_*.py",
+          "!src/tools/stage5_go_no_go.py",
+          "!src/tools/semantic_review_regression.py",
+          "!src/tools/translation_quality_benchmark.py",
+          "!src/tools/translation_strategy_finale.py",
+          "!src/tools/wenyi_*.py"
         ]
       },
       {
@@ -61,18 +63,11 @@
       }
     ],
     "win": {
-      "target": "nsis",
+      "target": "dir",
       "executableName": "CineSubStudio",
       "icon": "build/icon.ico",
       "signAndEditExecutable": false,
       "forceCodeSigning": false
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "智译字幕工坊"
     },
     "publish": null
   }

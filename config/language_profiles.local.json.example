@@ -6,6 +6,7 @@
       "id": "my-french-film",
       "name": "我的法语电影配置",
       "description": "自定义法语电影配置，覆盖内置 fr-film",
+      "asr_mode": "fixed",
       "source_language": "fr",
       "target_language": "zh-CN",
       "asr": {

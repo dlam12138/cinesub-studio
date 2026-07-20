@@ -1,110 +1,43 @@
-# 智译字幕工坊 / CineSub Studio Desktop Shell
+# 智译字幕工坊 / CineSub Studio Electron 便携壳
 
-This directory contains the Electron desktop shell for 智译字幕工坊 / CineSub Studio.
+`desktop/` 是智译字幕工坊的 Electron 桌面壳。Python Web 应用仍是业务逻辑与 API 的唯一实现，Electron 只负责启动包内后端、打开本地窗口、目录选择和退出时清理子进程。
 
-## What It Does
+## 开发模式
 
-- Starts the existing Python Web launcher from the repository root (dev mode)
-  or from the bundled backend (packaged mode).
-- Waits until the local Web server is ready.
-- Opens the existing 智译字幕工坊 / CineSub Studio Web UI in an Electron window.
-- Stops the child Python backend process when the Electron app exits.
-
-The Python Web app remains the source of truth. Electron does not duplicate backend APIs.
-
-## Dev Mode vs Packaged Mode
-
-**Dev mode** (current repo checkout):
-- Uses `.venv/Scripts/python.exe` or system Python.
-- Launches `start_app.py` from the repo root.
-- Python and the project `.venv` are still required for dev mode.
-- Used for development and debugging.
-
-**Packaged mode** (v0.6.1 external-test installer):
-- Detected via `app.isPackaged`.
-- Uses the complete portable Python runtime at `resources/app/python/python.exe`.
-- Launches bundled `backend/start_app.py`.
-- Bundled FFmpeg and CUDA runtime DLL directories are prepended to the child process PATH.
-- Device `auto` uses CUDA only when the bundled runtime, dependencies, and a compatible NVIDIA driver are all ready; otherwise it falls back to CPU.
-- Models, output, work, logs, caches, and uploads are written below `%LOCALAPPDATA%\CineSubStudio`.
-- Provider and Language Profile overrides are written below `%APPDATA%\CineSubStudio\config`.
-
-## Setup (Dev Mode)
-
-From the repository root, make sure the Python development environment already works:
+开发模式使用项目 `.venv` 和源码根目录：
 
 ```powershell
 .\start_web.ps1 -Smoke -NoBrowser -NonInteractive
-```
-
-Then install desktop dependencies:
-
-```powershell
-cd desktop
-npm install
-```
-
-## Start (Dev Mode)
-
-```powershell
 cd desktop
 npm start
 ```
 
-By default the shell uses port `7860`. To choose a different port:
+默认端口为 `7860`，可通过 `CINESUB_DESKTOP_PORT` 覆盖。
+
+## 0.6.2 便携模式
+
+- 入口为解压目录内的 `CineSubStudio.exe`。
+- Python 位于 `resources/app/python/`。
+- FFmpeg 和可选 CUDA 位于 `resources/app/tools/`。
+- 后端源码位于 `resources/app/backend/`。
+- `small` 模型、配置、缓存、日志和字幕产物全部位于 EXE 同级 `data/`。
+- Electron 的 userData、session cache 和日志也重定向到 `data/`，不写 `%APPDATA%` 或 `%LOCALAPPDATA%`。
+- 关闭 Electron 窗口时终止 Python 后端。
+
+正式构建入口：
+
+首次构建桌面依赖时，在 `desktop/` 目录运行 `npm install`。正式构建统一从仓库根目录调用：
 
 ```powershell
-$env:CINESUB_DESKTOP_PORT = "7861"
-npm start
+.\.venv\Scripts\python.exe -B scripts\build_portable_release.py
 ```
 
-## Packaging (Windows Installer Preview)
+## Packaged mode（便携运行模式）
 
-Prerequisites:
-- Complete portable Python 3.12 under `tools/python/`
-- Project `.venv` with all dependencies installed; its `site-packages` is copied into the staged portable runtime
-- `tools/ffmpeg/bin/ffmpeg.exe` present
-- Complete `tools/cuda/` runtime; the unified installer always bundles it
+打包后由 `CineSubStudio.exe` 启动 `resources/app/` 内的 portable Python 后端；程序数据全部定向到 EXE 同级 `data/`。
 
-Build through the runtime-validating wrapper:
+构建器会准备 portable runtime、调用 `electron-builder --win --dir`、加入 `small` 模型、执行敏感信息扫描并生成 ZIP/SHA256。不会生成 NSIS 安装器。若完整包达到 GitHub 2 GiB 单文件限制，会生成 CPU 主包和独立 CUDA add-on。
 
-```powershell
-.\packaging\windows\build_installer.ps1 -OnlyUnpacked
-```
+## 冻结约束
 
-Build the NSIS installer:
-
-```powershell
-.\packaging\windows\build_installer.ps1
-```
-
-The default output is `desktop/release/unified/` and contains the single
-`CineSubStudio-<version>-windows-x64-setup.exe` installer plus
-`release_manifest.json` with artifact size and SHA-256.
-Use `-OutputDir <path>` to override the default. Direct `npm run pack:win`
-and `npm run dist:win` calls assume `packaging/windows/runtime/` has already been prepared.
-
-## Backend Launch
-
-The desktop shell starts:
-
-```text
-python -B start_app.py --no-browser --non-interactive --port <port>
-```
-
-Python resolution order (dev mode):
-
-1. Project `.venv/Scripts/python.exe` on Windows.
-2. Project `.venv/bin/python` on Unix-like systems.
-3. `python` from `PATH`.
-4. Windows `py -3` launcher.
-
-## Known Limitations
-
-- Python and the project `.venv` are still required for dev mode.
-- Packaged mode requires the installer to be built; it does not exist in a plain source checkout.
-- There is no code signing.
-- There is no auto-update.
-- The unified package bundles CUDA runtime DLLs but never the NVIDIA display driver.
-- The installer does not bundle Whisper models or silently download them.
-- This is not an official release package.
+0.6.2 不提供代码签名、自动更新或安装器。发布构建接口以 0.6.2 为冻结基线；后续改变目录布局、资源边界或启动契约必须升级版本并同步测试。

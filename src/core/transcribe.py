@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 from dataclasses import dataclass
+from importlib.metadata import version as package_version
 from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
@@ -20,21 +21,19 @@ from encoding_utils import run_text, write_json
 from ffmpeg_locator import find_ffmpeg
 from runtime_env import add_project_cuda_to_process, choose_device, default_compute_type
 from runtime_paths import resolve_runtime_paths
-from asr_strategy import AsrDecodeOptions, TranscriptionArtifact, TranscriptionCue
+from asr_runtime import (
+    AsrDecodeOptions,
+    TranscriptionArtifact,
+    TranscriptionCue,
+    deduplicate_boundary_cues,
+    normalize_asr_request,
+    plan_vad_blocks,
+    suspicious_cue_indexes,
+)
 from subtitle_model import (
     ASS_RESERVED_MESSAGE,
     DEFAULT_ASS_STYLE_ID,
     normalize_subtitle_formats,
-)
-from segment_asr_routing_integration import (
-    DEFAULT_APPLY_WINDOW_SECONDS,
-    DEFAULT_MAX_APPLY_WINDOWS,
-    SegmentAsrRoutingError,
-    SegmentAsrRoutingOptions,
-    ensure_apply_is_not_strict,
-    routing_user_message,
-    run_segment_asr_routing,
-    validate_options as validate_segment_routing_options,
 )
 
 PATHS = resolve_runtime_paths(Path(__file__).resolve())
@@ -111,20 +110,6 @@ def create_asr_session(
 
 def main() -> int:
     args = parse_args()
-    segment_routing = SegmentAsrRoutingOptions(
-        mode=args.segment_asr_routing,
-        confidence_threshold=args.segment_routing_confidence_threshold,
-        min_segments=args.segment_routing_min_segments,
-        strict=args.segment_routing_strict,
-        window_seconds=args.segment_routing_window_seconds,
-        max_windows=args.segment_routing_max_windows,
-        allow_large_run=args.segment_routing_allow_large_run,
-    )
-    try:
-        ensure_apply_is_not_strict(segment_routing)
-    except SegmentAsrRoutingError as exc:
-        raise SystemExit(f"ERROR: {exc}") from exc
-
     project_root = PROJECT_ROOT
     subtitle_formats = normalize_subtitle_formats(args.subtitle_formats)
     args.subtitle_formats = ",".join(subtitle_formats)
@@ -157,36 +142,13 @@ def main() -> int:
         reuse_existing=False,
         config=SimpleNamespace(
             model=args.model, model_dir=model_dir, device=args.device,
-            compute_type=args.compute_type, language=args.language, beam_size=args.beam_size,
+            compute_type=args.compute_type, asr_mode=args.asr_mode,
+            language=args.language, beam_size=args.beam_size,
             vad_filter=not args.no_vad, local_files_only=args.local_files_only,
             language_profile_id=args.language_profile, language_profile_name="",
             lang_profile_config=getattr(args, "profile_config", {}),
-            asr_experiment_mode=args.asr_experiment_mode,
-            asr_candidate_id=args.asr_candidate_id,
         ),
     )
-
-    if segment_routing.mode != "off":
-        try:
-            result = run_segment_asr_routing(
-                options=segment_routing,
-                media_path=input_path,
-                routing_input_path=audio_path,
-                report_root=output_dir / "reports",
-                model_name=args.model,
-                device=args.device,
-                compute_type=args.compute_type,
-                local_files_only=args.local_files_only,
-                normal_srt_path=srt_path,
-                routed_srt_path=srt_path,
-            )
-        except SegmentAsrRoutingError as exc:
-            message = routing_user_message(user_status="failed", failure_reason=str(exc))
-            raise SystemExit(f"ERROR: {message}") from exc
-        if result.message:
-            print(result.message)
-        if result.report_path:
-            print(f"Segment ASR routing report: {result.report_path}")
 
     print(f"Done: {srt_path}")
 
@@ -230,6 +192,11 @@ def _run_translation(args: argparse.Namespace, srt_path: Path, output_dir: Path)
         custom_prompt=args.translation_prompt,
         glossary=getattr(args, "profile_glossary", []),
     )
+    profile_quality = (
+        getattr(args, "profile_config", {}).get("quality", {})
+        if isinstance(getattr(args, "profile_config", {}), dict)
+        else {}
+    )
 
     translate_srt(
         input_path=srt_path,
@@ -238,9 +205,7 @@ def _run_translation(args: argparse.Namespace, srt_path: Path, output_dir: Path)
         api_base=args.api_base,
         api_key=api_key,
         llm_model=args.llm_model,
-        translation_quality_model=(
-            getattr(args, "translation_quality_model", "") or args.llm_model
-        ),
+        translation_quality_model=getattr(args, "translation_quality_model", ""),
         target_language=args.target_language,
         batch_size=args.translation_batch_size,
         temperature=args.translation_temperature,
@@ -249,6 +214,17 @@ def _run_translation(args: argparse.Namespace, srt_path: Path, output_dir: Path)
         context_window=args.context_window,
         reliability_mode=args.translation_reliability_mode,
         max_extra_requests=args.translation_max_extra_requests,
+        translation_strategy_mode=args.translation_strategy_mode,
+        scene_gap_seconds=args.translation_scene_gap_seconds,
+        max_cps_zh=float(
+            getattr(args, "translation_max_cps_zh", None)
+            or profile_quality.get("max_cps_zh", 8)
+        ),
+        max_chars_per_subtitle_zh=int(
+            getattr(args, "translation_max_chars_per_subtitle_zh", None)
+            or profile_quality.get("max_chars_per_subtitle_zh", 36)
+        ),
+        profile_glossary=getattr(args, "profile_glossary", []),
     )
 
 
@@ -264,7 +240,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Compute type. CPU usually uses int8; CUDA usually uses float16.",
     )
-    parser.add_argument("--language", default=None, help="Source language code, for example en, ja, ko, zh. Omit for auto detect.")
+    parser.add_argument(
+        "--asr-mode",
+        choices=["auto", "fixed", "multilingual"],
+        default=None,
+        help="ASR language mode. Omit for auto, or for legacy --language inference.",
+    )
+    parser.add_argument("--language", default=None, help="Source language code. Required by --asr-mode fixed.")
     parser.add_argument("--output-dir", default="output", help="Directory for generated SRT files.")
     parser.add_argument("--model-dir", default="models", help="Directory for downloaded model files.")
     parser.add_argument("--work-dir", default="work", help="Directory for temporary extracted audio.")
@@ -272,8 +254,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-vad", action="store_true", help="Disable voice activity detection.")
     parser.add_argument("--no-condition-on-previous-text", action="store_true", help="Disable conditioning on previous text during transcription.")
     parser.add_argument("--local-files-only", action="store_true", help="Do not download models; only use local model files.")
-    parser.add_argument("--asr-experiment-mode", choices=["off", "dry_run", "apply"], default=None, help="ASR candidate mode; default comes from Language Profile or off.")
-    parser.add_argument("--asr-candidate-id", default=None, help="Registered ASR candidate id.")
 
     # Translation options
     parser.add_argument("--translate", action="store_true", help="Enable LLM translation after transcription.")
@@ -297,65 +277,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--translation-prompt", default="", help="Custom translation system prompt.")
     parser.add_argument("--translation-reliability-mode", choices=["off", "preview"], default=None, help="Translation recovery mode; default comes from Language Profile or off.")
     parser.add_argument("--translation-max-extra-requests", type=int, default=None, help="Shared preview recovery/repair request budget (0-50).")
+    parser.add_argument(
+        "--translation-strategy-mode",
+        choices=[
+            "standard",
+            "three_pass",
+            "semantic_review",
+            "wenyi_review",
+            "semantic_wenyi_review",
+        ],
+        default=None,
+        help="Translation strategy.",
+    )
+    parser.add_argument("--translation-scene-gap-seconds", type=float, default=None, help="Scene split silence gap in seconds.")
+    parser.add_argument("--translation-max-cps-zh", type=float, default=None, help="Optional Chinese CPS budget override for three-pass translation.")
+    parser.add_argument("--translation-max-chars-per-subtitle-zh", type=int, default=None, help="Optional Chinese character budget override for three-pass translation.")
     parser.add_argument("--language-profile", default="", help="Language Profile ID for ASR and translation settings.")
     parser.add_argument("--subtitle-formats", default=None, help="Subtitle output formats. SRT is always enabled; ASS is reserved.")
     parser.add_argument("--ass-style-id", default=None, help="Reserved ASS style id. No .ass file is generated in this version.")
-    parser.add_argument(
-        "--segment-asr-routing",
-        default="off",
-        choices=["off", "dry_run", "apply"],
-        help="Experimental segment ASR routing mode. Defaults to off.",
-    )
-    parser.add_argument(
-        "--segment-routing-confidence-threshold",
-        type=float,
-        default=0.70,
-        help="Confidence threshold for segment routing dry-run analysis.",
-    )
-    parser.add_argument(
-        "--segment-routing-min-segments",
-        type=int,
-        default=1,
-        help="Minimum segment count for usable segment routing evidence.",
-    )
-    parser.add_argument(
-        "--segment-routing-strict",
-        action="store_true",
-        help="Fail instead of falling back when experimental segment routing fails.",
-    )
-    parser.add_argument(
-        "--segment-routing-window-seconds",
-        type=float,
-        default=DEFAULT_APPLY_WINDOW_SECONDS,
-        help="Apply-only full-coverage routing window length in seconds.",
-    )
-    parser.add_argument(
-        "--segment-routing-max-windows",
-        type=int,
-        default=DEFAULT_MAX_APPLY_WINDOWS,
-        help="Apply-only maximum routed windows before fallback or strict failure.",
-    )
-    parser.add_argument(
-        "--segment-routing-allow-large-run",
-        action="store_true",
-        help="Allow apply to exceed --segment-routing-max-windows.",
-    )
-
     args = parser.parse_args()
-    try:
-        validate_segment_routing_options(
-            SegmentAsrRoutingOptions(
-                mode=args.segment_asr_routing,
-                confidence_threshold=args.segment_routing_confidence_threshold,
-                min_segments=args.segment_routing_min_segments,
-                strict=args.segment_routing_strict,
-                window_seconds=args.segment_routing_window_seconds,
-                max_windows=args.segment_routing_max_windows,
-                allow_large_run=args.segment_routing_allow_large_run,
-            )
-        )
-    except SegmentAsrRoutingError as exc:
-        parser.error(str(exc))
     args.profile_translation_style = ""
     args.profile_glossary = []
     args.profile_config = {}
@@ -380,8 +320,25 @@ def parse_args() -> argparse.Namespace:
                     args.device = asr["whisper_device"]
                 if not _explicit("--compute-type") and asr.get("compute_type"):
                     args.compute_type = asr["compute_type"]
-                if not _explicit("--language") and asr.get("language"):
-                    args.language = asr["language"]
+                profile_mode = profile.get("asr_mode")
+                profile_language = asr.get("language")
+                if not profile_language:
+                    source_language = str(profile.get("source_language") or "").strip()
+                    if source_language and source_language != "auto":
+                        profile_language = source_language
+                if not _explicit("--asr-mode"):
+                    args.asr_mode = profile_mode or (
+                        "fixed" if profile_language else "auto"
+                    )
+                if (
+                    not _explicit("--language")
+                    and not (
+                        _explicit("--asr-mode")
+                        and args.asr_mode in {"auto", "multilingual"}
+                    )
+                    and profile_language
+                ):
+                    args.language = profile_language
                 if not _explicit("--beam-size") and asr.get("beam_size") is not None:
                     args.beam_size = asr["beam_size"]
                 if not _explicit("--no-vad") and asr.get("vad_filter") is False:
@@ -395,6 +352,13 @@ def parse_args() -> argparse.Namespace:
                     args.translation_reliability_mode = profile_reliability.get("mode", "off")
                 if not _explicit("--translation-max-extra-requests"):
                     args.translation_max_extra_requests = profile_reliability.get("max_extra_requests", 12)
+                profile_translation_strategy = profile.get("translation_strategy", {})
+                if not _explicit("--translation-strategy-mode"):
+                    args.translation_strategy_mode = profile_translation_strategy.get("mode", "standard")
+                if not _explicit("--translation-scene-gap-seconds"):
+                    args.translation_scene_gap_seconds = profile_translation_strategy.get(
+                        "scene_gap_seconds", 30.0
+                    )
                 subtitle_style = profile.get("subtitle_style", {})
                 if isinstance(subtitle_style, dict):
                     if not _explicit("--subtitle-formats") and subtitle_style.get("formats"):
@@ -402,18 +366,13 @@ def parse_args() -> argparse.Namespace:
                         args.subtitle_formats = ",".join(formats) if isinstance(formats, list) else str(formats)
                     if not _explicit("--ass-style-id") and subtitle_style.get("ass_style_id"):
                         args.ass_style_id = subtitle_style["ass_style_id"]
-                profile_strategy = profile.get("asr_strategy", {})
-                if not _explicit("--asr-experiment-mode"):
-                    args.asr_experiment_mode = profile_strategy.get("mode", "off")
-                if not _explicit("--asr-candidate-id"):
-                    args.asr_candidate_id = profile_strategy.get("candidate_id", "")
             else:
                 print(f"Warning: Language Profile '{profile_id}' not found, using CLI args", file=sys.stderr)
         except Exception as exc:
             print(f"Warning: cannot load Language Profile store: {exc}", file=sys.stderr)
 
-    from asr_strategy import validate_strategy_config
     from translation_reliability import normalize_reliability_config
+    from translation_strategy import normalize_translation_strategy
 
     try:
         reliability = normalize_reliability_config(
@@ -424,18 +383,25 @@ def parse_args() -> argparse.Namespace:
         parser.error(str(exc))
     args.translation_reliability_mode = reliability["mode"]
     args.translation_max_extra_requests = reliability["max_extra_requests"]
-
     try:
-        strategy = validate_strategy_config(
-            {"mode": args.asr_experiment_mode or "off", "candidate_id": args.asr_candidate_id or ""},
-            model=args.model,
+        translation_strategy = normalize_translation_strategy({
+            "mode": args.translation_strategy_mode or "standard",
+            "scene_gap_seconds": args.translation_scene_gap_seconds or 30.0,
+        })
+    except ValueError as exc:
+        parser.error(str(exc))
+    args.translation_strategy_mode = translation_strategy["mode"]
+    args.translation_scene_gap_seconds = translation_strategy["scene_gap_seconds"]
+
+    if _explicit("--language") and not _explicit("--asr-mode"):
+        args.asr_mode = "fixed"
+    try:
+        args.asr_mode, args.language = normalize_asr_request(
+            args.asr_mode,
+            args.language,
         )
     except ValueError as exc:
         parser.error(str(exc))
-    args.asr_experiment_mode = strategy["mode"]
-    args.asr_candidate_id = strategy["candidate_id"]
-    if args.asr_candidate_id == "mixed-route-v1" and args.asr_experiment_mode == "dry_run":
-        args.segment_asr_routing = "dry_run"
     return args
 
 
@@ -497,7 +463,8 @@ def transcribe_to_srt(
     model_dir: Path,
     device: str,
     compute_type: str | None,
-    language: str | None,
+    asr_mode: str = "auto",
+    language: str | None = None,
     beam_size: int,
     vad_filter: bool,
     local_files_only: bool,
@@ -508,11 +475,12 @@ def transcribe_to_srt(
     artifact_out: list[TranscriptionArtifact] | None = None,
     session: AsrSession | None = None,
 ) -> dict | None:
-    """Run Whisper transcription and write SRT.
-
-    Returns language detection info dict (or None on failure):
-        {"source_language": "ja", "language_probability": 0.94, "model": "large-v3"}
-    """
+    """Run the selected faster-whisper mode and atomically write SRT + diagnostics."""
+    asr_mode, language = normalize_asr_request(asr_mode, language)
+    options = decode_options or AsrDecodeOptions(
+        condition_on_previous_text=condition_on_previous_text
+    )
+    options.validate()
     if session is None:
         session = create_asr_session(
             model_name=model_name, model_dir=model_dir, device=device,
@@ -523,68 +491,76 @@ def transcribe_to_srt(
     model = session.model
     device = session.device
     compute_type = session.compute_type
-    if language is not None:
-        language = language.strip() or None
-        if language == "auto":
-            language = None
+    backend_version = _package_version("faster-whisper")
 
-    options = decode_options or AsrDecodeOptions(
-        condition_on_previous_text=condition_on_previous_text
-    )
-    options.validate()
-    segments, info = model.transcribe(
-        str(audio_path),
-        language=language,
-        beam_size=beam_size,
-        vad_filter=vad_filter,
-        **options.transcribe_kwargs(vad_filter),
-    )
+    blocks: list[dict[str, Any]] = []
+    if asr_mode == "multilingual":
+        artifact, blocks = _transcribe_multilingual(
+            model=model,
+            audio_path=audio_path,
+            beam_size=beam_size,
+            options=options,
+            backend_version=backend_version,
+        )
+        detected = "multilingual"
+        probability = None
+    else:
+        segments, info = model.transcribe(
+            str(audio_path),
+            language=language,
+            beam_size=beam_size,
+            vad_filter=vad_filter,
+            **options.transcribe_kwargs(vad_filter),
+        )
+        detected = getattr(info, "language", None)
+        probability = getattr(info, "language_probability", None)
+        artifact_cues = _segments_to_cues(segments)
+        artifact = TranscriptionArtifact(
+            cues=tuple(artifact_cues),
+            language=str(detected or ""),
+            language_probability=round(probability, 4) if probability is not None else None,
+            duration_seconds=float(getattr(info, "duration", 0.0) or 0.0) or None,
+            backend_versions=(("faster-whisper", backend_version),),
+        )
+    if not artifact.cues:
+        raise RuntimeError("未检测到可转写语音。请确认视频包含清晰对白后重试。")
 
-    detected = getattr(info, "language", None)
-    probability = getattr(info, "language_probability", None)
-    lang_info = None
-    if detected:
-        prob_str = f"{probability:.2f}" if probability is not None else "N/A"
-        print(f"Detected language: {detected} ({prob_str})")
-
-        # ── 保存语言识别结果为结构化 JSON ──
-        lang_info = {
-            "source_language": detected,
-            "language_probability": round(probability, 4) if probability is not None else None,
-            "model": model_name,
-            "device": device,
-            "compute_type": compute_type,
-            "language_profile": language_profile_id,
-            "language_profile_name": language_profile_name,
-            "forced_language": language,
-            "vad_filter": vad_filter,
-            "beam_size": beam_size,
-            "condition_on_previous_text": options.condition_on_previous_text,
-        }
+    prob_str = f"{probability:.2f}" if probability is not None else "N/A"
+    print(f"ASR mode: {asr_mode}")
+    print(f"Detected language: {detected or 'unknown'} ({prob_str})")
+    review_indexes = suspicious_cue_indexes(artifact.cues)
+    distinct_languages = sorted({
+        str(block.get("language") or "") for block in blocks if block.get("language")
+    })
+    lang_info = {
+        "asr_mode": asr_mode,
+        "source_language": detected or language or "",
+        "language_probability": round(probability, 4) if probability is not None else None,
+        "distinct_languages": distinct_languages,
+        "block_count": len(blocks),
+        "blocks": blocks,
+        "manual_review_cue_indexes": [index + 1 for index in review_indexes],
+        "manual_review_count": len(review_indexes),
+        "model": model_name,
+        "device": device,
+        "compute_type": compute_type,
+        "language_profile": language_profile_id,
+        "language_profile_name": language_profile_name,
+        "forced_language": language,
+        "vad_filter": vad_filter,
+        "beam_size": beam_size,
+        "condition_on_previous_text": options.condition_on_previous_text,
+        "backend_versions": dict(artifact.backend_versions),
+        "local_files_only": local_files_only,
+    }
 
     tmp_srt_path = srt_path.with_name(f"{srt_path.name}.tmp")
-    artifact_cues: list[TranscriptionCue] = []
     try:
         with tmp_srt_path.open("w", encoding="utf-8") as file:
-            for index, segment in enumerate(segments, start=1):
-                text = segment.text.strip()
-                if not text:
-                    continue
-
-                artifact_cues.append(
-                    TranscriptionCue(
-                        start=float(segment.start),
-                        end=float(segment.end),
-                        text=text,
-                        avg_logprob=getattr(segment, "avg_logprob", None),
-                        compression_ratio=getattr(segment, "compression_ratio", None),
-                        no_speech_prob=getattr(segment, "no_speech_prob", None),
-                    )
-                )
-
+            for index, cue in enumerate(artifact.cues, start=1):
                 file.write(f"{index}\n")
-                file.write(f"{format_srt_time(segment.start)} --> {format_srt_time(segment.end)}\n")
-                file.write(f"{text}\n\n")
+                file.write(f"{format_srt_time(cue.start)} --> {format_srt_time(cue.end)}\n")
+                file.write(f"{cue.text}\n\n")
         _replace_output_file(tmp_srt_path, srt_path)
     except Exception:
         try:
@@ -594,23 +570,128 @@ def transcribe_to_srt(
         raise
 
     if artifact_out is not None:
-        artifact_out.append(
-            TranscriptionArtifact(
-                cues=tuple(artifact_cues),
-                language=str(detected or ""),
-                language_probability=round(probability, 4) if probability is not None else None,
-                duration_seconds=float(getattr(info, "duration", 0.0) or 0.0) or None,
-            )
-        )
+        artifact_out.append(artifact)
 
-    if lang_info is not None:
-        lang_json_path = srt_path.with_suffix(".lang.json")
-        tmp_lang_json_path = lang_json_path.with_name(f"{lang_json_path.name}.tmp")
-        write_json(tmp_lang_json_path, lang_info)
-        _replace_output_file(tmp_lang_json_path, lang_json_path)
-        print(f"Language detection saved: {lang_json_path}")
+    lang_json_path = srt_path.with_suffix(".lang.json")
+    tmp_lang_json_path = lang_json_path.with_name(f"{lang_json_path.name}.tmp")
+    write_json(tmp_lang_json_path, lang_info)
+    _replace_output_file(tmp_lang_json_path, lang_json_path)
+    print(f"Language detection saved: {lang_json_path}")
 
     return lang_info
+
+
+def _transcribe_multilingual(
+    *,
+    model: Any,
+    audio_path: Path,
+    beam_size: int,
+    options: AsrDecodeOptions,
+    backend_version: str,
+) -> tuple[TranscriptionArtifact, list[dict[str, Any]]]:
+    from faster_whisper.audio import decode_audio
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    audio = decode_audio(str(audio_path), sampling_rate=16000)
+    vad_options = VadOptions(
+        threshold=options.vad_threshold,
+        min_speech_duration_ms=0,
+        max_speech_duration_s=60.0,
+        min_silence_duration_ms=options.vad_min_silence_duration_ms,
+        speech_pad_ms=options.vad_speech_pad_ms,
+    )
+    speech_spans = get_speech_timestamps(audio, vad_options, sampling_rate=16000)
+    planned_blocks = plan_vad_blocks(
+        speech_spans,
+        audio_samples=len(audio),
+        sampling_rate=16000,
+    )
+    if not planned_blocks:
+        raise RuntimeError("未检测到可转写语音。请确认视频包含清晰对白后重试。")
+
+    all_cues: list[TranscriptionCue] = []
+    reports: list[dict[str, Any]] = []
+    for index, block in enumerate(planned_blocks, start=1):
+        chunk = audio[block.start_sample:block.end_sample]
+        try:
+            segments, info = model.transcribe(
+                chunk,
+                language=None,
+                beam_size=beam_size,
+                vad_filter=False,
+                **options.transcribe_kwargs(False),
+            )
+            local_cues = _segments_to_cues(segments, offset=block.start)
+            if not local_cues:
+                raise RuntimeError("该语音块未生成有效字幕")
+        except Exception as exc:
+            raise RuntimeError(
+                f"多语言转写在第 {index} 个语音块失败：{exc}"
+            ) from exc
+        language = str(getattr(info, "language", "") or "")
+        probability = getattr(info, "language_probability", None)
+        suspicious = suspicious_cue_indexes(local_cues)
+        review_recommended = (
+            probability is not None and float(probability) < 0.70
+        ) or bool(suspicious)
+        reports.append({
+            "index": index,
+            "start": round(block.start, 3),
+            "end": round(block.end, 3),
+            "speech_seconds": round(block.speech_seconds, 3),
+            "language": language,
+            "language_probability": (
+                round(float(probability), 4) if probability is not None else None
+            ),
+            "cue_count": len(local_cues),
+            "review_recommended": review_recommended,
+        })
+        all_cues.extend(local_cues)
+        print(
+            f"Multilingual block {index}/{len(planned_blocks)}: "
+            f"{block.start:.2f}-{block.end:.2f}s, language={language or 'unknown'}, "
+            f"cues={len(local_cues)}, review={review_recommended}"
+        )
+
+    merged_cues, removed = deduplicate_boundary_cues(all_cues)
+    if removed:
+        print(f"Multilingual boundary duplicates removed: {removed}")
+    artifact = TranscriptionArtifact(
+        cues=merged_cues,
+        language="multilingual",
+        duration_seconds=len(audio) / 16000,
+        backend_versions=(("faster-whisper", backend_version),),
+        metadata={"block_count": len(reports), "duplicates_removed": removed},
+    )
+    return artifact, reports
+
+
+def _segments_to_cues(segments: Any, *, offset: float = 0.0) -> list[TranscriptionCue]:
+    cues: list[TranscriptionCue] = []
+    for segment in segments:
+        text = str(getattr(segment, "text", "") or "").strip()
+        if not text:
+            continue
+        start = max(0.0, float(getattr(segment, "start", 0.0)) + offset)
+        end = max(start + 0.001, float(getattr(segment, "end", start)) + offset)
+        cues.append(
+            TranscriptionCue(
+                start=start,
+                end=end,
+                text=text,
+                avg_logprob=getattr(segment, "avg_logprob", None),
+                compression_ratio=getattr(segment, "compression_ratio", None),
+                no_speech_prob=getattr(segment, "no_speech_prob", None),
+            )
+        )
+    return cues
+
+
+def _package_version(name: str) -> str:
+    try:
+        return package_version(name)
+    except Exception:
+        return "unknown"
 
 
 def _replace_output_file(tmp_path: Path, final_path: Path) -> None:

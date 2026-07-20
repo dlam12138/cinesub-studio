@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import subprocess
 import sys
@@ -11,13 +12,6 @@ from pathlib import Path
 
 from process_env import build_child_process_env, redact_project_path
 from runtime_paths import resolve_runtime_paths
-from segment_asr_routing_integration import (
-    DEFAULT_APPLY_WINDOW_SECONDS,
-    DEFAULT_MAX_APPLY_WINDOWS,
-    SegmentAsrRoutingError,
-    SegmentAsrRoutingOptions,
-    validate_options as validate_segment_routing_options,
-)
 
 
 PATHS = resolve_runtime_paths()
@@ -62,31 +56,23 @@ def create_job(form: dict) -> dict:
     device = get_text(form, "device", "auto")
     compute_type = get_text(form, "compute_type", "")
     language = get_text(form, "language", "")
+    asr_mode = get_text(form, "asr_mode", "").strip()
+    language_profile = get_text(form, "language_profile", "").strip()
+    if not asr_mode and not language and language_profile:
+        from language_profile_store import resolve_language_profile_config
+
+        profile = resolve_language_profile_config(language_profile)
+        asr_mode = str(profile.get("asr_mode") or "")
+        profile_asr = profile.get("asr", {})
+        language = str(profile_asr.get("language") or "")
+    from asr_runtime import normalize_asr_request
+
+    asr_mode, language = normalize_asr_request(asr_mode, language)
     hf_endpoint = get_text(form, "hf_endpoint", "").strip()
     local_files_only = get_text(form, "local_files_only", "") == "on"
     beam_size = get_text(form, "beam_size", "5")
     vad = get_text(form, "vad", "on") == "on"
     condition_on_previous_text = get_text(form, "condition_on_previous_text", "on") == "on"
-    asr_experiment_mode = get_text(form, "asr_experiment_mode", "off").strip() or "off"
-    asr_candidate_id = get_text(form, "asr_candidate_id", "").strip()
-    from asr_strategy import validate_strategy_config
-
-    asr_strategy = validate_strategy_config(
-        {"mode": asr_experiment_mode, "candidate_id": asr_candidate_id}, model=model
-    )
-    segment_asr_routing = get_text(form, "segment_asr_routing", "off").strip() or "off"
-    segment_threshold = get_text(form, "segment_routing_confidence_threshold", "0.70").strip() or "0.70"
-    segment_min_segments = get_text(form, "segment_routing_min_segments", "1").strip() or "1"
-    segment_strict = get_text(form, "segment_routing_strict", "") == "on"
-    segment_window_seconds = (
-        get_text(form, "segment_routing_window_seconds", str(DEFAULT_APPLY_WINDOW_SECONDS)).strip()
-        or str(DEFAULT_APPLY_WINDOW_SECONDS)
-    )
-    segment_max_windows = (
-        get_text(form, "segment_routing_max_windows", str(DEFAULT_MAX_APPLY_WINDOWS)).strip()
-        or str(DEFAULT_MAX_APPLY_WINDOWS)
-    )
-    segment_allow_large_run = get_text(form, "segment_routing_allow_large_run", "") == "on"
 
     if device not in {"cpu", "cuda", "auto"}:
         raise ValueError("Invalid device.")
@@ -98,21 +84,6 @@ def create_job(form: dict) -> dict:
 
     if beam_size_int < 1 or beam_size_int > 10:
         raise ValueError("Beam size must be between 1 and 10.")
-    try:
-        segment_options = validate_segment_routing_options(
-            SegmentAsrRoutingOptions(
-                mode=segment_asr_routing,
-                confidence_threshold=float(segment_threshold),
-                min_segments=int(segment_min_segments),
-                strict=segment_strict,
-                window_seconds=float(segment_window_seconds),
-                max_windows=int(segment_max_windows),
-                allow_large_run=segment_allow_large_run,
-            )
-        )
-    except (ValueError, SegmentAsrRoutingError) as exc:
-        raise ValueError(f"Invalid segment ASR routing settings: {exc}") from exc
-
     translate_enabled = get_text(form, "translate_enabled", "") == "on"
     provider_select = get_text(form, "provider_select", "").strip()
     api_provider = get_text(form, "api_provider", "openai-compatible")
@@ -138,6 +109,14 @@ def create_job(form: dict) -> dict:
             reliability_mode_raw or "off",
             max_extra_requests=reliability_limit_raw or 12,
         )
+    from translation_strategy import normalize_translation_strategy
+
+    translation_strategy = normalize_translation_strategy({
+        "mode": get_text(form, "translation_strategy_mode", "standard"),
+        "scene_gap_seconds": get_text(
+            form, "translation_scene_gap_seconds", "30"
+        ),
+    })
     requested_formats = get_text(form, "subtitle_formats", "")
     if get_text(form, "format_ass", "") == "on":
         requested_formats = "srt,ass"
@@ -160,7 +139,6 @@ def create_job(form: dict) -> dict:
             translation_quality_model = (
                 translation_quality_model
                 or provider_config.get("translation_quality_model", "")
-                or llm_model
             )
         if not api_base:
             raise ValueError("Translation enabled but API Base is empty.")
@@ -168,6 +146,16 @@ def create_job(form: dict) -> dict:
             raise ValueError("Translation enabled but API Key is empty.")
         if not llm_model:
             raise ValueError("Translation enabled but LLM Model is empty.")
+        if (
+            translation_strategy["mode"] in {
+                "wenyi_review", "semantic_wenyi_review"
+            }
+            and not translation_quality_model
+        ):
+            raise ValueError(
+                f"{translation_strategy['mode']} requires a configured Pro / "
+                "translation quality model."
+            )
         if api_provider not in {"openai-compatible", "anthropic"}:
             raise ValueError("Invalid API provider.")
         try:
@@ -189,8 +177,20 @@ def create_job(form: dict) -> dict:
         except (ValueError, TypeError):
             raise ValueError("Context window must be a number between 0 and 10.")
 
-    language_profile = get_text(form, "language_profile", "").strip()
     job_id = uuid.uuid4().hex[:12]
+    asr_signature_payload = {
+        "schema": 1,
+        "mode": asr_mode,
+        "language": language,
+        "model": model,
+        "device": device,
+        "compute_type": compute_type,
+        "beam_size": beam_size_int,
+        "vad": vad,
+    }
+    asr_signature = hashlib.sha256(
+        json.dumps(asr_signature_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     job = {
         "id": job_id,
         "status": "queued",
@@ -205,28 +205,29 @@ def create_job(form: dict) -> dict:
         "translated_output": "",
         "returncode": None,
         "error_summary": "",
-        "segment_asr_routing_status": "",
-        "segment_asr_routing_report": "",
-        "segment_asr_routing_message": "",
+        "semantic_review_report": "",
+        "asr_mode": asr_mode,
+        "language": language or "",
+        "language_detection": {},
         "options": {
             "model": model,
             "device": device,
             "compute_type": compute_type,
+            "asr_mode": asr_mode,
             "language": language,
+            "asr_config_signature": asr_signature,
             "hf_endpoint": hf_endpoint,
             "local_files_only": local_files_only,
             "beam_size": beam_size_int,
             "vad": vad,
             "condition_on_previous_text": condition_on_previous_text,
-            "asr_experiment_mode": asr_strategy["mode"],
-            "asr_candidate_id": asr_strategy["candidate_id"],
             "translate_enabled": translate_enabled,
             "provider_id": provider_select,
             "api_provider": api_provider,
             "api_base": api_base,
             "api_key_masked": mask_secret(api_key) if api_key else "",
             "llm_model": llm_model,
-            "translation_quality_model": translation_quality_model or llm_model,
+            "translation_quality_model": translation_quality_model,
             "target_language": target_language,
             "language_profile": language_profile,
             "translation_batch_size": translation_batch_size,
@@ -236,16 +237,11 @@ def create_job(form: dict) -> dict:
             "translation_prompt": translation_prompt,
             "translation_reliability_mode": reliability["mode"] if reliability else None,
             "translation_max_extra_requests": reliability["max_extra_requests"] if reliability else None,
+            "translation_strategy_mode": translation_strategy["mode"],
+            "translation_scene_gap_seconds": translation_strategy["scene_gap_seconds"],
             "subtitle_formats": subtitle_formats,
             "ass_style_id": ass_style_id,
             "subtitle_status": subtitle_status,
-            "segment_asr_routing": segment_options.mode,
-            "segment_routing_confidence_threshold": segment_options.confidence_threshold,
-            "segment_routing_min_segments": segment_options.min_segments,
-            "segment_routing_strict": segment_options.strict,
-            "segment_routing_window_seconds": segment_options.window_seconds,
-            "segment_routing_max_windows": segment_options.max_windows,
-            "segment_routing_allow_large_run": segment_options.allow_large_run,
         },
         "_api_key": api_key,
         "logs": ["Queued."],
@@ -330,6 +326,7 @@ def _run_job_impl(job_id: str) -> None:
 
     if options["compute_type"]:
         command += ["--compute-type", options["compute_type"]]
+    command += ["--asr-mode", str(options.get("asr_mode", "auto"))]
     if options["language"]:
         command += ["--language", options["language"]]
     if options["local_files_only"]:
@@ -338,37 +335,8 @@ def _run_job_impl(job_id: str) -> None:
         command += ["--no-vad"]
     if not options.get("condition_on_previous_text", True):
         command += ["--no-condition-on-previous-text"]
-    if options.get("asr_experiment_mode", "off") != "off":
-        command += ["--asr-experiment-mode", str(options["asr_experiment_mode"])]
-    if options.get("asr_candidate_id"):
-        command += ["--asr-candidate-id", str(options["asr_candidate_id"])]
     command += ["--subtitle-formats", ",".join(options.get("subtitle_formats", ["srt"]))]
     command += ["--ass-style-id", str(options.get("ass_style_id", "clean-cn"))]
-    segment_mode = str(options.get("segment_asr_routing", "off"))
-    segment_threshold = float(options.get("segment_routing_confidence_threshold", 0.70))
-    segment_min_segments = int(options.get("segment_routing_min_segments", 1))
-    segment_strict = bool(options.get("segment_routing_strict"))
-    segment_window_seconds = float(options.get("segment_routing_window_seconds", DEFAULT_APPLY_WINDOW_SECONDS))
-    segment_max_windows = int(options.get("segment_routing_max_windows", DEFAULT_MAX_APPLY_WINDOWS))
-    segment_allow_large_run = bool(options.get("segment_routing_allow_large_run"))
-    if (
-        segment_mode != "off"
-        or segment_threshold != 0.70
-        or segment_min_segments != 1
-        or segment_strict
-        or segment_window_seconds != DEFAULT_APPLY_WINDOW_SECONDS
-        or segment_max_windows != DEFAULT_MAX_APPLY_WINDOWS
-        or segment_allow_large_run
-    ):
-        command += ["--segment-asr-routing", segment_mode]
-        command += ["--segment-routing-confidence-threshold", str(segment_threshold)]
-        command += ["--segment-routing-min-segments", str(segment_min_segments)]
-        command += ["--segment-routing-window-seconds", str(segment_window_seconds)]
-        command += ["--segment-routing-max-windows", str(segment_max_windows)]
-        if segment_strict:
-            command += ["--segment-routing-strict"]
-        if segment_allow_large_run:
-            command += ["--segment-routing-allow-large-run"]
 
     lang_profile = options.get("language_profile", "")
     if lang_profile:
@@ -383,11 +351,6 @@ def _run_job_impl(job_id: str) -> None:
             str(options.get("api_base", "")),
             "--llm-model",
             str(options.get("llm_model", "")),
-            "--translation-quality-model",
-            str(
-                options.get("translation_quality_model")
-                or options.get("llm_model", "")
-            ),
             "--target-language",
             str(options.get("target_language", "zh-CN")),
             "--translation-batch-size",
@@ -398,7 +361,14 @@ def _run_job_impl(job_id: str) -> None:
             str(options.get("translation_mode", "bilingual")),
             "--context-window",
             str(options.get("context_window", "3")),
+            "--translation-strategy-mode",
+            str(options.get("translation_strategy_mode", "standard")),
+            "--translation-scene-gap-seconds",
+            str(options.get("translation_scene_gap_seconds", "30")),
         ]
+        quality_model = str(options.get("translation_quality_model") or "")
+        if quality_model:
+            command += ["--translation-quality-model", quality_model]
         prompt = str(options.get("translation_prompt", ""))
         if prompt:
             command += ["--translation-prompt", prompt]
@@ -433,10 +403,11 @@ def _run_job_impl(job_id: str) -> None:
         _infer_stage_from_logs(job_id, logs)
 
     returncode = process.wait()
-    routing_status, routing_report, routing_message = _segment_routing_from_logs(logs)
     source_output, translated_output = find_output_paths(raw_job)
     quality_report = ""
     review_needed = ""
+    semantic_review_report = ""
+    language_detection: dict = {}
     if returncode == 0:
         try:
             from language_profile_store import get_active_language_profile, get_language_profile
@@ -447,6 +418,11 @@ def _run_job_impl(job_id: str) -> None:
             source_path = Path(source_output) if source_output else None
             translated_path = Path(translated_output) if translated_output else None
             if source_path and source_path.exists():
+                language_report = source_path.with_suffix(".lang.json")
+                if language_report.is_file():
+                    loaded = json.loads(language_report.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        language_detection = loaded
                 profile_id = options.get("language_profile", "")
                 if not profile_id:
                     active = get_active_language_profile()
@@ -473,6 +449,27 @@ def _run_job_impl(job_id: str) -> None:
             from subtitle_model import ASS_RESERVED_MESSAGE
 
             logs = append_log(job_id, f"ASS: {ASS_RESERVED_MESSAGE}", logs)
+        if translated_output:
+            translated_path = Path(translated_output)
+            strategy_mode = str(options.get("translation_strategy_mode", "standard"))
+            if strategy_mode == "semantic_review":
+                candidate = translated_path.with_name(
+                    f"{translated_path.stem}.semantic_review_report.json"
+                )
+                if candidate.is_file():
+                    semantic_review_report = str(candidate.resolve())
+            elif strategy_mode == "wenyi_review":
+                candidate = translated_path.with_name(
+                    f"{translated_path.stem}.wenyi_review_report.json"
+                )
+                if candidate.is_file():
+                    semantic_review_report = str(candidate.resolve())
+            elif strategy_mode == "semantic_wenyi_review":
+                candidate = translated_path.with_name(
+                    f"{translated_path.stem}.semantic_wenyi_review_report.json"
+                )
+                if candidate.is_file():
+                    semantic_review_report = str(candidate.resolve())
 
         set_job(
             job_id,
@@ -485,10 +482,9 @@ def _run_job_impl(job_id: str) -> None:
             translated_output=translated_output,
             quality_report=quality_report,
             review_needed=review_needed,
+            semantic_review_report=semantic_review_report,
+            language_detection=language_detection,
             completed_at=time.time(),
-            segment_asr_routing_status=routing_status,
-            segment_asr_routing_report=routing_report,
-            segment_asr_routing_message=routing_message,
             logs=logs + ["Finished."],
         )
     else:
@@ -504,9 +500,6 @@ def _run_job_impl(job_id: str) -> None:
             translated_output=translated_output,
             error_summary=error_summary,
             completed_at=time.time(),
-            segment_asr_routing_status=routing_status,
-            segment_asr_routing_report=routing_report,
-            segment_asr_routing_message=routing_message,
             logs=logs + [f"Failed with code {returncode}."],
         )
 
@@ -517,7 +510,34 @@ def _infer_stage_from_logs(job_id: str, logs: list[str]) -> None:
     recent = "\n".join(logs[-10:]).lower()
     stage = "transcribing"
     progress = 30
-    if "translation" in recent or "translat" in recent or "翻译" in recent:
+    if "translation stage: semantic_consistency" in recent:
+        stage = "semantic_consistency"
+        progress = 88
+    elif "translation stage: semantic_judge" in recent:
+        stage = "semantic_judgment"
+        progress = 78
+    elif "translation stage: semantic_repair" in recent:
+        stage = "semantic_repair"
+        progress = 70
+    elif "translation stage: semantic_review" in recent:
+        stage = "semantic_review"
+        progress = 62
+    elif "translation stage: semantic_initial" in recent:
+        stage = "semantic_initial"
+        progress = 50
+    elif "translation stage: semantic_analysis" in recent:
+        stage = "semantic_analysis"
+        progress = 40
+    elif "translation stage: final" in recent:
+        stage = "translation_final"
+        progress = 80
+    elif "translation stage: reflection" in recent:
+        stage = "translation_reflection"
+        progress = 65
+    elif "translation stage: initial" in recent:
+        stage = "translation_initial"
+        progress = 50
+    elif "translation" in recent or "translat" in recent or "翻译" in recent:
         stage = "translating"
         progress = 60
     if "quality" in recent or "质检" in recent or "checking" in recent:
@@ -594,6 +614,7 @@ def _options_to_form(options: dict, input_path: str) -> dict:
         "model": "model",
         "device": "device",
         "compute_type": "compute_type",
+        "asr_mode": "asr_mode",
         "language": "language",
         "hf_endpoint": "hf_endpoint",
         "local_files_only": "local_files_only",
@@ -613,15 +634,10 @@ def _options_to_form(options: dict, input_path: str) -> dict:
         "translation_mode": "translation_mode",
         "context_window": "context_window",
         "translation_prompt": "translation_prompt",
+        "translation_strategy_mode": "translation_strategy_mode",
+        "translation_scene_gap_seconds": "translation_scene_gap_seconds",
         "subtitle_formats": "subtitle_formats",
         "ass_style_id": "ass_style_id",
-        "segment_asr_routing": "segment_asr_routing",
-        "segment_routing_confidence_threshold": "segment_routing_confidence_threshold",
-        "segment_routing_min_segments": "segment_routing_min_segments",
-        "segment_routing_strict": "segment_routing_strict",
-        "segment_routing_window_seconds": "segment_routing_window_seconds",
-        "segment_routing_max_windows": "segment_routing_max_windows",
-        "segment_routing_allow_large_run": "segment_routing_allow_large_run",
     }
 
     for opt_key, form_key in mappings.items():
@@ -768,6 +784,15 @@ def _normalize_job_for_ui(job: dict) -> dict:
         "starting": "启动中",
         "transcribing": "转写",
         "translating": "翻译",
+        "translation_initial": "翻译 · 初译",
+        "translation_reflection": "翻译 · 反思",
+        "translation_final": "翻译 · 终稿",
+        "semantic_analysis": "翻译 · 整片预分析",
+        "semantic_initial": "翻译 · Flash 初译",
+        "semantic_review": "翻译 · 保真审校",
+        "semantic_repair": "翻译 · 定向修复",
+        "semantic_judgment": "翻译 · 匿名裁决",
+        "semantic_consistency": "翻译 · 全片一致性",
         "quality_checking": "质检",
         "completed": "已完成",
         "failed": "失败",
@@ -786,6 +811,7 @@ def _normalize_job_for_ui(job: dict) -> dict:
         "translated_output": job.get("translated_output", ""),
         "quality_report": job.get("quality_report", ""),
         "review_needed": job.get("review_needed", ""),
+        "semantic_review_report": job.get("semantic_review_report", ""),
         "returncode": job.get("returncode"),
         "error_summary": job.get("error_summary", ""),
         "options": options,
@@ -794,37 +820,7 @@ def _normalize_job_for_ui(job: dict) -> dict:
         "completed_at": job.get("completed_at"),
         "can_retry": can_retry,
         "retry_reason": retry_reason,
-        "segment_asr_routing_status": job.get("segment_asr_routing_status", ""),
-        "segment_asr_routing_report": job.get("segment_asr_routing_report", ""),
-        "segment_asr_routing_message": job.get("segment_asr_routing_message", ""),
     }
-
-
-def _segment_routing_from_logs(logs: list[str]) -> tuple[str, str, str]:
-    status = ""
-    report = ""
-    message = ""
-    for line in logs:
-        text = str(line or "").strip()
-        if text.startswith("Segment ASR routing report:"):
-            report = text.split(":", 1)[1].strip()
-        if "Segment ASR routing:" not in text:
-            continue
-        if text.startswith("ERROR: "):
-            text = text[len("ERROR: "):].strip()
-        if text.startswith("Segment ASR routing report:"):
-            continue
-        message = text
-        lowered = text.lower()
-        if "applied routed srt successfully" in lowered:
-            status = "applied"
-        elif "fell back to normal asr" in lowered:
-            status = "fallback"
-        elif "failed in strict mode" in lowered:
-            status = "failed"
-        elif "dry_run completed" in lowered:
-            status = "dry_run"
-    return status, report, message
 
 
 def get_text(form: dict, key: str, default_value: str) -> str:

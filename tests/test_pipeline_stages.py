@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import pytest
 
 import pipeline_stages
-from asr_strategy import TranscriptionArtifact, TranscriptionCue
 from pipeline_stages import StageError, TaskContext
 from stage_event_log import write_stage_event
 
@@ -68,58 +67,6 @@ def test_transcribe_stage_rejects_empty_output(tmp_path: Path, monkeypatch) -> N
         pipeline_stages.transcribe_stage(context, audio_path=audio, srt_path=target, config=config)
 
 
-def test_selective_retry_stage_reuses_session_and_reports_window_decision(tmp_path: Path, monkeypatch) -> None:
-    context = _context(tmp_path)
-    audio = context.work_dir / "audio.wav"
-    audio.write_bytes(b"wav")
-    target = context.output_dir / "source.srt"
-    fake = types.ModuleType("transcribe")
-    session = object()
-    created = []
-    calls = []
-
-    def create_asr_session(**kwargs):
-        created.append(kwargs)
-        return session
-
-    def transcribe_to_srt(**kwargs):
-        calls.append(kwargs)
-        kwargs["srt_path"].parent.mkdir(parents=True, exist_ok=True)
-        kwargs["srt_path"].write_text("1\n00:00:00,000 --> 00:00:02,000\ntext\n", encoding="utf-8")
-        if len(calls) == 1:
-            artifact = TranscriptionArtifact(
-                cues=(TranscriptionCue(0, 2, "baseline", avg_logprob=-1.5, compression_ratio=2.6),),
-                duration_seconds=2,
-            )
-        else:
-            artifact = TranscriptionArtifact(
-                cues=(TranscriptionCue(0, 2, "candidate", avg_logprob=-1.0, compression_ratio=2.0),),
-                duration_seconds=2,
-            )
-        kwargs["artifact_out"].append(artifact)
-        return {"source_language": "fr"}
-
-    fake.create_asr_session = create_asr_session
-    fake.transcribe_to_srt = transcribe_to_srt
-    monkeypatch.setitem(sys.modules, "transcribe", fake)
-    config = SimpleNamespace(
-        lang_profile_config={}, language_profile_id="", language_profile_name="", model="small",
-        model_dir=tmp_path, device="cpu", compute_type="int8", language=None, beam_size=5,
-        vad_filter=True, local_files_only=True, asr_experiment_mode="dry_run",
-        asr_candidate_id="local-retry-selective-v2",
-    )
-    result = pipeline_stages.transcribe_stage(
-        context, audio_path=audio, srt_path=target, config=config, reuse_existing=False
-    )
-    assert len(created) == 1
-    assert all(call.get("session") is session for call in calls)
-    report_path = next(path for path in result.outputs if path.suffix == ".json")
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    assert report["accepted_window_count"] == 1
-    assert report["model_reused"] is True
-    assert report["selected"] == "baseline"
-
-
 def test_translate_and_quality_stages_return_structured_results(tmp_path: Path, monkeypatch) -> None:
     context = _context(tmp_path)
     source = context.output_dir / "source.srt"
@@ -146,6 +93,18 @@ def test_translate_and_quality_stages_return_structured_results(tmp_path: Path, 
     )
     assert translated_result.stage == "translating"
     assert quality_result.stage == "quality_checking"
+
+
+def test_terminology_consistency_reports_missing_profile_terms(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    translated = tmp_path / "translated.srt"
+    source.write_text("1\n00:00:01,000 --> 00:00:02,000\nAlice\n", encoding="utf-8")
+    translated.write_text("1\n00:00:01,000 --> 00:00:02,000\n她\n", encoding="utf-8")
+    result = pipeline_stages._terminology_consistency(
+        source, translated, [{"source": "Alice", "target": "爱丽丝"}]
+    )
+    assert result["status"] == "warning"
+    assert result["missing_terms"][0]["expected_target"] == "爱丽丝"
 
 
 def test_archive_stage_avoids_existing_destination(tmp_path: Path) -> None:

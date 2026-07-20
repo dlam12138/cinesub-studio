@@ -4,8 +4,11 @@ import pytest
 
 from extract_burned_subtitles import (
     OcrCue,
+    _consensus_text,
     _merge_consecutive,
     _observation_stability,
+    _parse_sampling_offsets,
+    _sample_offsets,
     _uniform_sampling_cues,
     run,
 )
@@ -56,3 +59,15 @@ def test_merged_ocr_cues_retain_frame_evidence_for_stability_sidecar():
 def test_single_ocr_observation_is_presence_not_high_stability():
     assert _observation_stability("hola", ["hola"]) == 0.5
     assert _observation_stability("", []) is None
+
+
+def test_multiframe_offsets_and_consensus_are_deterministic():
+    assert _sample_offsets(3) == [0.25, 0.5, 0.75]
+    assert _parse_sampling_offsets("0.2,0.5,0.8") == [0.2, 0.5, 0.8]
+    assert _consensus_text(["Bonjour", "Bon jour", "Bonjour"]) == "Bonjour"
+
+
+@pytest.mark.parametrize("value", ["0", "0.5,0.5", "0.8,0.2", "abc"])
+def test_sampling_offsets_reject_invalid_values(value):
+    with pytest.raises(ValueError, match="sampling_offsets"):
+        _parse_sampling_offsets(value)

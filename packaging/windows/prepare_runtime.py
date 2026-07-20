@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 EXCLUDED_NAMES = {"__pycache__", ".pytest_cache", "pip-cache"}
-REQUIRED_IMPORTS = ("tkinter", "faster_whisper", "ctranslate2")
+REQUIRED_IMPORTS = ("faster_whisper", "ctranslate2", "av", "numpy", "requests")
 
 
 def _ignore_runtime_noise(_directory: str, names: list[str]) -> set[str]:
@@ -71,10 +71,13 @@ def prepare_runtime(
     _copy_tree(portable_python, staged_python)
     _copy_tree(_site_packages(venv_root), staged_python / "Lib" / "site-packages")
     _copy_tree(ffmpeg_root, resolved_destination / "tools" / "ffmpeg")
+    ffplay = resolved_destination / "tools" / "ffmpeg" / "bin" / "ffplay.exe"
+    if ffplay.exists():
+        ffplay.unlink()
     if require_cuda:
         _copy_tree(cuda_root, resolved_destination / "tools" / "cuda")
 
-    # A copied venv is intentionally not part of the installer runtime.
+    # A copied venv is intentionally not part of the Electron portable runtime.
     pyvenv_cfg = staged_python / "pyvenv.cfg"
     if pyvenv_cfg.exists():
         pyvenv_cfg.unlink()

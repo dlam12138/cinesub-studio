@@ -413,13 +413,61 @@ def _local_proxy_problem() -> str:
             )
     return ""
 
+def _test_openai_model(
+    *, api_base: str, api_key: str, model: str, timeout: float = 30
+) -> dict:
+    url = api_base.rstrip("/") + "/chat/completions"
+    body = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a test endpoint."},
+            {"role": "user", "content": 'Return exactly this JSON object: {"ok":true}'},
+        ],
+        "stream": False,
+        # Reasoning models may consume most of a tiny allowance before emitting
+        # visible content, so the probe must leave room for a real response.
+        "max_tokens": 256,
+        "temperature": 0,
+    }, ensure_ascii=False)
+
+    import urllib.request, urllib.error
+    start = time.perf_counter()
+    try:
+        req = urllib.request.Request(url, data=body.encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            latency = round((time.perf_counter() - start) * 1000)
+            content = str(
+                payload.get("choices", [{}])[0].get("message", {}).get("content") or ""
+            ).strip()
+            if not content:
+                return {
+                    "ok": False,
+                    "latency_ms": latency,
+                    "model": model,
+                    "error": "模型连接成功但未返回可见正文",
+                }
+            return {"ok": True, "latency_ms": latency, "model": model, "error": ""}
+    except urllib.error.HTTPError as e:
+        latency = round((time.perf_counter() - start) * 1000)
+        err = e.read().decode("utf-8", errors="replace")[:300]
+        return {"ok": False, "latency_ms": latency, "model": model, "error": _scrub_provider_test_error(f"HTTP {e.code}: {err}", api_key)}
+    except urllib.error.URLError as e:
+        latency = round((time.perf_counter() - start) * 1000)
+        return {"ok": False, "latency_ms": latency, "model": model, "error": _scrub_provider_test_error(f"连接失败: {e.reason}", api_key)}
+    except Exception as e:
+        return {"ok": False, "latency_ms": 0, "model": model, "error": _scrub_provider_test_error(str(e), api_key)}
+
+
 def test_provider_connection(provider_id: str) -> dict:
     provider = get_provider(provider_id)
     if not provider:
         return {"ok": False, "error": f"Provider '{provider_id}' 不存在", "latency_ms": 0, "model": ""}
     api_base = (provider.get("api_base") or "").strip()
     api_key = provider.get("api_key", "")
-    model = provider.get("translation_model", "")
+    model = str(provider.get("translation_model") or "").strip()
+    quality_model = str(provider.get("translation_quality_model") or "").strip()
     if not api_base: return {"ok": False, "error": "API Base 未设置", "latency_ms": 0, "model": ""}
     if not api_key: return {"ok": False, "error": "API Key 未设置", "latency_ms": 0, "model": ""}
     if not model: return {"ok": False, "error": "模型未设置", "latency_ms": 0, "model": ""}
@@ -432,34 +480,40 @@ def test_provider_connection(provider_id: str) -> dict:
     if proxy_problem:
         return {"ok": False, "error": proxy_problem, "latency_ms": 0, "model": model}
 
-    url = api_base.rstrip("/") + "/chat/completions"
-    body = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a test endpoint."},
-            {"role": "user", "content": "Return OK."},
-        ],
-        "stream": False,
-        "max_tokens": 5,
-    }, ensure_ascii=False)
+    initial = _test_openai_model(
+        api_base=api_base, api_key=api_key, model=model
+    )
+    model_results = [{"role": "initial", **initial}]
+    quality = None
+    if quality_model:
+        quality = (
+            dict(initial, model=quality_model)
+            if quality_model == model
+            else _test_openai_model(
+                api_base=api_base, api_key=api_key, model=quality_model
+            )
+        )
+        model_results.append({"role": "quality", **quality})
 
-    import urllib.request, urllib.error
-    start = time.perf_counter()
-    try:
-        req = urllib.request.Request(url, data=body.encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            latency = round((time.perf_counter() - start) * 1000)
-            return {"ok": True, "latency_ms": latency, "model": model, "error": ""}
-    except urllib.error.HTTPError as e:
-        latency = round((time.perf_counter() - start) * 1000)
-        err = e.read().decode("utf-8", errors="replace")[:300]
-        return {"ok": False, "latency_ms": latency, "model": model, "error": _scrub_provider_test_error(f"HTTP {e.code}: {err}", api_key)}
-    except urllib.error.URLError as e:
-        latency = round((time.perf_counter() - start) * 1000)
-        return {"ok": False, "latency_ms": latency, "model": model, "error": _scrub_provider_test_error(f"连接失败: {e.reason}", api_key)}
-    except Exception as e:
-        return {"ok": False, "latency_ms": 0, "model": model, "error": _scrub_provider_test_error(str(e), api_key)}
+    all_ok = bool(initial.get("ok")) and (
+        quality is None or bool(quality.get("ok"))
+    )
+    errors = [
+        f"{row['role']}({row['model']}): {row.get('error', '')}"
+        for row in model_results if not row.get("ok")
+    ]
+    return {
+        "ok": all_ok,
+        # Stable legacy fields continue to describe the primary translation model.
+        "latency_ms": initial.get("latency_ms", 0),
+        "model": model,
+        "error": "; ".join(errors),
+        # Additive per-stage diagnostics.
+        "models": model_results,
+        "initial_model_ok": bool(initial.get("ok")),
+        "quality_model": quality_model,
+        "quality_model_ok": None if quality is None else bool(quality.get("ok")),
+    }
 
 
 def _scrub_provider_test_error(message: str, api_key: str) -> str:

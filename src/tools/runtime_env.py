@@ -224,8 +224,11 @@ def runtime_diagnostics() -> dict[str, Any]:
     if not ctranslate2_ok:
         cuda_messages.append("ctranslate2 is not importable")
 
-    known_models = _known_models()
     cuda_ready = not cuda_messages
+    known_models = _known_models()
+    asr_backends = _asr_backend_status(
+        recommended_device="cuda" if cuda_ready else "cpu"
+    )
     diagnostic_items = _runtime_diagnostic_items(
         python_supported=python_supported,
         python_version=sys.version.split()[0],
@@ -281,6 +284,7 @@ def runtime_diagnostics() -> dict[str, Any]:
         "ffmpeg_version_error": ffmpeg_version_info.get("error", ""),
         "model_dir": str(MODEL_DIR),
         "known_models": known_models,
+        "asr_backends": asr_backends,
         "hf_home": str(CACHE_DIR / "huggingface"),
         "output_dir": str(OUTPUT_DIR),
         "work_dir": str(WORK_DIR),
@@ -921,6 +925,19 @@ def _known_models() -> list[str]:
             if path.is_dir():
                 known.append(path.name.replace("models--", "").replace("--", "/"))
     return known
+
+
+def _asr_backend_status(*, recommended_device: str = "cpu") -> dict[str, dict[str, Any]]:
+    return {
+        "faster-whisper": {
+            "installed": importlib.util.find_spec("faster_whisper") is not None,
+            "model_ready": bool(_known_models()),
+            "optional": False,
+            "supported_devices": ["cpu", "cuda"],
+            "recommended_device_supported": recommended_device in {"cpu", "cuda"},
+            "status": "ready" if importlib.util.find_spec("faster_whisper") else "missing_dependency",
+        },
+    }
 
 
 def main() -> int:

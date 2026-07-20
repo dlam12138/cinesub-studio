@@ -41,15 +41,34 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
     from subtitle_translate import build_effective_translation_prompt
 
     style = profile.get("subtitle_style", {})
-    profile_strategy = profile.get("asr_strategy", {})
     profile_reliability = profile.get("translation_reliability", {})
-    strategy = {
-        "mode": _first(args.asr_experiment_mode, profile_strategy.get("mode"), "off"),
-        "candidate_id": _first(args.asr_candidate_id, profile_strategy.get("candidate_id"), ""),
-    }
-    from asr_strategy import validate_strategy_config
+    profile_translation_strategy = profile.get("translation_strategy", {})
+    from asr_runtime import normalize_asr_request
 
-    strategy = validate_strategy_config(strategy, model=_first(args.model, asr.get("whisper_model"), "large-v3"))
+    profile_language = _first(
+        asr.get("language"),
+        profile.get("source_language")
+        if profile.get("source_language") != "auto" else None,
+    )
+    requested_mode = _first(
+        args.asr_mode if explicit("--asr-mode") else None,
+        "fixed" if explicit("--language") and args.language else None,
+        profile.get("asr_mode"),
+        "fixed" if profile_language else "auto",
+    )
+    requested_language = (
+        args.language
+        if explicit("--language")
+        else (
+            None
+            if explicit("--asr-mode") and requested_mode in {"auto", "multilingual"}
+            else profile_language
+        )
+    )
+    asr_mode, source_language = normalize_asr_request(
+        requested_mode,
+        requested_language,
+    )
     from translation_reliability import normalize_reliability_config
 
     reliability = normalize_reliability_config({
@@ -66,17 +85,35 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
             12,
         ),
     })
+    from translation_strategy import normalize_translation_strategy
+
+    translation_strategy = normalize_translation_strategy({
+        "mode": _first(
+            args.translation_strategy_mode
+            if explicit("--translation-strategy-mode") else None,
+            profile_translation_strategy.get("mode"),
+            "standard",
+        ),
+        "scene_gap_seconds": _first(
+            args.translation_scene_gap_seconds
+            if explicit("--translation-scene-gap-seconds") else None,
+            profile_translation_strategy.get("scene_gap_seconds"),
+            30.0,
+        ),
+    })
     profile_info = {
         "profile_id": profile.get("profile_id", ""),
         "profile_name": profile.get("profile_name", ""),
         "source_language": profile.get("source_language", "auto"),
+        "asr_mode": profile.get("asr_mode", "fixed" if profile_language else "auto"),
+        "asr": asr,
         "quality_thresholds": profile.get("quality", {}),
         "translation_style": profile.get("translation_style", ""),
         "glossary": profile.get("glossary", []),
         "subtitle_style": style,
         "llm_stages": profile.get("llm_stages", {}),
-        "asr_strategy": strategy,
         "translation_reliability": reliability,
+        "translation_strategy": translation_strategy,
     }
     values = {
         "api_provider": _first(args.api_provider, provider.get("api_provider"), "openai-compatible"),
@@ -86,14 +123,13 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
         "translation_quality_model": _first(
             args.translation_quality_model,
             provider.get("translation_quality_model"),
-            args.llm_model,
-            provider.get("llm_model"),
             "",
         ),
         "model": _first(args.model if explicit("--model") else None, asr.get("whisper_model"), "large-v3"),
+        "asr_mode": asr_mode,
         "device": _first(args.device if explicit("--device") else None, asr.get("whisper_device"), "auto"),
         "compute_type": _first(args.compute_type if explicit("--compute-type") else None, asr.get("compute_type")),
-        "language": _first(args.language if explicit("--language") else None, asr.get("language")),
+        "language": source_language,
         "vad_filter": False if explicit("--no-vad") else asr.get("vad_filter", True),
         "beam_size": args.beam_size if explicit("--beam-size") else asr.get("beam_size", 5),
         "target_language": _first(
@@ -114,7 +150,7 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
         ),
         "subtitle_style": style,
         "profile_info": profile_info,
-        "asr_strategy": strategy,
         "translation_reliability": reliability,
+        "translation_strategy": translation_strategy,
     }
     return values, messages

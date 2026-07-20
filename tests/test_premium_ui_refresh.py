@@ -25,11 +25,12 @@ def test_premium_app_shell_and_sidebar_navigation_exist():
     assert 'data-refresh="v0.6-stage2-ui"' in html
     assert "CineSub Studio" in html
     assert "智译字幕工坊" in html
-    assert "Local workstation" in html
+    assert "本地字幕工作站" in html
     assert 'id="appVersionChip"' in html
     assert 'id="appFlavorChip"' in html
-    for label in ("批量处理", "单个处理", "最近任务", "运行环境", "翻译接口", "语言风格"):
+    for label in ("批量处理", "单个处理", "运行环境", "翻译接口", "语言风格"):
         assert label in sidebar_nav
+    assert "最近任务" not in sidebar_nav
     assert "开始处理" not in sidebar_nav
     for number in ("01", "02", "03", "04", "05"):
         assert number not in sidebar_nav
@@ -64,11 +65,13 @@ def test_pipeline_and_transcribe_tabs_activate_independently():
     assert "activeTabs['tab-pipeline'] = true;" in pipeline_branch
     assert "activeTabs['tab-transcribe'] = true;" not in pipeline_branch
     assert "activeTabs['tab-transcribe'] = true;" in transcribe_branch
-    assert "if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); loadJobQueue(); }" in switch_tab
-    assert "if (name === 'pipeline') { loadPipelineSelects(); loadTopStatus(); }" in switch_tab
+    assert "if (name === 'transcribe') { loadProviderSelect(); loadLangProfileSelect(); }" in switch_tab
+    assert "if (name === 'pipeline') loadPipelineSelects();" in switch_tab
+    assert "loadJobQueue" not in switch_tab
+    assert "loadTopStatus" not in switch_tab
 
 
-def test_workflow_controls_and_status_surfaces_remain_present():
+def test_workflow_controls_and_current_job_status_surface_remain_present():
     html = _read_index_html()
     for needle in (
         'id="pipelineInputDir"',
@@ -79,17 +82,35 @@ def test_workflow_controls_and_status_surfaces_remain_present():
         'id="device"',
         'id="translation_mode"',
         'id="runtime-summary-result"',
+        'id="badge"',
+        'id="log"',
+        'id="downloadSource"',
+        'id="downloadTranslated"',
     ):
         assert needle in html
-    assert "选择视频 → 语音识别 → 翻译 → 输出字幕" in html
+    assert 'class="single-result-panel"' in html
+    assert "选择视频 → 语音识别 → 翻译 → 输出字幕" not in html
 
 
-def test_recent_jobs_runtime_provider_and_profile_sections_exist():
+def test_recent_jobs_ui_is_removed_but_runtime_provider_and_profile_sections_exist():
     html = _read_index_html()
-    for needle in (
+    for removed in (
+        'data-tab="jobs"',
         'id="tab-jobs"',
         'id="jobQueuePanel"',
         'id="jobQueueList"',
+        "loadJobQueue",
+        "openJobTaskDrawer",
+        "retryJob",
+        'class="topbar"',
+        'class="status-strip"',
+        'id="statusProvider"',
+        'id="statusProfile"',
+        'id="statusTempSpace"',
+        'id="statusModelCache"',
+    ):
+        assert removed not in html
+    for needle in (
         'id="tab-runtime"',
         'id="diagnostics-result"',
         'id="tab-providers"',
@@ -101,6 +122,16 @@ def test_recent_jobs_runtime_provider_and_profile_sections_exist():
     assert "总体状态" in html
     assert "API Key 状态" in html
     assert "语音识别默认值" in html
+
+
+def test_single_file_layout_has_wide_form_compact_result_and_responsive_stacking():
+    html = _read_index_html()
+    assert "grid-template-columns: minmax(0, 1fr) 380px;" in html
+    assert "align-items: start;" in html
+    assert "height: clamp(240px, 32vh, 320px);" in html
+    assert "@media (max-width: 1280px)" in html
+    assert ".single-result-panel {\n        position: static;" in html
+    assert ".transcribe-layout .row { grid-template-columns: 1fr; }" in html
 
 
 def test_runtime_has_read_only_missing_component_guidance():
@@ -137,7 +168,8 @@ def test_language_profile_owns_asr_style_glossary_and_subtitle_preferences():
     for label in ("基本信息", "语音识别默认值", "翻译风格", "术语表", "字幕输出"):
         assert label in profile_section
     assert "Whisper 模型" in modal_section
-    assert "Glossary terms" in modal_section
+    assert "术语表" in modal_section
+    assert 'id="lpEditStyle"' not in modal_section
 
 
 def test_no_unfinished_or_external_project_ui_was_introduced():

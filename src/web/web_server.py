@@ -9,7 +9,6 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app_info import get_app_info
-from asr_evidence_api import get_asr_evidence_report, list_asr_evidence_reports
 from file_inspection_api import inspect_input_file
 from job_api import get_job, list_jobs, retry_job, sanitize_filename, start_job
 from pipeline_api import (
@@ -43,6 +42,11 @@ from subtitle_preview_api import (
     job_subtitle_preview,
     pipeline_subtitle_preview,
 )
+from review_detail_api import (
+    ReviewDetailError,
+    job_review_detail,
+    pipeline_review_detail,
+)
 from config_recovery import (
     ConfigCorruptError,
     ConfigRecoveryError,
@@ -60,7 +64,6 @@ UPLOAD_DIR = PATHS.uploads_dir
 OUTPUT_DIR = PATHS.output_dir
 MODEL_DIR = PATHS.models_dir
 WORK_DIR = PATHS.work_dir
-ASR_EVIDENCE_DIR = OUTPUT_DIR / "reports" / "asr_evidence"
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
 SUPPORTED_MEDIA_EXTENSIONS = {
@@ -195,6 +198,25 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(payload)
             return
 
+        if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/review-detail"):
+            job_id = unquote(
+                parsed.path[len("/api/jobs/"):-len("/review-detail")]
+            ).strip("/")
+            query = parse_qs(parsed.query)
+            try:
+                payload = job_review_detail(
+                    job=get_job(job_id),
+                    output_dir=OUTPUT_DIR,
+                    categories=(query.get("categories") or [""])[0],
+                    offset=(query.get("offset") or [0])[0],
+                    limit=(query.get("limit") or [50])[0],
+                )
+            except ReviewDetailError as exc:
+                self.send_error_json(exc.status, str(exc))
+                return
+            self.send_json(payload)
+            return
+
         if parsed.path.startswith("/api/jobs/"):
             job_id = parsed.path.rsplit("/", 1)[-1]
             job = get_job(job_id)
@@ -271,6 +293,23 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(payload)
             return
 
+        if parsed.path == "/api/pipeline/review-detail":
+            query = parse_qs(parsed.query)
+            try:
+                payload = pipeline_review_detail(
+                    task_id=(query.get("task") or [""])[0],
+                    states_dir=WORK_DIR / "states",
+                    output_dir=OUTPUT_DIR,
+                    categories=(query.get("categories") or [""])[0],
+                    offset=(query.get("offset") or [0])[0],
+                    limit=(query.get("limit") or [50])[0],
+                )
+            except ReviewDetailError as exc:
+                self.send_error_json(exc.status, str(exc))
+                return
+            self.send_json(payload)
+            return
+
         if parsed.path == "/api/pipeline/artifact":
             query = parse_qs(parsed.query)
             task_id = (query.get("task") or [""])[0].strip()
@@ -323,17 +362,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/storage/status":
             self.send_json(_storage_status())
-            return
-
-        if parsed.path == "/api/asr-evidence/reports":
-            self.send_json(list_asr_evidence_reports(ASR_EVIDENCE_DIR, _format_bytes))
-            return
-
-        if parsed.path == "/api/asr-evidence/report":
-            query = parse_qs(parsed.query)
-            file_name = (query.get("file") or [""])[0].strip()
-            payload, status = get_asr_evidence_report(ASR_EVIDENCE_DIR, file_name)
-            self.send_json(payload, status=status)
             return
 
         if parsed.path == "/api/translation/effective-config":
@@ -488,23 +516,21 @@ class Handler(BaseHTTPRequestHandler):
             device = body.get("device", "auto")
             compute_type = body.get("compute_type", "")
             translate_enabled = body.get("translate_enabled", True)
-            language = body.get("language", "")
+            try:
+                asr_request = _parse_asr_request_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
             hf_endpoint = body.get("hf_endpoint", "").strip()
             local_files_only = bool(body.get("local_files_only", False))
             try:
-                asr_strategy = _parse_asr_strategy_payload(body, model)
                 reliability = _parse_translation_reliability_payload(body)
+                quality_strategy = _parse_quality_strategy_payload(body)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
                 return
             subtitle_formats = body.get("subtitle_formats", ["srt"])
             ass_style_id = body.get("ass_style_id", "")
-            try:
-                routing_payload = _parse_segment_routing_payload(body)
-            except ValueError as exc:
-                self.send_error_json(400, str(exc))
-                return
-
             payload, status = start_pipeline_background(
                 action="run",
                 provider_id=provider_id,
@@ -514,15 +540,14 @@ class Handler(BaseHTTPRequestHandler):
                 device=device,
                 compute_type=compute_type,
                 translate_enabled=translate_enabled,
-                language=language,
+                asr_mode=asr_request["asr_mode"],
+                language=asr_request["language"],
                 hf_endpoint=hf_endpoint,
                 local_files_only=local_files_only,
-                asr_experiment_mode=asr_strategy["mode"],
-                asr_candidate_id=asr_strategy["candidate_id"],
+                **quality_strategy,
                 **reliability,
                 subtitle_formats=subtitle_formats,
                 ass_style_id=ass_style_id,
-                **routing_payload,
             )
             self.send_json(payload, status=status)
             return
@@ -537,23 +562,21 @@ class Handler(BaseHTTPRequestHandler):
             device = body.get("device", "auto")
             compute_type = body.get("compute_type", "")
             translate_enabled = body.get("translate_enabled", True)
-            language = body.get("language", "")
+            try:
+                asr_request = _parse_asr_request_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
             hf_endpoint = body.get("hf_endpoint", "").strip()
             local_files_only = bool(body.get("local_files_only", False))
             try:
-                asr_strategy = _parse_asr_strategy_payload(body, model)
                 reliability = _parse_translation_reliability_payload(body)
+                quality_strategy = _parse_quality_strategy_payload(body)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
                 return
             subtitle_formats = body.get("subtitle_formats", ["srt"])
             ass_style_id = body.get("ass_style_id", "")
-            try:
-                routing_payload = _parse_segment_routing_payload(body)
-            except ValueError as exc:
-                self.send_error_json(400, str(exc))
-                return
-
             payload, status = start_pipeline_background(
                 action="retry-failed",
                 provider_id=provider_id,
@@ -563,15 +586,14 @@ class Handler(BaseHTTPRequestHandler):
                 device=device,
                 compute_type=compute_type,
                 translate_enabled=translate_enabled,
-                language=language,
+                asr_mode=asr_request["asr_mode"],
+                language=asr_request["language"],
                 hf_endpoint=hf_endpoint,
                 local_files_only=local_files_only,
-                asr_experiment_mode=asr_strategy["mode"],
-                asr_candidate_id=asr_strategy["candidate_id"],
+                **quality_strategy,
                 **reliability,
                 subtitle_formats=subtitle_formats,
                 ass_style_id=ass_style_id,
-                **routing_payload,
             )
             self.send_json(payload, status=status)
             return
@@ -878,57 +900,18 @@ def _first_query_value(query: dict, key: str) -> str:
     return str(values[0] or "").strip()
 
 
-def _parse_segment_routing_payload(body: dict) -> dict:
-    from segment_asr_routing_integration import (
-        DEFAULT_APPLY_WINDOW_SECONDS,
-        DEFAULT_MAX_APPLY_WINDOWS,
-        SegmentAsrRoutingError,
-        SegmentAsrRoutingOptions,
-        validate_options,
-    )
+def _parse_asr_request_payload(body: dict) -> dict[str, str]:
+    mode = str(body.get("asr_mode") or "").strip()
+    language = str(body.get("language") or "").strip()
+    if not mode and not language:
+        return {"asr_mode": "", "language": ""}
+    from asr_runtime import normalize_asr_request
 
-    mode = str(body.get("segment_asr_routing") or "off").strip() or "off"
-    threshold = body.get("segment_routing_confidence_threshold", 0.70)
-    min_segments = body.get("segment_routing_min_segments", 1)
-    strict = _truthy(body.get("segment_routing_strict", False))
-    window_seconds = body.get("segment_routing_window_seconds", DEFAULT_APPLY_WINDOW_SECONDS)
-    max_windows = body.get("segment_routing_max_windows", DEFAULT_MAX_APPLY_WINDOWS)
-    allow_large_run = _truthy(body.get("segment_routing_allow_large_run", False))
-    try:
-        options = validate_options(
-            SegmentAsrRoutingOptions(
-                mode=mode,
-                confidence_threshold=float(threshold),
-                min_segments=int(min_segments),
-                strict=strict,
-                window_seconds=float(window_seconds),
-                max_windows=int(max_windows),
-                allow_large_run=allow_large_run,
-            )
-        )
-    except (TypeError, ValueError, SegmentAsrRoutingError) as exc:
-        raise ValueError(f"Invalid segment ASR routing settings: {exc}") from exc
+    normalized_mode, normalized_language = normalize_asr_request(mode, language)
     return {
-        "segment_asr_routing": options.mode,
-        "segment_routing_confidence_threshold": options.confidence_threshold,
-        "segment_routing_min_segments": options.min_segments,
-        "segment_routing_strict": options.strict,
-        "segment_routing_window_seconds": options.window_seconds,
-        "segment_routing_max_windows": options.max_windows,
-        "segment_routing_allow_large_run": options.allow_large_run,
+        "asr_mode": normalized_mode,
+        "language": normalized_language or "",
     }
-
-
-def _parse_asr_strategy_payload(body: dict, model: str) -> dict[str, str]:
-    from asr_strategy import validate_strategy_config
-
-    return validate_strategy_config(
-        {
-            "mode": body.get("asr_experiment_mode", "off"),
-            "candidate_id": body.get("asr_candidate_id", ""),
-        },
-        model=str(model or "large-v3"),
-    )
 
 
 def _parse_translation_reliability_payload(body: dict) -> dict:
@@ -947,6 +930,20 @@ def _parse_translation_reliability_payload(body: dict) -> dict:
         "translation_reliability_mode": normalized["mode"],
         "translation_max_extra_requests": normalized["max_extra_requests"],
     }
+
+
+def _parse_quality_strategy_payload(body: dict) -> dict:
+    from translation_strategy import normalize_translation_strategy
+
+    result: dict[str, object] = {}
+    if "translation_strategy_mode" in body or "translation_scene_gap_seconds" in body:
+        strategy = normalize_translation_strategy({
+            "mode": body.get("translation_strategy_mode", "standard"),
+            "scene_gap_seconds": body.get("translation_scene_gap_seconds", 30.0),
+        })
+        result["translation_strategy_mode"] = strategy["mode"]
+        result["translation_scene_gap_seconds"] = strategy["scene_gap_seconds"]
+    return result
 
 
 def _truthy(value: object) -> bool:
@@ -1000,16 +997,6 @@ def _format_bytes(size: int) -> str:
             return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
         value /= 1024
     return f"{size} B"
-
-
-def _asr_evidence_reports() -> dict:
-    """Compatibility wrapper for callers predating the API module split."""
-    return list_asr_evidence_reports(ASR_EVIDENCE_DIR, _format_bytes)
-
-
-def _asr_evidence_report(file_name: str) -> tuple[dict, int]:
-    """Compatibility wrapper for callers predating the API module split."""
-    return get_asr_evidence_report(ASR_EVIDENCE_DIR, file_name)
 
 
 def _content_type_for_artifact(path: Path) -> str:

@@ -33,12 +33,12 @@ def test_source_app_info_is_explicitly_development(monkeypatch, tmp_path):
 
 
 def test_packaged_unified_info_uses_explicit_environment(monkeypatch, tmp_path):
-    monkeypatch.setenv("CINESUB_APP_VERSION", "0.6.1")
+    monkeypatch.setenv("CINESUB_APP_VERSION", "0.6.2")
     monkeypatch.setenv("CINESUB_BUILD_FLAVOR", "unified")
 
     info = get_app_info(_paths(tmp_path, "packaged"))
 
-    assert info["version"] == "0.6.1"
+    assert info["version"] == "0.6.2"
     assert info["build_flavor"] == "unified"
     assert info["packaged"] is True
     assert info["cuda_runtime_bundled"] is True

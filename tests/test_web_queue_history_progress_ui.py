@@ -11,14 +11,15 @@ def _read_index_html() -> str:
     return HTML_PATH.read_text(encoding="utf-8")
 
 
-# ── 1. Page loads and has queue/history section ──
+# ── 1. Recent-jobs frontend is removed; current-job surface remains ──
 
 
-def test_index_page_has_queue_history_section():
+def test_index_page_removes_queue_history_frontend():
     html = _read_index_html()
-    assert "最近任务" in html
-    assert "jobQueuePanel" in html
-    assert "jobQueueList" in html
+    for removed in ("最近任务", "jobQueuePanel", "jobQueueList", "loadJobQueue", "retryJob"):
+        assert removed not in html
+    for current_job_control in ('id="badge"', 'id="log"', 'id="downloadSource"', 'id="downloadTranslated"'):
+        assert current_job_control in html
 
 
 # ── 2. Recent jobs endpoint returns UI-friendly job fields ──
@@ -214,13 +215,14 @@ def test_failed_job_exposes_error_summary(monkeypatch, tmp_path):
     assert "FFmpeg error" in j["error_summary"] or "Failed with code" in j["error_summary"]
 
 
-# ── 8. Long errors are summarized or placed in expandable details ──
+# ── 8. Long errors are summarized for the current-job log ──
 
 
-def test_ui_has_expandable_error_details():
+def test_ui_keeps_actionable_current_job_error_log():
     html = _read_index_html()
-    assert "job-error-details" in html
-    assert "details" in html
+    assert 'id="log"' in html
+    assert "请按错误提示检查输入与设置后重试。" in html
+    assert "任务未能启动，请查看下方错误详情。" in html
 
 
 def test_error_summary_truncated_in_backend():

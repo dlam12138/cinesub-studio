@@ -122,14 +122,29 @@ class TranslationBudgetExceeded(TranslationReliabilityError):
         )
 
 
+class TranslationTotalRequestLimitExceeded(TranslationReliabilityError):
+    def __init__(self, limit: int) -> None:
+        super().__init__(
+            f"Translation HTTP request limit ({limit}) was exhausted.",
+            kind="total_request_limit_exhausted",
+            splittable=False,
+        )
+
+
 @dataclass
 class TranslationRequestTracker:
     mode: str = "off"
     max_extra_requests: int = DEFAULT_MAX_EXTRA_REQUESTS
+    max_total_requests: int | None = None
     actual_requests: int = 0
     extra_requests: int = 0
 
     def before_request(self, *, extra: bool) -> None:
+        if (
+            self.max_total_requests is not None
+            and self.actual_requests >= self.max_total_requests
+        ):
+            raise TranslationTotalRequestLimitExceeded(self.max_total_requests)
         if extra and self.mode == "preview" and self.extra_requests >= self.max_extra_requests:
             raise TranslationBudgetExceeded()
         self.actual_requests += 1
@@ -140,11 +155,19 @@ class TranslationRequestTracker:
     def budget_exhausted(self) -> bool:
         return self.mode == "preview" and self.extra_requests >= self.max_extra_requests
 
+    @property
+    def total_request_limit_exhausted(self) -> bool:
+        return (
+            self.max_total_requests is not None
+            and self.actual_requests >= self.max_total_requests
+        )
+
 
 @dataclass
 class TranslationRunSummary:
     mode: str
     total_items: int
+    strategy_mode: str = "standard"
     cache_hits: int = 0
     actual_requests: int = 0
     extra_requests: int = 0
@@ -165,15 +188,74 @@ class TranslationRunSummary:
     candidate_stage_rejection_counts: dict[str, int] = field(default_factory=dict)
     judge_rejection_counts: dict[str, int] = field(default_factory=dict)
     quality_model_unavailable: bool = False
+    initial_pass_requests: int = 0
+    reflection_pass_requests: int = 0
+    final_pass_requests: int = 0
+    compression_pass_requests: int = 0
+    three_pass_cached_batches: int = 0
+    three_pass_completed_batches: int = 0
+    budget_violation_ids: list[int] = field(default_factory=list)
+    semantic_analysis_requests: int = 0
+    semantic_review_requests: int = 0
+    semantic_repair_requests: int = 0
+    semantic_judge_requests: int = 0
+    semantic_consistency_requests: int = 0
+    semantic_cached_batches: int = 0
+    semantic_no_issue_ids: list[int] = field(default_factory=list)
+    semantic_repair_candidate_ids: list[int] = field(default_factory=list)
+    semantic_repair_accepted_ids: list[int] = field(default_factory=list)
+    semantic_repair_rejected_ids: list[int] = field(default_factory=list)
+    semantic_repair_tie_ids: list[int] = field(default_factory=list)
+    semantic_consistency_issue_count: int = 0
+    semantic_suspected_asr_error_count: int = 0
+    wenyi_analysis_requests: int = 0
+    wenyi_translation_requests: int = 0
+    wenyi_review_requests: int = 0
+    wenyi_cross_line_requests: int = 0
+    wenyi_repair_requests: int = 0
+    wenyi_judge_requests: int = 0
+    wenyi_shortening_requests: int = 0
+    wenyi_shortening_judge_requests: int = 0
+    wenyi_consistency_requests: int = 0
+    wenyi_cached_batches: int = 0
+    wenyi_repair_accepted_ids: list[int] = field(default_factory=list)
+    wenyi_shortening_accepted_ids: list[int] = field(default_factory=list)
+    quality_model_fallback: bool = False
+    failed_stage: str = ""
     budget_exhausted: bool = False
+    total_request_limit_exhausted: bool = False
     review_required: bool = False
 
     def safe_summary(self) -> dict:
         payload = asdict(self)
         repaired_ids = payload.pop("repaired_ids")
         unresolved_ids = payload.pop("unresolved_ids")
+        budget_violation_ids = payload.pop("budget_violation_ids")
+        semantic_no_issue_ids = payload.pop("semantic_no_issue_ids")
+        semantic_repair_candidate_ids = payload.pop("semantic_repair_candidate_ids")
+        semantic_repair_accepted_ids = payload.pop("semantic_repair_accepted_ids")
+        semantic_repair_rejected_ids = payload.pop("semantic_repair_rejected_ids")
+        semantic_repair_tie_ids = payload.pop("semantic_repair_tie_ids")
+        wenyi_repair_accepted_ids = payload.pop("wenyi_repair_accepted_ids")
+        wenyi_shortening_accepted_ids = payload.pop("wenyi_shortening_accepted_ids")
         payload["repaired_count"] = len(repaired_ids)
         payload["unresolved_count"] = len(unresolved_ids)
+        payload["budget_violation_count"] = len(budget_violation_ids)
+        payload["semantic_no_issue_count"] = len(semantic_no_issue_ids)
+        payload["semantic_repair_candidate_count"] = len(
+            semantic_repair_candidate_ids
+        )
+        payload["semantic_repair_accepted_count"] = len(
+            semantic_repair_accepted_ids
+        )
+        payload["semantic_repair_rejected_count"] = len(
+            semantic_repair_rejected_ids
+        )
+        payload["semantic_repair_tie_count"] = len(semantic_repair_tie_ids)
+        payload["wenyi_repair_accepted_count"] = len(wenyi_repair_accepted_ids)
+        payload["wenyi_shortening_accepted_count"] = len(
+            wenyi_shortening_accepted_ids
+        )
         return payload
 
 

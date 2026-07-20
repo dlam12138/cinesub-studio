@@ -88,7 +88,8 @@ def test_language_profile_settings_ui_owns_asr_and_glossary():
     assert "语言风格管理 ASR 默认值" in html
     assert "管理语言风格" in html
     assert "Whisper" in modal_section
-    assert "Glossary terms" in modal_section
+    assert "术语表" in modal_section
+    assert 'id="lpEditStyle"' not in modal_section
     assert "Provider 不参与识别参数" in profile_section
 
 
@@ -197,6 +198,44 @@ def test_provider_validation_and_connection_test_do_not_leak_secret(monkeypatch,
         assert "redacted" in text
     finally:
         server.shutdown()
+
+
+def test_provider_connection_checks_initial_and_quality_models_independently(
+    monkeypatch, tmp_path
+):
+    _isolate_provider_store(monkeypatch, tmp_path)
+    provider_store.upsert_provider(
+        {
+            "id": "dual-main",
+            "name": "Dual",
+            "protocol": "openai-compatible",
+            "api_base": "https://example.invalid/v1",
+            "api_key": SECRET,
+            "translation_model": "fast-model",
+            "translation_quality_model": "quality-model",
+        }
+    )
+    calls = []
+
+    def fake_test(*, api_base, api_key, model, timeout=30):
+        assert api_key == SECRET
+        calls.append(model)
+        return {
+            "ok": model == "fast-model",
+            "latency_ms": 10,
+            "model": model,
+            "error": "" if model == "fast-model" else "unavailable",
+        }
+
+    monkeypatch.setattr(provider_store, "_test_openai_model", fake_test)
+    result = provider_store.test_provider_connection("dual-main")
+
+    assert calls == ["fast-model", "quality-model"]
+    assert result["ok"] is False
+    assert result["initial_model_ok"] is True
+    assert result["quality_model_ok"] is False
+    assert [row["role"] for row in result["models"]] == ["initial", "quality"]
+    assert SECRET not in json.dumps(result, ensure_ascii=False)
 
 
 def test_language_profile_get_save_delete_uses_local_merge(monkeypatch, tmp_path):

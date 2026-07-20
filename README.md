@@ -4,47 +4,42 @@
 
 当前版本面向本机使用。它不要求修改系统 PATH，也不要求安装前端构建工具、npm、CDN 或浏览器插件。
 
-v0.6.1 Windows 外测版采用单一统一运行时，同时提供安装器和解压即用的 portable ZIP。两种交付都自带 portable Python、FFmpeg 和 CUDA 运行库；设备默认使用 `auto`，检测到兼容 NVIDIA 驱动时使用 GPU，否则自动回退 CPU。交付包不包含 Whisper 模型，也不会静默下载模型。详见 [v0.6 Windows 外测说明](docs/v0_6_windows_external_test.md)。
+v0.6.2 Windows 版只提供 Electron 免安装 ZIP，不提供安装器。压缩包自带 `CineSubStudio.exe`、portable Python、运行依赖、FFmpeg、CUDA 运行库和 faster-whisper `small` 模型；设备默认使用 `auto`，检测到兼容 NVIDIA 驱动时使用 GPU，否则自动回退 CPU。正常离线转写不会下载模型。
 
 ## 1. 选择运行方式
 
-智译字幕工坊 / CineSub Studio 当前支持两种运行方式。Portable RC 面向试用交付，源码开发版面向继续开发和本地调试。
+智译字幕工坊 / CineSub Studio 当前支持便携版和源码开发版两种运行方式。便携版面向普通用户，源码开发版面向继续开发和本地调试。
 
-### 方式 A：Portable RC
+### 方式 A：0.6.2 便携版
 
-适用于 `dist/cinesub-portable-m6.7-rc1.zip` 或同结构的便携包：
+适用于 `CineSubStudio-0.6.2-windows-x64-portable.zip`：
 
-1. 解压 zip 到当前用户有写入权限的目录。
-2. 进入解压后的 `cinesub-portable/` 目录。
-3. 双击或运行：
-
-```text
-start_app.bat
-```
-
-浏览器打开：
+1. 把 ZIP 完整解压到当前用户有写入权限的目录，不要直接在压缩软件内运行。
+2. 进入解压后的 `CineSubStudio-0.6.2-windows-x64-portable/` 目录。
+3. 双击：
 
 ```text
-http://127.0.0.1:7860
+CineSubStudio.exe
 ```
 
-Portable RC 自带 `runtime/python/` 和 `tools/ffmpeg/`，不需要系统 Python，也不要求修改系统 PATH。首次运行会在解压目录内使用这些运行目录：
+应用会打开本地 Electron 窗口并在后台启动仅绑定 `127.0.0.1` 的服务。便携版自带 Python、FFmpeg、CUDA 运行库和 `data/models/` 下的 `small` 模型，不需要系统 Python、FFmpeg 或 CUDA Toolkit，也不修改系统 PATH。CUDA 运行库不包含 NVIDIA 显卡驱动；没有兼容 NVIDIA 环境时自动使用 CPU。运行数据只写入 EXE 同级 `data/`：
 
 ```text
-input/
-output/
-work/
-logs/
-uploads/
-models/
-.cache/
+data/input/
+data/output/
+data/work/
+data/logs/
+data/uploads/
+data/models/
+data/config/
+data/.cache/
 ```
 
-`m6.7-rc1` 不包含 Whisper 模型、wheelhouse 或 CUDA 离线包。需要转写模型时按 Web 运行环境页面提示下载或导入；需要翻译时再配置 Provider。
+`small` 模型支持自动检测、固定单语言和多语言三种 ASR 模式的离线转写。`large-v3` 不随包提供，如有需要可稍后导入 `data/models/`。翻译仍需用户自行配置 Provider。移动便携版时应移动整个解压目录。
 
 外部试用前请先阅读 [TRIAL.md](TRIAL.md)，其中包含普通测试者的启动步骤、已知限制、反馈模板和 API key 安全提醒。
 
-> **v0.4 Desktop Preview 测试者**：如果你使用的是带 Electron 的桌面预览版本，请参阅 [v0.4 Desktop Preview 测试者快速上手](docs/v0_4_desktop_preview_tester_onboarding.md)。
+应用未进行代码签名，Windows 可能显示来源或 SmartScreen 提示。请只从本项目 GitHub Release 下载，并用同名 `.sha256` 文件核对压缩包。
 
 ### 方式 B：源码开发版
 
@@ -106,9 +101,19 @@ http://127.0.0.1:7860
 logs/web_server.log
 ```
 
-### Portable RC 审计信息
+### 便携版审计信息
 
-`m6.7-rc1` 的便携包是 zip 形态，不是 PyInstaller EXE。包内 `release_manifest.json`、`release_report.md` 和 `release_checksums.sha256` 记录了文件数量、体积、最大依赖层、排除项和 leak scan 状态。zip 本身的 SHA256 写在包外的 `.sha256` sidecar，避免校验和循环。
+0.6.2 的交付物只有 Electron 免安装 ZIP 和对应 `.sha256` 文件，不生成 NSIS、PyInstaller 或其他安装器。包内 `release_manifest.json` 和 `release_checksums.sha256` 记录运行时组成与文件校验值；ZIP 自身的 SHA256 写在包外 sidecar 中。
+
+若包含完整 CUDA 的 ZIP 达到 GitHub 单文件 2 GiB 限制，Release 会提供 CPU 可直接运行的主 ZIP，以及单独的 `windows-x64-cuda-addon.zip`。把 CUDA add-on 解压到主程序目录即可补齐 `resources/app/tools/cuda/`。
+
+0.6.2 的活动发布入口冻结为：
+
+```powershell
+.\.venv\Scripts\python.exe -B scripts\build_portable_release.py
+```
+
+旧脚本型 portable 和 NSIS 构建入口已经退役；后续修改发布布局必须升级版本。
 
 ## 4. 配置 Provider
 
@@ -117,9 +122,14 @@ logs/web_server.log
 - API Base
 - API Key
 - 翻译模型
+- 质量模型（可选；三步翻译的反思和终稿使用，留空则复用翻译模型）
 - active provider
 
 Provider 未配置不会阻止 Web UI 启动；转写和本地质检仍可用。但实际翻译任务需要 Provider，缺少 API Key 或翻译模型时会失败。API Key 只应保存在 Provider 配置中，不要写入 Language Profile。
+
+### 翻译提示词的前端冻结
+
+当前版本的单文件页面和 Language Profile 编辑页不提供新增或修改翻译提示词的输入框。已有 Profile 中的 `translation_style` 仍会生效，后端 CLI/API 的 `--translation-prompt` / `translation_prompt` 字段也继续支持，自动化调用和现有本地配置不会失效。这只是 UI 冻结，并未删除后端提示词能力。术语表仍可在前端编辑。
 
 ## 5. 放入 input/
 
@@ -140,7 +150,15 @@ input/
 
 同一时间只允许一个后台流水线任务运行。如果提示已有任务运行，等待完成后再重试，或查看“任务状态”和“操作日志”。
 
-批量工作区默认使用中文控制台：任务行只保留状态、阶段、进度与关键告警，点击任务或按 Enter 可打开详情。桌面端使用右侧详情抽屉，窄屏使用全屏详情层；已生成的 SRT 可在详情中分页只读预览。顶部语言按钮目前仅启用中文，英文入口用于后续完整本地化，不会切换到未完成的混合语言界面。
+单文件和批量处理都提供相同的三种 ASR 模式：
+
+- `自动检测（默认）`：整片交给 faster-whisper 自动检测并转写，适合大多数单语言视频。
+- `固定单语言`：必须指定英语、法语、中文等具体语言，整片按该语言转写。
+- `多语言`：VAD 按语音停顿组合约 45 秒、最长 60 秒的语音块，每块独立检测语言并转写，再恢复原始时间轴、去除边界重复并合并。
+
+CLI 对应参数为 `--asr-mode auto|fixed|multilingual` 和 `--language`。为兼容旧调用，只传具体 `--language` 时会推断为 `fixed`；都不传时使用 `auto`。`fixed` 缺少语言会拒绝启动，`auto` 和 `multilingual` 不接受固定语言。
+
+批量工作区默认使用中文控制台：任务行只保留状态、阶段、进度与关键告警，点击任务或按 Enter 可打开详情。桌面端使用右侧详情抽屉，窄屏使用全屏详情层；已生成的 SRT 可在详情中分页只读预览。当前界面统一为中文，不显示不可用的语言切换入口。
 
 ## 7. 查看状态和复核
 
@@ -165,9 +183,17 @@ output/reports/     quality_report.json 和 review_needed.srt
 
 Web 会在任务产物区域显示可下载链接。只有项目 `output/` 下存在且非空的产物可以通过 Web 下载；外部路径只显示为可复制路径。
 
-### OCR 弱标注对照（高级离线工具）
+### 高质量模式（显式可选）
 
-如果视频带有硬字幕，可使用独立 CLI 把 OCR 双语字幕与 ASR/译文进行离线对照，生成差异报告和候选初筛。该流程默认不访问网络、不覆盖字幕，也不会把 OCR 当成人工金标。Manifest、可选 LLM 裁判和结果解释见 [`docs/ocr_weak_evidence_evaluation.md`](docs/ocr_weak_evidence_evaluation.md)。
+- 翻译可选择 `three_pass`：快模型初译、质量模型反思、质量模型终稿。通常约为标准模式三倍调用量，阶段缓存允许失败后续跑，最终字幕只在全部结构与可靠性检查通过后原子写入。
+- 翻译可显式选择实验策略 `semantic_review`、`wenyi_review` 和 `semantic_wenyi_review`。组合模式以 Semantic 成品为基线，由 WenYi 只提出挑战候选，并要求八项高置信匿名证明后才采用。
+- 三部 451 条终选中三种策略均未达到严重错误为 0 的晋级门槛；`semantic_review` 仅作为三者中的相对推荐，`wenyi_review` 与组合模式标记为未通过。默认仍为 `standard`，详见 `docs/translation_strategy_finale.md`。
+- Language Profile 可配置 `asr_mode`、固定源语言、faster-whisper 性能参数和 `translation_strategy`。旧 Profile 的具体 `source_language` 会自动按 `fixed` 读取，`auto` 会按 `auto` 读取；重新保存时写入 `asr_mode`。
+- 授权翻译金标与匿名 A/B 工具说明见 `tests/translation_benchmark/README.md`。自动指标只作证据，三步模式晋升仍要求非平局偏好率至少 60%，且各素材类别无净退化。
+
+### OCR / 历史 ASR 研究资产
+
+如果视频带有硬字幕，可使用独立 CLI 把 OCR 双语字幕与 ASR/译文进行离线对照，生成差异报告和候选初筛。该流程默认不访问网络、不覆盖字幕，也不会把 OCR 当成人工金标。FunASR、WhisperX、ASR candidate、`mixed-route-v1` 和 segment routing 已退出产品链路；一次性可执行脚本及专属测试已删除。历史验收记录、研究说明与依赖清单仅作为离线资料保留，不进入便携包，也不会参与正常任务。研究资产说明见 [`research/README.md`](research/README.md)，OCR 结果解释见 [`docs/ocr_weak_evidence_evaluation.md`](docs/ocr_weak_evidence_evaluation.md)。
 
 ## 9. 常见问题
 
@@ -212,10 +238,10 @@ Web 可以启动，转写也可以运行；需要翻译时必须配置 active Pr
 - 当前版本不做 PyInstaller 打包，也不提供 Docker/云端部署。
 - 当前版本不实现 portable Python runtime 自动切换；`.venv` 仍是启动入口。
 - 当前版本只稳定输出 SRT。ASS 参数是预留接口，不会生成 `.ass` 成品。
-- 当前版本不做混合语言分段 ASR。混合语言影片会按一个主要源语言处理；必要时请拆分素材、使用更大的多语言 Whisper 模型，或改用官方源字幕翻译。
+- 当前产品 ASR 只使用 faster-whisper，并仅提供自动检测、固定单语言和多语言三种模式；离线研究工具不会自动路由或替换产品输出。
 - 当前版本不做字幕编码自动检测。导入外部字幕前建议先转换为 UTF-8。
 
-## M13 local launcher notes
+## M13 历史启动器说明
 
 Source checkout startup:
 
@@ -237,4 +263,4 @@ Default URL: `http://127.0.0.1:7860/`.
 
 If FFmpeg is missing, the Web UI can still open for settings and runtime diagnostics. Media jobs that need audio extraction will fail until FFmpeg is configured. Accepted variables are `CINESUB_FFMPEG` and `FFMPEG_PATH`; the project-local expected location is `tools/ffmpeg/bin/`.
 
-M13 intentionally does not implement Electron, Tauri, a Windows installer, code signing, auto-update, a model hub, or dubbing/TTS features. See `docs/desktopization_readiness.md` for the desktop shell evaluation.
+以下内容记录 Electron 便携版引入前的历史启动方式，仅用于维护参考；当前 0.6.2 已使用 Electron 免安装壳。项目仍不提供安装器、代码签名、自动更新、模型中心或配音/TTS。桌面化评估见 `docs/desktopization_readiness.md`。

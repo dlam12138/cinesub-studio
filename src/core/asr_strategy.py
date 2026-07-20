@@ -1,5 +1,8 @@
+"""Offline ASR research asset; not imported by the product ASR pipeline."""
+
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
@@ -48,6 +51,14 @@ class AsrDecodeOptions:
 
 
 @dataclass(frozen=True)
+class TranscriptionWord:
+    start: float
+    end: float
+    text: str
+    probability: float | None = None
+
+
+@dataclass(frozen=True)
 class TranscriptionCue:
     start: float
     end: float
@@ -55,6 +66,7 @@ class TranscriptionCue:
     avg_logprob: float | None = None
     compression_ratio: float | None = None
     no_speech_prob: float | None = None
+    words: tuple[TranscriptionWord, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -63,6 +75,10 @@ class TranscriptionArtifact:
     language: str = ""
     language_probability: float | None = None
     duration_seconds: float | None = None
+    recognizer: str = "faster-whisper"
+    aligner: str = "segment"
+    fallback_reasons: tuple[str, ...] = ()
+    backend_versions: tuple[tuple[str, str], ...] = ()
 
     def safe_summary(self) -> dict[str, Any]:
         return {
@@ -70,11 +86,100 @@ class TranscriptionArtifact:
             "language": self.language,
             "language_probability": self.language_probability,
             "duration_seconds": self.duration_seconds,
+            "recognizer": self.recognizer,
+            "aligner": self.aligner,
+            "word_timing_count": sum(len(cue.words) for cue in self.cues),
+            "fallback_reasons": list(self.fallback_reasons),
+            "backend_versions": dict(self.backend_versions),
             "speech_start": self.cues[0].start if self.cues else None,
             "speech_end": self.cues[-1].end if self.cues else None,
             "duplicate_cue_rate": duplicate_cue_rate(self),
             "suspicious_cue_count": len(suspicious_cue_indexes(self)),
         }
+
+
+@dataclass(frozen=True)
+class AdjacentDuplicateDecision:
+    first_index: int
+    second_index: int
+    similarity: float
+    start: float
+    end: float
+
+    def safe_summary(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def adjacent_duplicate_candidate(
+    artifact: TranscriptionArtifact,
+    *,
+    similarity_threshold: float = 0.92,
+    max_gap_seconds: float = 0.05,
+    minimum_characters: int = 8,
+) -> tuple[TranscriptionArtifact, tuple[AdjacentDuplicateDecision, ...]]:
+    """Build a dry-run merge candidate; callers must apply their own evidence gate."""
+    if not 0 < similarity_threshold <= 1:
+        raise ValueError("similarity_threshold must be between 0 and 1")
+    if max_gap_seconds < 0:
+        raise ValueError("max_gap_seconds must be non-negative")
+
+    def normalized(value: str) -> str:
+        return "".join(character for character in value.casefold() if character.isalnum())
+
+    output: list[TranscriptionCue] = []
+    decisions: list[AdjacentDuplicateDecision] = []
+    index = 0
+    while index < len(artifact.cues):
+        first = artifact.cues[index]
+        if index + 1 >= len(artifact.cues):
+            output.append(first)
+            break
+        second = artifact.cues[index + 1]
+        left, right = normalized(first.text), normalized(second.text)
+        gap = second.start - first.end
+        similarity = (
+            difflib.SequenceMatcher(None, left, right, autojunk=False).ratio()
+            if left and right else 0.0
+        )
+        if (
+            min(len(left), len(right)) >= minimum_characters
+            and -max_gap_seconds <= gap <= max_gap_seconds
+            and similarity >= similarity_threshold
+        ):
+            preferred = first if len(left) >= len(right) else second
+            output.append(TranscriptionCue(
+                start=min(first.start, second.start),
+                end=max(first.end, second.end),
+                text=preferred.text,
+                avg_logprob=preferred.avg_logprob,
+                compression_ratio=preferred.compression_ratio,
+                no_speech_prob=preferred.no_speech_prob,
+                words=preferred.words,
+            ))
+            decisions.append(AdjacentDuplicateDecision(
+                first_index=index,
+                second_index=index + 1,
+                similarity=round(similarity, 6),
+                start=min(first.start, second.start),
+                end=max(first.end, second.end),
+            ))
+            index += 2
+            continue
+        output.append(first)
+        index += 1
+    candidate = TranscriptionArtifact(
+        cues=tuple(output),
+        language=artifact.language,
+        language_probability=artifact.language_probability,
+        duration_seconds=artifact.duration_seconds,
+        recognizer=artifact.recognizer,
+        aligner=artifact.aligner,
+        fallback_reasons=artifact.fallback_reasons,
+        backend_versions=artifact.backend_versions,
+    )
+    if validate_artifact(candidate, artifact.duration_seconds):
+        return artifact, ()
+    return candidate, tuple(decisions)
 
 
 @dataclass(frozen=True)
@@ -383,6 +488,10 @@ def merge_retry_artifact(
         language=baseline.language,
         language_probability=baseline.language_probability,
         duration_seconds=baseline.duration_seconds,
+        recognizer=baseline.recognizer,
+        aligner=baseline.aligner,
+        fallback_reasons=baseline.fallback_reasons,
+        backend_versions=baseline.backend_versions,
     )
     errors = validate_artifact(artifact, baseline.duration_seconds)
     if errors:

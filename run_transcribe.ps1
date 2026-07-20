@@ -6,6 +6,8 @@ param(
     [ValidateSet("cpu", "cuda", "auto")]
     [string]$Device = "auto",
     [string]$ComputeType = "",
+    [ValidateSet("auto", "fixed", "multilingual")]
+    [string]$AsrMode = "",
     [string]$Language = "",
     [string]$OutputDir = "output",
     [string]$SubtitleFormats = "srt",
@@ -39,11 +41,14 @@ if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     throw "Virtual environment not found. Run .\install.ps1 first."
 }
 
+$EffectiveAsrMode = if ($AsrMode -ne "") { $AsrMode } elseif ($Language -ne "") { "fixed" } else { "auto" }
+
 $argsList = @(
     "src/core/transcribe.py",
     $InputFile,
     "--model", $Model,
     "--device", $Device,
+    "--asr-mode", $EffectiveAsrMode,
     "--output-dir", $OutputDir,
     "--model-dir", "models",
     "--work-dir", "work",
@@ -53,6 +58,10 @@ $argsList = @(
 
 if ($ComputeType -ne "") {
     $argsList += @("--compute-type", $ComputeType)
+}
+
+if ($EffectiveAsrMode -eq "fixed" -and $Language -eq "") {
+    throw "固定单语言模式必须通过 -Language 指定语言，例如 en、fr 或 zh。"
 }
 
 if ($Language -ne "") {

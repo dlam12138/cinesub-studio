@@ -2,26 +2,13 @@ from __future__ import annotations
 
 import shutil
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from encoding_utils import run_text
 from ffmpeg_locator import find_ffmpeg
-from asr_strategy import (
-    AsrCandidateReport,
-    AsrDecodeOptions,
-    TranscriptionArtifact,
-    duplicate_cue_rate,
-    get_candidate,
-    merge_retry_artifact,
-    retry_windows,
-    selective_merge_retry_artifact,
-    safe_file_hash,
-    validate_artifact,
-    write_artifact_srt,
-    write_candidate_report,
-)
+from asr_runtime import AsrDecodeOptions
 
 
 @dataclass(frozen=True)
@@ -54,6 +41,46 @@ def _valid(path: Path) -> bool:
         return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
+
+
+def _terminology_consistency(
+    source_srt: Path, translated_srt: Path, glossary: object
+) -> dict[str, Any]:
+    if not isinstance(glossary, list) or not glossary:
+        return {"status": "not_configured", "checked_terms": 0, "missing_terms": []}
+    source_text = source_srt.read_text(encoding="utf-8-sig").casefold()
+    translated_text = translated_srt.read_text(encoding="utf-8-sig").casefold()
+    checked = 0
+    matched = 0
+    missing: list[dict[str, Any]] = []
+    for row in glossary:
+        if not isinstance(row, dict):
+            continue
+        source = str(row.get("source") or "").strip()
+        target = str(row.get("target") or "").strip()
+        if not source or not target:
+            continue
+        source_count = source_text.count(source.casefold())
+        if not source_count:
+            continue
+        checked += 1
+        target_count = translated_text.count(target.casefold())
+        if target_count >= source_count:
+            matched += 1
+        else:
+            missing.append({
+                "source": source,
+                "expected_target": target,
+                "source_occurrences": source_count,
+                "target_occurrences": target_count,
+            })
+    return {
+        "status": "pass" if not missing else "warning",
+        "checked_terms": checked,
+        "matched_terms": matched,
+        "consistency_rate": round(matched / checked, 6) if checked else 1.0,
+        "missing_terms": missing,
+    }
 
 
 def extract_audio_stage(context: TaskContext, *, project_root: Path, ffmpeg_path: str | None = None) -> StageResult:
@@ -102,20 +129,6 @@ def transcribe_stage(
     baseline_options = AsrDecodeOptions(
         condition_on_previous_text=profile_asr.get("condition_on_previous_text", True) is not False
     )
-    mode = str(getattr(config, "asr_experiment_mode", "off") or "off")
-    candidate_id = str(getattr(config, "asr_candidate_id", "") or "")
-    candidate_definition = (
-        get_candidate(candidate_id, mode, config.model)
-        if mode != "off" and candidate_id and candidate_id != "mixed-route-v1" else None
-    )
-    shared_session = None
-    if candidate_definition and candidate_definition.strategy == "local_retry_selective":
-        from transcribe import create_asr_session
-        shared_session = create_asr_session(
-            model_name=config.model, model_dir=config.model_dir, device=config.device,
-            compute_type=config.compute_type, local_files_only=config.local_files_only,
-        )
-    baseline_artifacts: list[TranscriptionArtifact] = []
     language_info = transcribe_to_srt(
         audio_path=audio_path,
         srt_path=srt_path,
@@ -123,6 +136,7 @@ def transcribe_stage(
         model_dir=config.model_dir,
         device=config.device,
         compute_type=config.compute_type,
+        asr_mode=getattr(config, "asr_mode", "auto"),
         language=config.language,
         beam_size=config.beam_size,
         vad_filter=config.vad_filter,
@@ -131,118 +145,12 @@ def transcribe_stage(
         language_profile_name=profile.get("profile_name", config.language_profile_name),
         condition_on_previous_text=baseline_options.condition_on_previous_text,
         decode_options=baseline_options,
-        artifact_out=baseline_artifacts,
-        session=shared_session,
     )
     if not _valid(srt_path):
         raise StageError("transcribing", "Transcription completed without a non-empty SRT output.")
-    report_path: Path | None = None
-    if mode != "off" and candidate_id and candidate_id != "mixed-route-v1":
-        baseline_sha256 = safe_file_hash(srt_path)
-        candidate = candidate_definition or get_candidate(candidate_id, mode, config.model)
-        experiment_dir = context.work_dir / "asr-experiments" / context.input_path.stem
-        experiment_dir.mkdir(parents=True, exist_ok=True)
-        candidate_srt = experiment_dir / f"{candidate.candidate_id}.srt"
-        candidate_artifacts: list[TranscriptionArtifact] = []
-        fallback_reason = ""
-        selections = ()
-        try:
-            decode_options = candidate.decode_options
-            if candidate.strategy in {"local_retry", "local_retry_selective"} and baseline_artifacts:
-                windows = retry_windows(baseline_artifacts[0])
-                if not windows and candidate.strategy == "local_retry":
-                    raise ValueError("baseline has no suspicious windows")
-            if candidate.strategy == "local_retry_selective":
-                retry_cues = []
-                for index, (window_start, window_end) in enumerate(windows):
-                    window_artifacts: list[TranscriptionArtifact] = []
-                    window_options = AsrDecodeOptions(**{
-                        **asdict(candidate.decode_options),
-                        "clip_timestamps": f"{window_start:.3f},{window_end:.3f}",
-                    })
-                    try:
-                        transcribe_to_srt(
-                            audio_path=audio_path, srt_path=candidate_srt.with_name(f"{candidate.candidate_id}.{index}.srt"),
-                            model_name=config.model, model_dir=config.model_dir, device=config.device,
-                            compute_type=config.compute_type, language=config.language,
-                            beam_size=config.beam_size, vad_filter=config.vad_filter,
-                            local_files_only=config.local_files_only,
-                            language_profile_id=profile.get("profile_id", config.language_profile_id),
-                            language_profile_name=profile.get("profile_name", config.language_profile_name),
-                            condition_on_previous_text=window_options.condition_on_previous_text,
-                            decode_options=window_options, artifact_out=window_artifacts, session=shared_session,
-                        )
-                    except Exception:
-                        window_artifacts = []
-                    if window_artifacts:
-                        retry_cues.extend(window_artifacts[0].cues)
-                retry_artifact = TranscriptionArtifact(
-                    cues=tuple(sorted(retry_cues, key=lambda cue: (cue.start, cue.end))),
-                    language=baseline_artifacts[0].language,
-                    language_probability=baseline_artifacts[0].language_probability,
-                    duration_seconds=baseline_artifacts[0].duration_seconds,
-                )
-                merged, selections = selective_merge_retry_artifact(baseline_artifacts[0], retry_artifact, windows)
-                candidate_artifacts.append(merged)
-                write_artifact_srt(candidate_srt, merged)
-            else:
-                if candidate.strategy == "local_retry":
-                    clips = ",".join(f"{start:.3f},{end:.3f}" for start, end in windows)
-                    decode_options = AsrDecodeOptions(**{**asdict(candidate.decode_options), "clip_timestamps": clips})
-                transcribe_to_srt(
-                    audio_path=audio_path, srt_path=candidate_srt, model_name=config.model,
-                    model_dir=config.model_dir, device=config.device, compute_type=config.compute_type,
-                    language=config.language, beam_size=config.beam_size, vad_filter=config.vad_filter,
-                    local_files_only=config.local_files_only,
-                    language_profile_id=profile.get("profile_id", config.language_profile_id),
-                    language_profile_name=profile.get("profile_name", config.language_profile_name),
-                    condition_on_previous_text=decode_options.condition_on_previous_text,
-                    decode_options=decode_options, artifact_out=candidate_artifacts,
-                )
-            if candidate.strategy == "local_retry":
-                merged = merge_retry_artifact(baseline_artifacts[0], candidate_artifacts[0], windows)
-                candidate_artifacts[0] = merged
-                write_artifact_srt(candidate_srt, merged)
-            errors = validate_artifact(candidate_artifacts[0], baseline_artifacts[0].duration_seconds)
-            if errors:
-                raise ValueError("; ".join(errors[:3]))
-            if duplicate_cue_rate(candidate_artifacts[0]) > duplicate_cue_rate(baseline_artifacts[0]):
-                raise ValueError("candidate duplicate cue rate regressed")
-            if len(candidate_artifacts[0].cues) < max(1, int(len(baseline_artifacts[0].cues) * 0.8)):
-                raise ValueError("candidate cue coverage dropped by more than 20%")
-            if mode == "apply":
-                shutil.copy2(candidate_srt, srt_path.with_suffix(".srt.tmp"))
-                srt_path.with_suffix(".srt.tmp").replace(srt_path)
-            status = "applied" if mode == "apply" else "evaluated"
-            selected = "candidate" if mode == "apply" else "baseline"
-            affected = mode == "apply"
-        except Exception as exc:
-            status, selected, affected = "fallback", "baseline", False
-            fallback_reason = str(exc)[:300]
-        report_path = context.output_dir / "reports" / "asr_candidates" / f"{context.input_path.stem}.{candidate.candidate_id}.json"
-        report = AsrCandidateReport(
-            schema_version=1, candidate_id=candidate.candidate_id,
-            candidate_version=candidate.version, mode=mode, status=status, selected=selected,
-            output_affected=affected, baseline_sha256=baseline_sha256,
-            candidate_sha256=safe_file_hash(candidate_srt),
-            baseline_summary=baseline_artifacts[0].safe_summary() if baseline_artifacts else {},
-            candidate_summary=candidate_artifacts[0].safe_summary() if candidate_artifacts else {},
-            fallback_reason=fallback_reason,
-            retried_window_count=len(selections),
-            accepted_window_count=sum(1 for item in selections if item.accepted),
-            rejected_window_count=sum(1 for item in selections if not item.accepted),
-            rejection_reasons={
-                reason: sum(1 for item in selections if item.reason == reason)
-                for reason in sorted({item.reason for item in selections if not item.accepted})
-            },
-            quality_deltas=[item.safe_summary() for item in selections],
-            model_reused=shared_session is not None,
-        )
-        write_candidate_report(report_path, report)
-    outputs = (srt_path, report_path) if report_path else (srt_path,)
     return StageResult(
-        "transcribing", "completed", tuple(path for path in outputs if path),
-        {"language_detection": language_info, "asr_candidate_report": str(report_path or "")},
+        "transcribing", "completed", (srt_path,),
+        {"language_detection": language_info},
         duration_seconds=time.perf_counter() - started,
     )
 
@@ -252,6 +160,8 @@ def translate_stage(
 ) -> StageResult:
     started = time.perf_counter()
     from subtitle_translate import translate_srt
+    profile = getattr(config, "lang_profile_config", {}) or {}
+    quality_thresholds = profile.get("quality_thresholds", {}) or {}
 
     summary = translate_srt(
         input_path=source_srt,
@@ -260,9 +170,7 @@ def translate_stage(
         api_base=config.api_base,
         api_key=config.api_key,
         llm_model=config.llm_model,
-        translation_quality_model=(
-            getattr(config, "translation_quality_model", "") or config.llm_model
-        ),
+        translation_quality_model=getattr(config, "translation_quality_model", ""),
         target_language=config.target_language,
         batch_size=config.translation_batch_size,
         temperature=config.translation_temperature,
@@ -271,14 +179,62 @@ def translate_stage(
         context_window=config.context_window,
         reliability_mode=getattr(config, "translation_reliability_mode", "off"),
         max_extra_requests=getattr(config, "translation_max_extra_requests", 12),
+        translation_strategy_mode=getattr(config, "translation_strategy_mode", "standard"),
+        scene_gap_seconds=getattr(config, "translation_scene_gap_seconds", 30.0),
+        max_cps_zh=float(quality_thresholds.get("max_cps_zh", 8)),
+        max_chars_per_subtitle_zh=int(
+            quality_thresholds.get("max_chars_per_subtitle_zh", 36)
+        ),
+        profile_glossary=profile.get("glossary", []),
     )
     if not _valid(output_path):
         raise StageError("translating", "Translation completed without a non-empty SRT output.")
-    return StageResult(
-        "translating", "completed", (output_path,),
+    safe_summary = (
+        summary.safe_summary()
+        if hasattr(summary, "safe_summary")
+        else {"mode": "off", "strategy_mode": "standard"}
+    )
+    translation_report = output_path.with_suffix(".translation_report.json")
+    from encoding_utils import write_json
+    write_json(
+        translation_report,
         {
-            "translation_reliability": summary.safe_summary()
-            if hasattr(summary, "safe_summary") else {"mode": "off"}
+            "schema_version": 1,
+            "source_srt": str(source_srt),
+            "translated_srt": str(output_path),
+            "translation": safe_summary,
+            "terminology_consistency": _terminology_consistency(
+                source_srt, output_path, profile.get("glossary", [])
+            ),
+            "degraded": bool(safe_summary.get("quality_model_fallback")),
+        },
+    )
+    semantic_review_report = ""
+    strategy_mode = str(getattr(config, "translation_strategy_mode", "standard"))
+    if strategy_mode == "semantic_review":
+        candidate = output_path.with_name(
+            f"{output_path.stem}.semantic_review_report.json"
+        )
+        semantic_review_report = str(candidate) if _valid(candidate) else ""
+    elif strategy_mode == "wenyi_review":
+        candidate = output_path.with_name(
+            f"{output_path.stem}.wenyi_review_report.json"
+        )
+        semantic_review_report = str(candidate) if _valid(candidate) else ""
+    elif strategy_mode == "semantic_wenyi_review":
+        candidate = output_path.with_name(
+            f"{output_path.stem}.semantic_wenyi_review_report.json"
+        )
+        semantic_review_report = str(candidate) if _valid(candidate) else ""
+    outputs = [output_path, translation_report]
+    if semantic_review_report:
+        outputs.append(Path(semantic_review_report))
+    return StageResult(
+        "translating", "completed", tuple(outputs),
+        {
+            "translation_reliability": safe_summary,
+            "translation_report": str(translation_report),
+            "semantic_review_report": semantic_review_report,
         },
         duration_seconds=time.perf_counter() - started,
     )

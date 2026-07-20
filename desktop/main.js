@@ -5,7 +5,6 @@ const { spawn, spawnSync } = require("node:child_process");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
-const os = require("node:os");
 const fs = require("node:fs");
 const packageMetadata = require("./package.json");
 
@@ -68,9 +67,7 @@ function resolvePackagedPaths() {
   const pythonExe = path.join(resourcesApp, "python", "python.exe");
   const ffmpegBin = path.join(resourcesApp, "tools", "ffmpeg", "bin");
   const cudaBin = path.join(resourcesApp, "tools", "cuda");
-
-  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-  const userDataRoot = path.join(localAppData, "CineSubStudio");
+  const userDataRoot = path.join(path.dirname(process.execPath), "data");
 
   const env = {
     CINESUB_PACKAGED_ROOT: resourcesApp,
@@ -91,6 +88,23 @@ function resolvePackagedPaths() {
     python: { command: pythonExe, prefixArgs: [], label: pythonExe },
     env,
   };
+}
+
+function configurePortableElectronPaths() {
+  if (!app.isPackaged) {
+    return;
+  }
+  const dataRoot = path.join(path.dirname(process.execPath), "data");
+  const electronCacheRoot = path.join(dataRoot, ".cache", "electron");
+  const electronUserData = path.join(electronCacheRoot, "userData");
+  const electronCache = path.join(electronCacheRoot, "cache");
+  const electronLogs = path.join(dataRoot, "logs", "electron");
+  for (const directory of [electronUserData, electronCache, electronLogs]) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+  app.setPath("userData", electronUserData);
+  app.setPath("sessionData", electronCache);
+  app.setPath("logs", electronLogs);
 }
 
 function validatePackagedPaths(packaged) {
@@ -296,7 +310,7 @@ function stopBackend() {
 
 function showStartupError(message) {
   const guidance = app.isPackaged
-    ? "Reinstall the application or report this message with the logs under %LOCALAPPDATA%\\CineSubStudio\\logs."
+    ? "请重新解压完整便携包；如仍失败，请附上程序目录 data\\logs 下的日志。"
     : "Check console logs or run:\n.\\start_web.ps1 -Smoke -NoBrowser -NonInteractive";
   dialog.showErrorBox(
     "智译字幕工坊 / CineSub Studio startup failed",
@@ -381,6 +395,8 @@ async function main() {
     app.quit();
   }
 }
+
+configurePortableElectronPaths();
 
 app.whenReady().then(() => {
   registerDirectoryPicker();

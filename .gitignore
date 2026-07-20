@@ -138,5 +138,8 @@ acceptance/screenshots/
 acceptance/tmp/
 data/
 test_movies.txt
+tests/translation_benchmark/manifest.local.json
+tests/translation_benchmark/private/
+tests/translation_benchmark/results/
 web_screenshot_*.png
 .superdesign/tmp/

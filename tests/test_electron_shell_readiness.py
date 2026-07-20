@@ -23,19 +23,20 @@ def _read(path: Path) -> str:
 def test_desktop_package_has_minimal_electron_start_script():
     package = json.loads(_read(PACKAGE_JSON))
     assert package["name"] == "cinesub-studio-desktop"
-    assert package["version"] == "0.6.1"
+    assert package["version"] == "0.6.2"
     assert package["private"] is True
     assert package["main"] == "main.js"
     assert package["scripts"]["start"] == "node launch.js"
     assert package["scripts"]["pack:win"] == "electron-builder --win --dir"
-    assert package["scripts"]["dist:win"] == "electron-builder --win nsis"
+    assert "dist:win" not in package["scripts"]
     assert package["devDependencies"]["electron"] == "37.10.3"
     assert "electron-builder" in json.dumps(package).lower()
-    assert package["build"]["win"]["target"] == "nsis"
+    assert package["build"]["win"]["target"] == "dir"
     assert package["build"]["productName"] == "智译字幕工坊"
     assert package["build"]["appId"] == "studio.cinesub.app"
     # No auto-update / publish for preview
     assert package["build"].get("publish") is None
+    assert "nsis" not in package["build"]
 
 
 def test_package_lock_exists_and_locks_electron():
@@ -172,11 +173,10 @@ def test_readme_documents_setup_and_limitations():
     assert ".\\start_web.ps1 -Smoke -NoBrowser -NonInteractive" in readme
     assert "npm install" in readme
     assert "npm start" in readme
-    # v0.5 adds packaged mode but keeps dev workflow
-    assert "Python and the project `.venv` are still required" in readme
-    assert "There is no code signing." in readme
-    assert "There is no auto-update." in readme
-    assert "This is not an official release package." in readme
+    assert "开发模式使用项目 `.venv`" in readme
+    assert "不提供代码签名" in readme
+    assert "自动更新" in readme
+    assert "正式构建统一从仓库根目录调用" in readme
 
 
 def test_gitignore_keeps_desktop_runtime_artifacts_out_and_acceptance_in():

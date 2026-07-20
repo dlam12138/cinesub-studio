@@ -9,6 +9,7 @@ from asr_strategy import (
     AsrCandidateReport,
     TranscriptionArtifact,
     TranscriptionCue,
+    adjacent_duplicate_candidate,
     get_candidate,
     merge_retry_artifact,
     retry_windows,
@@ -124,3 +125,23 @@ def test_selective_retry_keeps_baseline_without_clear_improvement() -> None:
     merged, selections = selective_merge_retry_artifact(baseline, equivalent, [(0, 2)])
     assert merged == baseline
     assert selections[0].reason == "no_clear_improvement"
+
+
+def test_adjacent_duplicate_candidate_merges_only_contiguous_high_similarity_cues() -> None:
+    artifact = TranscriptionArtifact(
+        cues=(
+            TranscriptionCue(0, 2, "This is a repeated recognition window."),
+            TranscriptionCue(2, 2.4, "This is repeated recognition window."),
+            TranscriptionCue(3, 4, "A genuinely different sentence."),
+        ),
+        duration_seconds=4,
+    )
+
+    candidate, decisions = adjacent_duplicate_candidate(artifact)
+
+    assert len(candidate.cues) == 2
+    assert candidate.cues[0].start == 0
+    assert candidate.cues[0].end == 2.4
+    assert len(decisions) == 1
+    assert decisions[0].first_index == 0
+    assert validate_artifact(candidate, 4) == []

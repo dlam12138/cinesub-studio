@@ -61,7 +61,7 @@ def test_language_profile_config_path_uses_release_root_config(tmp_path):
     assert "app" not in config_path.relative_to((tmp_path / "release").resolve()).parts
 
 
-def test_packaged_provider_and_profile_config_use_roaming_appdata(monkeypatch, tmp_path):
+def test_packaged_provider_and_profile_config_use_portable_data_root(monkeypatch, tmp_path):
     packaged_root = tmp_path / "installed" / "app"
     local_root = tmp_path / "local" / "CineSubStudio"
     roaming_root = tmp_path / "roaming"
@@ -72,7 +72,7 @@ def test_packaged_provider_and_profile_config_use_roaming_appdata(monkeypatch, t
     project_root, config_dir, provider_path = provider_store._resolve_provider_config_paths()
     profile_root, profile_path = language_profile_store._resolve_language_profile_config_path()
 
-    expected_config = (roaming_root / "CineSubStudio" / "config").resolve()
+    expected_config = (local_root / "config").resolve()
     assert project_root == local_root.resolve()
     assert profile_root == local_root.resolve()
     assert config_dir == expected_config

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "authorized": false,
+  "samples": [
+    {
+      "id": "en-zh-dialogue-01",
+      "category": "en-zh",
+      "reference_srt": "private/en-zh-dialogue-01.reference.srt",
+      "standard_srt": "private/en-zh-dialogue-01.standard.srt",
+      "three_pass_srt": "private/en-zh-dialogue-01.three-pass.srt"
+    }
+  ]
+}

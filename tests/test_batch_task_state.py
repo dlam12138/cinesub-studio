@@ -93,6 +93,10 @@ def _write_required_outputs(pipeline: BatchPipeline, task: TaskState, content: b
     for output in pipeline.required_final_outputs(task):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(content)
+    task.asr_mode = pipeline.config.asr_mode
+    task.language = pipeline.config.language or ""
+    task.asr_config_signature = pipeline.config.asr_signature()
+    task.save()
 
 
 def test_prepare_retry_failed_tasks_resets_only_failed(monkeypatch, tmp_path):
@@ -163,6 +167,18 @@ def test_completed_final_outputs_follow_translation_mode(monkeypatch, tmp_path):
     assert any(".translated.zh-CN.srt" in str(path) for path in required)
     assert not any(".bilingual.zh-CN.srt" in str(path) for path in required)
     assert pipeline.completed_outputs_valid(task) is True
+
+
+def test_completed_output_is_not_reused_when_asr_signature_changes(monkeypatch, tmp_path):
+    _patch_runtime_dirs(monkeypatch, tmp_path)
+    pipeline = _pipeline(tmp_path)
+    task = _save_task("movie.mp4", "completed", pipeline.config.input_dir)
+    _write_required_outputs(pipeline, task)
+    task.asr_config_signature = "outdated-signature"
+    task.save()
+
+    assert pipeline.completed_outputs_valid(task) is False
+    assert [row.file for row in pipeline.scan()] == ["movie.mp4"]
 
 
 def test_stage_reuse_keeps_existing_valid_outputs(monkeypatch, tmp_path):

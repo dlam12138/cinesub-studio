@@ -12,7 +12,7 @@ README = DESKTOP / "README.md"
 GITIGNORE = ROOT / ".gitignore"
 ACCEPTANCE = ROOT / "acceptance" / "v0_5_windows_zero_config_installer_preview.md"
 PACKAGING = ROOT / "packaging" / "windows"
-BUILD_SCRIPT = PACKAGING / "build_installer.ps1"
+BUILD_SCRIPT = ROOT / "scripts" / "build_portable_release.py"
 THIRD_PARTY = PACKAGING / "THIRD_PARTY_NOTICES.md"
 PREPARE_RUNTIME = PACKAGING / "prepare_runtime.py"
 RUNTIME_PATHS = ROOT / "src" / "tools" / "runtime_paths.py"
@@ -24,19 +24,20 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_package_json_has_windows_installer_scripts():
+def test_package_json_has_windows_portable_script_only():
     package = json.loads(_read(PACKAGE_JSON))
     assert package["scripts"]["pack:win"] == "electron-builder --win --dir"
-    assert package["scripts"]["dist:win"] == "electron-builder --win nsis"
+    assert "dist:win" not in package["scripts"]
 
 
-def test_package_json_has_windows_installer_target():
+def test_package_json_has_windows_unpacked_target():
     package = json.loads(_read(PACKAGE_JSON))
     build = package.get("build", {})
     assert build.get("productName") == "智译字幕工坊"
     assert build.get("appId") == "studio.cinesub.app"
-    assert build.get("win", {}).get("target") == "nsis"
+    assert build.get("win", {}).get("target") == "dir"
     assert build.get("win", {}).get("executableName") == "CineSubStudio"
+    assert "nsis" not in build
 
 
 def test_package_json_has_no_publish_or_auto_update():
@@ -80,6 +81,10 @@ def test_main_js_has_packaged_mode_detection():
     assert 'path.join(process.resourcesPath, "app")' in main
     assert "CINESUB_PACKAGED_ROOT" in main
     assert "CINESUB_USER_DATA_ROOT" in main
+    assert 'path.dirname(process.execPath), "data"' in main
+    assert 'app.setPath("userData"' in main
+    assert 'app.setPath("sessionData"' in main
+    assert 'app.setPath("logs"' in main
 
 
 def test_main_js_packaged_mode_uses_bundled_python():
@@ -156,24 +161,20 @@ def test_runtime_env_uses_paths_properties():
 
 def test_packaging_scripts_exist():
     assert BUILD_SCRIPT.exists()
-    assert (PACKAGING / "collect_backend.ps1").exists()
-    assert (PACKAGING / "collect_runtime.ps1").exists()
     assert THIRD_PARTY.exists()
     assert PREPARE_RUNTIME.exists()
+    assert not (PACKAGING / "build_installer.ps1").exists()
+    assert not (PACKAGING / "collect_backend.ps1").exists()
+    assert not (PACKAGING / "collect_runtime.ps1").exists()
 
 
-def test_build_uses_output_dir_and_unified_cuda_policy():
-    text = _read(BUILD_SCRIPT)
-    assert "OutputDir" in text
-    assert "config.directories.output" in text
-    assert "& $runtimeCollector -RequireCuda" in text
-    assert '$Flavor = "unified"' in text
-    assert "windows-x64-setup" in text
-    assert "Flavor cpu" not in text
-    assert "Flavor gpu" not in text
-    assert "collect_runtime.ps1" in text
-    assert "versioning.py" in text
-    assert "Release version consumers do not match VERSION" in text
+def test_frozen_portable_builder_uses_unpacked_electron_and_cuda_policy():
+    text = _read(ROOT / "scripts" / "build_portable_release.py")
+    assert '"pack:win"' in text
+    assert "github_asset_limit" in text
+    assert "windows-x64-cuda-addon.zip" in text
+    assert "CineSubStudio.exe" in text
+    assert "windows-x64-setup" not in text
 
 
 def test_version_file_is_packaged_and_checked_before_installer_build():
@@ -206,10 +207,11 @@ def test_third_party_notices_mentions_driver_not_bundled():
     assert "不包含 NVIDIA 显卡驱动" in text or "NVIDIA driver" in text
 
 
-def test_readme_mentions_packaged_mode():
+def test_readme_mentions_portable_packaged_mode():
     readme = _read(README)
     assert "Packaged mode" in readme
-    assert "app.isPackaged" in readme or "installer" in readme.lower()
+    assert "CineSubStudio.exe" in readme
+    assert "portable" in readme.lower()
 
 
 def test_gitignore_ignores_desktop_dist():

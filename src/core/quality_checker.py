@@ -13,6 +13,7 @@ Subtitle Quality Checker — 自动字幕质检模块
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from dataclasses import dataclass, field
@@ -77,8 +78,10 @@ MAX_CHARS_PER_ENTRY = 80
 # 单条字幕最短持续时间（秒），低于此值可能阅读困难
 MIN_DURATION_SECONDS = 0.5
 
-# 连续重复字幕超过此次数视为异常
-MAX_REPEAT_COUNT = 5
+# 两条连续重复字幕即可进入人工复核。
+MAX_REPEAT_COUNT = 2
+NEAR_DUPLICATE_SIMILARITY = 0.92
+MIN_NEAR_DUPLICATE_CHARS = 8
 
 # ── SRT 解析（独立实现，不依赖 subtitle_translate） ──────────────────────
 
@@ -432,7 +435,7 @@ def _check_too_short(entries: list[SrtEntry], report: QualityReport) -> None:
 
 
 def _check_duplicates(entries: list[SrtEntry], report: QualityReport) -> None:
-    """检查是否有大量连续重复字幕。"""
+    """检查连续完全重复和高相似重复字幕。"""
     repeat_count = 1
     for i in range(1, len(entries)):
         if entries[i].text.strip() == entries[i - 1].text.strip() and entries[i].text.strip():
@@ -458,6 +461,24 @@ def _check_duplicates(entries: list[SrtEntry], report: QualityReport) -> None:
             text=f"连续重复 {repeat_count} 次",
             snippet=entries[-1].text[:80],
         ))
+
+    for previous, current in zip(entries, entries[1:]):
+        left = re.sub(r"[^\w\u3400-\u9fff]+", "", previous.text.casefold())
+        right = re.sub(r"[^\w\u3400-\u9fff]+", "", current.text.casefold())
+        if left == right or min(len(left), len(right)) < MIN_NEAR_DUPLICATE_CHARS:
+            continue
+        similarity = difflib.SequenceMatcher(
+            None, left, right, autojunk=False
+        ).ratio()
+        if similarity >= NEAR_DUPLICATE_SIMILARITY:
+            report.issues.append(QualityIssue(
+                index=previous.index,
+                type="near_duplicate_content",
+                severity="warning",
+                text=f"与下一条字幕高度相似：{similarity:.1%}",
+                snippet=current.text[:80],
+                suggestion="检查是否为相邻窗口重复识别；确认音频和时间轴后再合并或删除",
+            ))
 
 
 def _check_timestamp_format(entries: list[SrtEntry], report: QualityReport) -> None:

@@ -17,6 +17,7 @@ from translation_reliability import (
     TranslationReliabilityError,
     TranslationRequestTracker,
     TranslationRunSummary,
+    TranslationTotalRequestLimitExceeded,
     adjacent_translation_overlap_count,
     blocking_translation_issues,
     build_repair_windows,
@@ -44,6 +45,17 @@ def test_reliability_config_and_budget_are_bounded() -> None:
     tracker.before_request(extra=True)
     with pytest.raises(TranslationBudgetExceeded):
         tracker.before_request(extra=True)
+
+
+def test_total_http_request_limit_is_hard_and_does_not_increment_past_cap() -> None:
+    tracker = TranslationRequestTracker(mode="off", max_total_requests=2)
+    tracker.before_request(extra=False)
+    tracker.before_request(extra=True)
+    assert tracker.actual_requests == 2
+    assert tracker.total_request_limit_exhausted is True
+    with pytest.raises(TranslationTotalRequestLimitExceeded):
+        tracker.before_request(extra=False)
+    assert tracker.actual_requests == 2
 
 
 def test_preview_cache_key_includes_quality_strategy_without_changing_off_key(
