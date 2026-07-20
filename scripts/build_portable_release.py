@@ -311,6 +311,15 @@ def _scan_package(portable_root: Path) -> None:
             errors.append(f"large-v3 must not be bundled: {relative}")
         if not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
             continue
+        # Third-party Python source legitimately contains token field names and
+        # synthetic credentials in protocol examples. Local configuration is
+        # never staged, so content scanning is limited to our backend and the
+        # package-owned text files while filenames are checked everywhere.
+        relative_posix = relative.as_posix().lower()
+        if relative_posix.startswith("resources/app/python/"):
+            continue
+        if relative_posix.startswith("resources/app/tools/"):
+            continue
         if path.suffix.lower() not in {
             ".json",
             ".txt",

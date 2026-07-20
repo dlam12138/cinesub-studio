@@ -242,3 +242,13 @@ def test_multilingual_does_not_skip_a_failed_speech_block(
             options=transcribe.AsrDecodeOptions(),
             backend_version="test",
         )
+def test_bundled_flat_model_directory_is_used_without_hub_lookup(tmp_path):
+    bundled = tmp_path / "models--Systran--faster-whisper-small"
+    bundled.mkdir()
+    (bundled / "config.json").write_text("{}", encoding="utf-8")
+    (bundled / "model.bin").write_bytes(b"model")
+
+    assert transcribe._resolve_local_model_source("small", tmp_path) == str(
+        bundled.resolve()
+    )
+    assert transcribe._resolve_local_model_source("medium", tmp_path) == "medium"

@@ -74,6 +74,20 @@ class AsrSession:
     local_files_only: bool
 
 
+def _resolve_local_model_source(model_name: str, model_dir: Path) -> str:
+    requested = Path(model_name).expanduser()
+    if requested.is_dir():
+        return str(requested.resolve())
+    if "/" in model_name:
+        cache_name = f"models--{model_name.replace('/', '--')}"
+    else:
+        cache_name = f"models--Systran--faster-whisper-{model_name}"
+    candidate = model_dir / cache_name
+    if (candidate / "config.json").is_file() and (candidate / "model.bin").is_file():
+        return str(candidate.resolve())
+    return model_name
+
+
 def create_asr_session(
     *, model_name: str, model_dir: Path, device: str, compute_type: str | None,
     local_files_only: bool,
@@ -90,13 +104,16 @@ def create_asr_session(
     for warning in warnings:
         print(f"Warning: {warning}")
     resolved_compute_type = default_compute_type(resolved_device, compute_type)
+    model_source = _resolve_local_model_source(model_name, model_dir)
     print(f"Loading model: {model_name}")
+    if model_source != model_name:
+        print(f"Using bundled model: {model_source}")
     print(f"Model dir: {model_dir}")
     print(f"Device: {resolved_device}, compute_type: {resolved_compute_type}")
     print(f"Local files only: {local_files_only}")
     try:
         model = WhisperModel(
-            model_name, device=resolved_device, compute_type=resolved_compute_type,
+            model_source, device=resolved_device, compute_type=resolved_compute_type,
             download_root=str(model_dir), local_files_only=local_files_only,
         )
     except Exception as exc:

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 
-EXCLUDED_NAMES = {"__pycache__", ".pytest_cache", "pip-cache"}
+EXCLUDED_NAMES = {"__pycache__", ".pytest_cache", "pip-cache", "test", "tests"}
 REQUIRED_IMPORTS = ("faster_whisper", "ctranslate2", "av", "numpy", "requests")
 
 
