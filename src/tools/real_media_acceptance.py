@@ -57,10 +57,10 @@ def _private_acceptance_path(path: str | Path) -> Path:
 
 
 def _videocr_executable_path(path: str | Path) -> Path:
-    resolved = Path(path).resolve()
-    if resolved.name.casefold() != "videocr-cli.exe" or not resolved.is_file():
-        raise FileNotFoundError(f"VideOCR CLI executable is unavailable: {resolved}")
-    return resolved
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    if absolute.name.casefold() != "videocr-cli.exe" or not absolute.is_file():
+        raise FileNotFoundError(f"VideOCR CLI executable is unavailable: {absolute}")
+    return absolute
 
 
 def sha256_file(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
@@ -270,6 +270,27 @@ def run_videocr(args: argparse.Namespace) -> dict:
     private_dir.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command = build_videocr_command(args)
+    runtime_root = (
+        Path(os.path.abspath(args.runtime_root))
+        if getattr(args, "runtime_root", "")
+        else private_dir
+    )
+    runtime_dir = runtime_root / f"{args.sample_id}.videocr-runtime"
+    local_app_data = runtime_dir / "local-app-data"
+    roaming_app_data = runtime_dir / "roaming-app-data"
+    temporary_dir = runtime_dir / "temp"
+    paddle_cache = runtime_dir / "paddle-cache"
+    for directory in (local_app_data, roaming_app_data, temporary_dir, paddle_cache):
+        directory.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.update({
+        "LOCALAPPDATA": str(local_app_data),
+        "APPDATA": str(roaming_app_data),
+        "TEMP": str(temporary_dir),
+        "TMP": str(temporary_dir),
+        "PADDLE_PDX_CACHE_HOME": str(paddle_cache),
+        "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK": "True",
+    })
     stdout_path = private_dir / f"{args.sample_id}.videocr.stdout.local.log"
     stderr_path = private_dir / f"{args.sample_id}.videocr.stderr.local.log"
     started = time.perf_counter()
@@ -280,6 +301,7 @@ def run_videocr(args: argparse.Namespace) -> dict:
             stdout=stdout,
             stderr=stderr,
             text=True,
+            env=env,
             timeout=args.timeout,
         )
     elapsed = time.perf_counter() - started
@@ -307,6 +329,7 @@ def run_videocr(args: argparse.Namespace) -> dict:
         "output_sha256": sha256_file(output_path),
         "output_bytes": output_path.stat().st_size,
         "weak_evidence_only": True,
+        "runtime_isolated": True,
     }
     _write_json(private_dir / f"{args.sample_id}.videocr.run.local.json", payload)
     return payload
@@ -475,6 +498,11 @@ def main() -> int:
     ocr_parser.add_argument("--input", required=True)
     ocr_parser.add_argument("--output", required=True)
     ocr_parser.add_argument("--private-dir", required=True)
+    ocr_parser.add_argument(
+        "--runtime-root",
+        default="",
+        help="Optional private ASCII-only runtime root for third-party OCR temp/cache files.",
+    )
     ocr_parser.add_argument("--sample-id", required=True)
     ocr_parser.add_argument("--ocr-engine", default="paddleocr")
     ocr_parser.add_argument("--language", default="fr")

@@ -1,5 +1,6 @@
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,6 +9,7 @@ from real_media_acceptance import (
     build_run_command,
     build_videocr_command,
     environment_fingerprint,
+    run_videocr,
 )
 
 
@@ -169,3 +171,87 @@ def test_environment_fingerprint_embeds_ocr_and_model_preflights(
 
     assert payload["ocr"]["tool"] == "VideOCR CLI"
     assert payload["models"]["models"][0]["model"] == "small"
+
+
+def test_videocr_run_redirects_user_and_cache_directories(tmp_path: Path, monkeypatch) -> None:
+    private_root = tmp_path / "acceptance" / "v0.7.1-real-media-private"
+    executable = tmp_path / "external" / "videocr-cli.exe"
+    input_path = tmp_path / "sample.mp4"
+    output_path = private_root / "evidence" / "sample.srt"
+    executable.parent.mkdir()
+    executable.write_bytes(b"fixture")
+    input_path.write_bytes(b"media")
+    monkeypatch.setattr(
+        "real_media_acceptance.resolve_runtime_paths",
+        lambda: Namespace(project_root=tmp_path),
+    )
+    captured = {}
+
+    def fake_run(_command, **kwargs):
+        captured.update(kwargs["env"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nBonjour\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("real_media_acceptance.subprocess.run", fake_run)
+    args = Namespace(
+        executable=str(executable),
+        input=str(input_path),
+        output=str(output_path),
+        private_dir=str(private_root / "audit"),
+        runtime_root=str(tmp_path / "ascii-runtime"),
+        sample_id="sample-01",
+        ocr_engine="paddleocr",
+        language="fr",
+        time_start="00:00",
+        time_end="01:00",
+        crop_x=0,
+        crop_y=10,
+        crop_width=100,
+        crop_height=50,
+        conf_threshold=75,
+        sim_threshold=80,
+        max_merge_gap=0.09,
+        frames_to_skip=0,
+        use_gpu=False,
+        timeout=30.0,
+    )
+
+    run_videocr(args)
+
+    assert str(tmp_path / "ascii-runtime") in captured["LOCALAPPDATA"]
+    assert str(tmp_path / "ascii-runtime") in captured["APPDATA"]
+    assert str(tmp_path / "ascii-runtime") in captured["TEMP"]
+    assert str(tmp_path / "ascii-runtime") in captured["PADDLE_PDX_CACHE_HOME"]
+
+
+def test_videocr_executable_path_preserves_junction_style_input(
+    tmp_path: Path, monkeypatch
+) -> None:
+    executable = tmp_path / "ascii-link" / "videocr-cli.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"fixture")
+    monkeypatch.setattr(
+        "real_media_acceptance.resolve_runtime_paths",
+        lambda: Namespace(project_root=tmp_path),
+    )
+    args = Namespace(
+        executable=str(executable),
+        input=str(tmp_path / "sample.mp4"),
+        output=str(tmp_path / "acceptance" / "v0.7.1-real-media-private" / "sample.srt"),
+        ocr_engine="paddleocr",
+        language="fr",
+        time_start="00:00",
+        time_end="01:00",
+        crop_x=0,
+        crop_y=0,
+        crop_width=100,
+        crop_height=50,
+        conf_threshold=75,
+        sim_threshold=80,
+        max_merge_gap=0.09,
+        frames_to_skip=0,
+        use_gpu=True,
+    )
+
+    assert build_videocr_command(args)[0] == str(executable.absolute())
