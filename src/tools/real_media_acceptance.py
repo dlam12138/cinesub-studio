@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import random
+import re
 import subprocess
 import sys
 import time
@@ -538,14 +539,32 @@ def build_run_command(args: argparse.Namespace) -> list[str]:
     return command
 
 
+def normalize_run_id(args: argparse.Namespace) -> str:
+    explicit = str(getattr(args, "run_id", "") or "").strip()
+    if explicit:
+        return explicit
+    sample_id = str(getattr(args, "sample_id", "") or "sample").strip()
+    scenario_id = str(
+        getattr(args, "scenario_id", "") or f"{sample_id}-primary"
+    ).strip()
+    profile = str(getattr(args, "profile", "") or "run").strip()
+    derived = re.sub(
+        r"[^A-Za-z0-9._-]+",
+        "-",
+        f"{scenario_id}-{profile}",
+    ).strip(".-_")
+    return derived[:160] or "acceptance-run"
+
+
 def run_profile(args: argparse.Namespace) -> dict:
+    run_id = normalize_run_id(args)
     private_dir = Path(args.private_dir).resolve()
     private_dir.mkdir(parents=True, exist_ok=True)
     command = build_run_command(args)
     env = os.environ.copy()
     env["PYTHONPATH"] = ";".join(str(Path(__file__).resolve().parents[1] / part) for part in ("core", "pipeline", "config", "web", "tools"))
-    stdout_path = private_dir / f"{args.run_id}.stdout.local.log"
-    stderr_path = private_dir / f"{args.run_id}.stderr.local.log"
+    stdout_path = private_dir / f"{run_id}.stdout.local.log"
+    stderr_path = private_dir / f"{run_id}.stderr.local.log"
     gpu_samples = []
     started = time.perf_counter()
     with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
@@ -556,14 +575,14 @@ def run_profile(args: argparse.Namespace) -> dict:
         returncode = process.wait()
     elapsed = time.perf_counter() - started
     if returncode != 0:
-        raise RuntimeError(f"Acceptance run {args.run_id} failed with exit code {returncode}")
+        raise RuntimeError(f"Acceptance run {run_id} failed with exit code {returncode}")
     input_path = Path(args.input).resolve()
     model = RUN_PROFILES[args.profile][0]
     lang_path = Path(args.output_dir).resolve() / f"{input_path.stem}.{model}.lang.json"
     language_report = json.loads(lang_path.read_text(encoding="utf-8"))
     srt_path = Path(args.output_dir).resolve() / f"{input_path.stem}.{model}.srt"
     if not srt_path.is_file() or srt_path.stat().st_size <= 0:
-        raise RuntimeError(f"Acceptance run {args.run_id} did not produce a non-empty SRT")
+        raise RuntimeError(f"Acceptance run {run_id} did not produce a non-empty SRT")
     input_sha256 = sha256_file(input_path)
     effective_config = _effective_config_snapshot(
         language_report,
@@ -571,7 +590,7 @@ def run_profile(args: argparse.Namespace) -> dict:
     )
     payload = {
         "schema_version": 1,
-        "run_id": args.run_id,
+        "run_id": run_id,
         "sample_id": args.sample_id,
         "scenario_id": getattr(args, "scenario_id", f"{args.sample_id}-primary"),
         "profile": args.profile,
@@ -593,7 +612,7 @@ def run_profile(args: argparse.Namespace) -> dict:
         "output_srt_sha256": sha256_file(srt_path),
         "gpu_samples": gpu_samples,
     }
-    _write_json(private_dir / f"{args.run_id}.run.local.json", payload)
+    _write_json(private_dir / f"{run_id}.run.local.json", payload)
     return payload
 
 
@@ -724,7 +743,24 @@ def validate_campaign_reports(contract: dict, reports: list[dict]) -> dict:
         for field in ("sample_id", "scenario_id", "profile"):
             if report.get(field) != planned[field]:
                 raise RuntimeError(f"Campaign report {run_id} does not match planned {field}")
-        if report.get("effective_config", {}).get("local_files_only") is not True:
+        effective = report.get("effective_config", {})
+        if effective.get("asr_mode") != planned["asr_mode"]:
+            raise RuntimeError(f"Campaign report {run_id} does not match planned asr_mode")
+        if effective.get("language") != planned["language"]:
+            raise RuntimeError(f"Campaign report {run_id} does not match planned language")
+        expected_profile = planned["expected_profile_config"]
+        for field in (
+            "model",
+            "quality_preset",
+            "word_timestamps",
+            "resegment_subtitles",
+            "asr_retry_mode",
+        ):
+            if effective.get(field) != expected_profile[field]:
+                raise RuntimeError(
+                    f"Campaign report {run_id} does not match planned {field}"
+                )
+        if effective.get("local_files_only") is not True:
             raise RuntimeError(f"Campaign report {run_id} was not local-files-only")
     comparisons = []
     scenario_ids = sorted({row["scenario_id"] for row in expected.values()})
@@ -866,7 +902,7 @@ def main() -> int:
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--input", required=True)
     run_parser.add_argument("--sample-id", required=True)
-    run_parser.add_argument("--run-id", required=True)
+    run_parser.add_argument("--run-id", default="")
     run_parser.add_argument("--profile", choices=tuple(RUN_PROFILES), required=True)
     run_parser.add_argument("--model-dir", required=True)
     run_parser.add_argument("--output-dir", required=True)

@@ -13,8 +13,11 @@ from real_media_acceptance import (
     compare_quality_control,
     deterministic_review_indexes,
     environment_fingerprint,
+    main,
+    normalize_run_id,
     resolve_acceptance_profile,
     run_campaign,
+    run_profile,
     run_videocr,
     validate_campaign_reports,
 )
@@ -42,6 +45,93 @@ def test_acceptance_runner_builds_isolated_local_only_quality_control(tmp_path: 
     assert command[command.index("--quality-preset") + 1] == "quality"
     assert command[command.index("--asr-retry-mode") + 1] == "off"
     assert command[command.index("--device") + 1] == "cuda"
+
+
+def test_single_run_cli_keeps_run_id_optional(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+
+    def fake_run_profile(args):
+        captured["run_id"] = normalize_run_id(args)
+        return {}
+
+    monkeypatch.setattr("real_media_acceptance.run_profile", fake_run_profile)
+    monkeypatch.setattr(
+        "real_media_acceptance.sys.argv",
+        [
+            "real_media_acceptance.py",
+            "run",
+            "--input", str(tmp_path / "sample.mp4"),
+            "--sample-id", "sample-02",
+            "--profile", "balanced",
+            "--model-dir", str(tmp_path / "models"),
+            "--output-dir", str(tmp_path / "output"),
+            "--work-dir", str(tmp_path / "work"),
+            "--private-dir", str(tmp_path / "private"),
+        ],
+    )
+
+    assert main() == 0
+    assert captured["run_id"] == "sample-02-primary-balanced"
+
+
+def test_run_profile_uses_derived_run_id_for_files_and_report(
+    monkeypatch, tmp_path: Path
+) -> None:
+    input_path = tmp_path / "sample.mp4"
+    output_dir = tmp_path / "output"
+    private_dir = tmp_path / "private"
+    input_path.write_bytes(b"media")
+    output_dir.mkdir()
+    (output_dir / "sample.small.srt").write_text("fixture", encoding="utf-8")
+    (output_dir / "sample.small.lang.json").write_text(json.dumps({
+        "model": "small",
+        "quality_preset": "balanced",
+        "asr_mode": "auto",
+        "forced_language": None,
+        "beam_size": 5,
+        "vad_filter": True,
+        "word_timestamps": True,
+        "resegment_summary": {"enabled": True},
+        "asr_retry": {"mode": "dry_run"},
+        "effective_asr_config": {
+            "asr_hotword_prompt": {"value": ""},
+        },
+        "device": "cpu",
+        "compute_type": "int8",
+        "local_files_only": True,
+    }), encoding="utf-8")
+
+    class CompletedProcess:
+        pid = 123
+
+        def poll(self):
+            return 0
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(
+        "real_media_acceptance.subprocess.Popen",
+        lambda *_args, **_kwargs: CompletedProcess(),
+    )
+    payload = run_profile(Namespace(
+        input=str(input_path),
+        sample_id="sample-02",
+        profile="balanced",
+        asr_mode="auto",
+        language="",
+        model_dir=str(tmp_path / "models"),
+        output_dir=str(output_dir),
+        work_dir=str(tmp_path / "work"),
+        private_dir=str(private_dir),
+        device="cpu",
+        compute_type="int8",
+        hotword_prompt="",
+        input_duration=0.0,
+    ))
+
+    assert payload["run_id"] == "sample-02-primary-balanced"
+    assert (private_dir / "sample-02-primary-balanced.run.local.json").is_file()
 
 
 def test_campaign_contract_fixes_six_primary_modes_and_exactly_28_runs() -> None:
@@ -163,6 +253,33 @@ def test_campaign_validation_asserts_all_seven_quality_control_pairs() -> None:
         and row["output_srt_hash_match"]
         for row in summary["comparisons"]
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "unexpected"),
+    [
+        ("asr_mode", "fixed"),
+        ("language", "en"),
+        ("model", "large-v3"),
+        ("quality_preset", "quality"),
+        ("word_timestamps", True),
+        ("resegment_subtitles", True),
+        ("asr_retry_mode", "dry_run"),
+    ],
+)
+def test_campaign_validation_rejects_each_run_contract_drift(
+    field: str, unexpected: object
+) -> None:
+    contract = build_campaign_contract("evaluated-sha")
+    reports = [_campaign_report(planned) for planned in contract["runs"]]
+    target = next(
+        report for report in reports
+        if report["run_id"] == "sample-04-primary-speed"
+    )
+    target["effective_config"][field] = unexpected
+
+    with pytest.raises(RuntimeError, match=f"planned {field}"):
+        validate_campaign_reports(contract, reports)
 
 
 def test_quality_control_comparison_rejects_decode_drift() -> None:
