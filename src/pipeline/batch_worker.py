@@ -895,7 +895,12 @@ def main() -> int:
             return 0
         print(f"\nPipeline plan ({len(plan.tasks)}):")
         for item in plan.tasks:
-            migration = " planned-migration" if item.planned_migration else ""
+            migrations = []
+            if item.planned_migration:
+                migrations.append("state")
+            if item.planned_asr_signature_migration:
+                migrations.append("asr-signature")
+            migration = f" planned-migration={','.join(migrations)}" if migrations else ""
             print(f"  [{item.category}] {item.display_name}{migration}")
         return 0
 

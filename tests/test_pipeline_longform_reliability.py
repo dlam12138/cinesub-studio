@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -58,6 +59,19 @@ def test_task_identity_normalizes_relative_path_and_avoids_same_stem_collisions(
     assert first_id != second_id
     assert first_relative == "a/采访.mp4"
     assert second_relative == "b/采访.mkv"
+
+
+def test_task_identity_hash_uses_casefolded_relative_key(tmp_path: Path):
+    root = tmp_path / "input"
+    media = root / "MixedCase" / "Movie.MP4"
+    media.parent.mkdir(parents=True)
+    media.write_bytes(b"media")
+
+    task_id, identity_key = task_identity(media, root)
+    expected_hash = hashlib.sha256("mixedcase/movie.mp4".encode("utf-8")).hexdigest()[:12]
+
+    assert task_id == f"Movie-{expected_hash}"
+    assert identity_key == "mixedcase/movie.mp4"
 
 
 def test_plan_persists_display_relative_case_separately_from_identity_key(tmp_path: Path):

@@ -819,15 +819,7 @@ def _artifact_download_url(task_id: str, kind: str) -> str:
 
 
 def _task_id_for_state(raw: dict) -> str:
-    explicit = _clean_task_id(str(raw.get("task_id") or ""))
-    if explicit:
-        return explicit
-    state_path = str(raw.get("_state_path") or "")
-    if state_path:
-        name = Path(state_path).name
-        if name.endswith(".state.json"):
-            return name[:-len(".state.json")]
-    return Path(str(raw.get("file") or "")).stem
+    return _clean_task_id(str(raw.get("task_id") or ""))
 
 
 def _clean_task_id(task_id: str) -> str:
@@ -853,7 +845,6 @@ def _language_detection_summary(value: Any) -> dict:
         "block_count": value.get("block_count", 0),
         "manual_review_count": value.get("manual_review_count", 0),
         "asr_review_summary": value.get("asr_review_summary", {}),
-        "blocks": value.get("blocks", []),
         "model": value.get("model", ""),
         "device": value.get("device", ""),
         "compute_type": value.get("compute_type", ""),

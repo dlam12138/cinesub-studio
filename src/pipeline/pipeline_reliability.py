@@ -34,6 +34,11 @@ def normalize_relative_input_path(path: Path, input_root: Path) -> str:
     return unicodedata.normalize("NFC", relative).casefold()
 
 
+def display_relative_input_path(path: Path, input_root: Path) -> str:
+    relative = path.resolve().relative_to(input_root.resolve()).as_posix()
+    return unicodedata.normalize("NFC", relative)
+
+
 def sanitize_stem(stem: str) -> str:
     value = unicodedata.normalize("NFC", str(stem or "")).strip()
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", value)
@@ -43,9 +48,9 @@ def sanitize_stem(stem: str) -> str:
 
 
 def task_identity(path: Path, input_root: Path) -> tuple[str, str]:
-    relative = normalize_relative_input_path(path, input_root)
-    digest = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:12]
-    return f"{sanitize_stem(path.stem)}-{digest}", relative
+    identity_key = normalize_relative_input_path(path, input_root)
+    digest = hashlib.sha256(identity_key.encode("utf-8")).hexdigest()[:12]
+    return f"{sanitize_stem(path.stem)}-{digest}", identity_key
 
 
 def _sha256_file(path: Path) -> str:
@@ -172,6 +177,7 @@ class PipelineTaskPlan:
     state_path: str = ""
     legacy_state_path: str = ""
     planned_migration: bool = False
+    planned_asr_signature_migration: bool = False
     input_fingerprint: dict[str, Any] = field(default_factory=dict)
     expected_signatures: dict[str, str] = field(default_factory=dict)
 
@@ -256,8 +262,7 @@ def expected_stage_signatures(config: Any, state: dict[str, Any] | None, fp: dic
     artifacts = state.get("artifact_fingerprints", {}) or {}
     payloads = _config_payloads(config)
     input_stage = stage_signature("input", {"recipe": "input-fingerprint-v1"}, fp)
-    audio_upstream = fp.get("sha256", "")
-    audio = stage_signature("audio", payloads["audio"], audio_upstream)
+    audio = stage_signature("audio", payloads["audio"], fp)
     audio_sha = (artifacts.get("audio") or {}).get("sha256", "")
     asr = stage_signature("asr", payloads["asr"], audio_sha)
     source_sha = (artifacts.get("source_srt") or {}).get("sha256", "")
@@ -328,13 +333,7 @@ def build_pipeline_plan(
             if path.is_file() and path.suffix.lower() in extensions
         )
     identities = [
-        (
-            path,
-            task_identity(path, input_root)[0],
-            unicodedata.normalize(
-                "NFC", path.resolve().relative_to(input_root.resolve()).as_posix()
-            ),
-        )
+        (path, task_identity(path, input_root)[0], display_relative_input_path(path, input_root))
         for path in videos
     ]
     stem_counts: dict[str, int] = {}
@@ -471,6 +470,7 @@ def build_pipeline_plan(
         expected = expected_stage_signatures(config, state, fp)
         category = "new"
         rebuild_from = ""
+        planned_asr_signature_migration = False
         if state:
             signatures = state.get("stage_build_signatures", {}) or {}
             artifacts = state.get("artifact_fingerprints", {}) or {}
@@ -503,10 +503,12 @@ def build_pipeline_plan(
                 if stage == "audio" and not signatures.get("audio"):
                     valid_signature = valid_artifact
                 if stage == "asr" and not signatures.get("asr"):
-                    valid_signature = (
+                    legacy_signature_valid = (
                         state.get("asr_config_signature") == getattr(config, "asr_signature", lambda: "")()
                         and valid_artifact
                     )
+                    valid_signature = legacy_signature_valid
+                    planned_asr_signature_migration = legacy_signature_valid
                 if not valid_signature or not valid_artifact:
                     first_invalid = stage
                     break
@@ -530,6 +532,7 @@ def build_pipeline_plan(
             state_path=str(state_dir / state_name),
             legacy_state_path=legacy_path,
             planned_migration=planned_migration,
+            planned_asr_signature_migration=planned_asr_signature_migration,
             input_fingerprint=fp,
             expected_signatures=expected,
         )
