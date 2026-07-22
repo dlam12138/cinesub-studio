@@ -19,11 +19,11 @@ Stages:
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 import sys
 import time
 import traceback
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,9 +57,25 @@ from task_state import (
     TaskState,
     completed_outputs_valid as validate_completed_outputs,
     is_valid_output_file as _is_valid_output_file,
-    prepare_retry_failed_tasks,
+    apply_retry_failed_plan,
+    plan_retry_failed_tasks,
     required_final_outputs as plan_required_final_outputs,
     set_state_root_provider,
+)
+from pipeline_reliability import (
+    PipelinePlan,
+    PipelineRunLock,
+    PipelineTaskPlan,
+    artifact_fingerprint,
+    artifact_set_fingerprint,
+    artifact_set_matches,
+    build_pipeline_plan as build_read_only_pipeline_plan,
+    canonical_hash,
+    expected_stage_signatures,
+    local_provider_preflight,
+    windows_process_creation_filetime,
+    read_run_record,
+    write_run_record,
 )
 from subtitle_model import (
     ASS_RESERVED_MESSAGE,
@@ -132,6 +148,7 @@ class BatchConfig:
     effective_asr_config: dict | None = None
 
     translate: bool = True
+    provider_id: str = ""
     api_provider: str = "openai-compatible"
     api_base: str = ""
     api_key: str = ""
@@ -188,7 +205,10 @@ class BatchConfig:
             self.api_key = os.environ.get("SUBTITLE_LLM_API_KEY", "")
 
     def asr_signature(self) -> str:
-        payload = {
+        return canonical_hash(self.asr_signature_payload())
+
+    def asr_signature_payload(self) -> dict:
+        return {
             "schema": 2,
             "mode": self.asr_mode,
             "language": self.language,
@@ -204,17 +224,28 @@ class BatchConfig:
             "asr_retry_recipe_version": ASR_RETRY_RECIPE_VERSION,
             "asr_hotword_prompt": self.asr_hotword_prompt,
         }
-        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+
+
+def build_pipeline_plan(config: BatchConfig, *, read_only: bool = True) -> PipelinePlan:
+    """Build the shared read-only plan without constructing BatchPipeline."""
+    return build_read_only_pipeline_plan(
+        config,
+        state_dir=DIR_WORK_STATES,
+        video_extensions=VIDEO_EXTENSIONS,
+        read_only=read_only,
+    )
 
 
 
 class BatchPipeline:
     """Batch subtitle production pipeline."""
 
-    def __init__(self, config: BatchConfig):
+    def __init__(self, config: BatchConfig, *, plan: PipelinePlan | None = None, run_id: str = ""):
         self.config = config
         self.tasks: list[TaskState] = []
+        self.plan = plan
+        self.run_id = run_id
+        self._current_task: TaskState | None = None
         self._ensure_directories()
 
     def _ensure_directories(self) -> None:
@@ -232,7 +263,7 @@ class BatchPipeline:
 
     def _context(self, input_path: Path) -> TaskContext:
         return TaskContext(
-            task_id=input_path.name,
+            task_id=(self._current_task.task_id if self._current_task else input_path.name),
             input_path=input_path,
             work_dir=self.config.work_dir,
             output_dir=self.config.output_dir,
@@ -251,16 +282,32 @@ class BatchPipeline:
             status=result.status,
             duration_seconds=result.duration_seconds,
             summary=summary,
+            run_id=self.run_id,
         )
 
     def _record_stage_started(self, context: TaskContext, stage: str) -> None:
+        self._update_run_progress(context.task_id, stage)
         write_stage_event(
             STAGE_EVENT_LOG,
             task_id=context.task_id,
             stage=stage,
             event="started",
             status="running",
+            run_id=self.run_id,
         )
+
+    def _update_run_progress(self, task_id: str, stage: str) -> None:
+        if not self.run_id:
+            return
+        path = self.config.work_dir / "pipeline_run.json"
+        record = read_run_record(path)
+        if record.get("run_id") != self.run_id:
+            return
+        write_run_record(path, {
+            **record,
+            "current_task_id": task_id,
+            "current_stage": stage,
+        })
 
     def _record_stage_error(self, context: TaskContext, stage: str, exc: BaseException) -> None:
         write_stage_event(
@@ -272,41 +319,49 @@ class BatchPipeline:
             returncode=getattr(exc, "returncode", None),
             error_category=type(exc).__name__,
             summary=str(exc),
+            run_id=self.run_id,
         )
 
     def scan(self) -> list[TaskState]:
-        """Scan the input directory and return pending tasks."""
-        videos = discover_videos(self.config.input_dir)
-        tasks: list[TaskState] = []
+        """Return a strictly read-only view of tasks selected by the current plan."""
+        plan = build_pipeline_plan(self.config, read_only=True)
+        return [self._task_from_plan(item, persist=False) for item in plan.tasks if item.category != "skip"]
 
-        for video_path in videos:
-            stem = video_path.stem
-            state_path = DIR_WORK_STATES / f"{stem}.state.json"
-
-            existing = TaskState.load(state_path)
-            if existing and existing.status == "completed" and self.config.skip_completed:
-                if self.completed_outputs_valid(existing):
-                    print(f"  [skip] already completed with valid outputs: {video_path.name}")
-                    continue
-                print(f"  [warn] completed state has missing or empty final outputs: {video_path.name}")
-
-            if existing:
-                task = existing
-                task.max_retries = self.config.max_retries
-            else:
-                task = TaskState(
-                    file=video_path.name,
-                    input_path=str(video_path.resolve()),
-                    created_at=time.time(),
-                    max_retries=self.config.max_retries,
-                )
-
-            task.asr_mode = self.config.asr_mode
-            task.language = self.config.language or ""
+    def _task_from_plan(self, item: PipelineTaskPlan, *, persist: bool) -> TaskState:
+        state_path = Path(item.state_path)
+        legacy_path = Path(item.legacy_state_path) if item.legacy_state_path else None
+        task = TaskState.load(state_path)
+        if task is None and legacy_path:
+            task = TaskState.load(legacy_path)
+        if task is None:
+            task = TaskState(
+                file=item.display_name,
+                input_path=item.input_path,
+                created_at=time.time(),
+            )
+        task.task_id = item.task_id
+        task.file = item.display_name
+        task.input_path = item.input_path
+        task.current_input_path = item.input_path
+        task.original_relative_path = item.relative_input_path
+        task.output_stem = item.output_stem
+        task.input_location = "active"
+        task.input_fingerprint = item.input_fingerprint
+        task.stage_build_signatures["input"] = item.expected_signatures["input"]
+        task.max_retries = self.config.max_retries
+        task.asr_mode = self.config.asr_mode
+        task.language = self.config.language or ""
+        task.run_id = self.run_id
+        if persist:
             task.save()
-            tasks.append(task)
+            if legacy_path and legacy_path != task.state_path() and legacy_path.exists():
+                legacy_path.unlink()
+        return task
 
-        return tasks
+    def _materialize_plan(self, plan: PipelinePlan) -> list[TaskState]:
+        if plan.blockers:
+            raise ValueError("Pipeline preflight failed: " + "; ".join(row.message for row in plan.blockers))
+        return [self._task_from_plan(item, persist=True) for item in plan.tasks]
 
     def run(self) -> dict:
         """Run the full batch pipeline and return summary counts."""
@@ -330,8 +385,9 @@ class BatchPipeline:
         print(f"  Max retries: {self.config.max_retries}")
         print()
 
-        print("Scanning input directory...")
-        self.tasks = self.scan()
+        print("Planning input directory...")
+        plan = self.plan or build_pipeline_plan(self.config, read_only=True)
+        self.tasks = self._materialize_plan(plan)
 
         if not self.tasks:
             print("No pending files found.")
@@ -354,6 +410,7 @@ class BatchPipeline:
                 print("  Completed state has missing or empty final outputs, rebuilding")
 
             try:
+                self._current_task = task
                 self._process_one(task)
                 completed += 1
                 print("  [OK] completed")
@@ -363,10 +420,13 @@ class BatchPipeline:
                 failed += 1
                 task.status = "failed"
                 task.error = str(exc)
+                task.error_category = type(exc).__name__
                 task.error_stage = task.stage
                 task.save()
                 print(f"  [FAILED] {exc}")
                 traceback.print_exc()
+            finally:
+                self._current_task = None
 
         print()
         print("=" * 60)
@@ -384,7 +444,7 @@ class BatchPipeline:
     def _process_one(self, task: TaskState) -> None:
         """Process a single task through all pipeline stages."""
         input_path = Path(task.input_path)
-        stem = input_path.stem
+        stem = task.output_stem or input_path.stem
         model = self.config.model
         outputs = plan_pipeline_outputs(
             output_root=self.config.output_dir,
@@ -393,20 +453,51 @@ class BatchPipeline:
             target_language=self.config.target_language,
             translation_mode=self.config.translation_mode,
         )
-        if not task.audio_path or not _is_valid_output_file(Path(task.audio_path)):
+        expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
+        audio_cached = task.artifact_fingerprints.get("audio") or {}
+        audio_current = artifact_fingerprint(Path(task.audio_path), audio_cached) if task.audio_path else None
+        audio_valid = bool(
+            audio_current
+            and (
+                not audio_cached
+                or audio_current.get("sha256") == audio_cached.get("sha256")
+            )
+            and (
+                not task.stage_build_signatures.get("audio")
+                or task.stage_build_signatures.get("audio") == expected["audio"]
+            )
+        )
+        if not audio_valid:
             task.stage = TaskStage.EXTRACTING_AUDIO
             task.status = "running"
             task.save()
             print("  [1/5] Extracting audio...")
             task.audio_path = str(self._extract_audio(input_path))
+            task.artifact_fingerprints["audio"] = artifact_fingerprint(Path(task.audio_path), force_full=True)
+            task.stage_build_signatures["audio"] = expected["audio"]
             task.save()
         else:
+            task.artifact_fingerprints["audio"] = audio_current
+            task.stage_build_signatures["audio"] = expected["audio"]
+            task.save()
             print("  [1/5] Audio already exists, skipping extraction")
 
         source_srt = outputs.source_srt
-        signature_matches = task.asr_config_signature == self.config.asr_signature()
+        expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
+        source_cached = task.artifact_fingerprints.get("source_srt") or {}
+        source_current = artifact_fingerprint(source_srt, source_cached)
+        signature_matches = task.stage_build_signatures.get("asr") == expected["asr"]
+        if not task.stage_build_signatures.get("asr") and task.asr_config_signature == self.config.asr_signature():
+            signature_matches = bool(source_current)
         transcribed_now = False
-        if not _is_valid_output_file(source_srt) or not signature_matches:
+        source_integrity = bool(
+            source_current
+            and (
+                not source_cached
+                or source_current.get("sha256") == source_cached.get("sha256")
+            )
+        )
+        if not source_integrity or not signature_matches:
             task.stage = TaskStage.TRANSCRIBING
             task.status = "running"
             task.save()
@@ -417,6 +508,9 @@ class BatchPipeline:
             task.asr_review_report = str(lang_info.get("asr_review_report") or "")
             task.asr_review_summary = lang_info.get("asr_review_summary")
             task.asr_config_signature = self.config.asr_signature()
+            task.artifact_fingerprints["source_srt"] = artifact_fingerprint(source_srt, force_full=True)
+            expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
+            task.stage_build_signatures["asr"] = expected["asr"]
             task.save()
             transcribed_now = True
         else:
@@ -446,6 +540,10 @@ class BatchPipeline:
                     pass
             task.save()
             print("  [2/5] Source SRT already exists, skipping transcription")
+            task.artifact_fingerprints["source_srt"] = source_current
+            task.stage_build_signatures["asr"] = expected["asr"]
+            task.asr_config_signature = self.config.asr_signature()
+            task.save()
 
         if task.language_detection:
             ld = task.language_detection
@@ -458,7 +556,15 @@ class BatchPipeline:
             output_translated = outputs.translation_output
             translated_now = False
 
-            if transcribed_now or not _is_valid_output_file(output_translated):
+            expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
+            translated_cached = task.artifact_fingerprints.get("translation_output") or {}
+            translated_current = artifact_fingerprint(output_translated, translated_cached)
+            translation_valid = bool(
+                translated_current
+                and translated_current.get("sha256") == translated_cached.get("sha256")
+                and task.stage_build_signatures.get("translation") == expected["translation"]
+            )
+            if transcribed_now or not translation_valid:
                 task.stage = TaskStage.TRANSLATING
                 task.status = "running"
                 task.save()
@@ -474,6 +580,11 @@ class BatchPipeline:
                 translated_now = True
                 task.translated_srt = str(output_translated.resolve())
                 task.bilingual_srt = str(bilingual_srt.resolve()) if self.config.translation_mode == "bilingual" else ""
+                task.artifact_fingerprints["translation_output"] = artifact_fingerprint(
+                    output_translated, force_full=True
+                )
+                expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
+                task.stage_build_signatures["translation"] = expected["translation"]
                 if self.config.translation_strategy_mode == "semantic_review":
                     candidate = output_translated.with_name(
                         f"{output_translated.stem}.semantic_review_report.json"
@@ -525,13 +636,26 @@ class BatchPipeline:
                 print("  [3/5] Translated SRT already exists, skipping translation")
 
             report_path = outputs.quality_report
-            if transcribed_now or translated_now or not _is_valid_output_file(report_path):
+            expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
+            quality_cached = task.artifact_fingerprints.get("quality_report") or {}
+            quality_current = artifact_fingerprint(report_path, quality_cached)
+            quality_valid = bool(
+                quality_current
+                and quality_current.get("sha256") == quality_cached.get("sha256")
+                and task.stage_build_signatures.get("quality") == expected["quality"]
+            )
+            if transcribed_now or translated_now or not quality_valid:
                 task.stage = TaskStage.QUALITY_CHECKING
                 task.status = "running"
                 task.save()
                 print("  [4/5] Quality check...")
                 self._quality_check(source_srt, output_translated, report_path)
                 task.quality_report = str(report_path.resolve())
+                task.artifact_fingerprints["quality_report"] = artifact_fingerprint(
+                    report_path, force_full=True
+                )
+                expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
+                task.stage_build_signatures["quality"] = expected["quality"]
                 task.save()
             else:
                 task.quality_report = str(report_path.resolve())
@@ -546,6 +670,11 @@ class BatchPipeline:
 
         task.stage = TaskStage.COMPLETED
         task.status = "completed"
+        task.artifact_fingerprints["final_output"] = artifact_set_fingerprint(
+            self.required_final_outputs(task)
+        )
+        expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
+        task.stage_build_signatures["final_output"] = expected["final_output"]
         task.save()
         print("  [5/5] Outputs complete")
 
@@ -572,32 +701,45 @@ class BatchPipeline:
 
     def completed_outputs_valid(self, task: TaskState) -> bool:
         """Return True only when completed status and configured final outputs agree."""
-        return (
-            task.asr_config_signature == self.config.asr_signature()
-            and validate_completed_outputs(task, self.config)
+        if not validate_completed_outputs(task, self.config):
+            return False
+        if not artifact_set_matches(task.artifact_fingerprints.get("final_output")):
+            return False
+        expected = expected_stage_signatures(
+            self.config, task.to_dict(), task.input_fingerprint or {}
         )
+        required = ["input", "audio", "asr"] + (["translation", "quality", "final_output"] if self.config.translate else ["final_output"])
+        return all(task.stage_build_signatures.get(stage) == expected.get(stage) for stage in required)
 
 
-    def _extract_audio(self, input_path: Path) -> Path:
+    def _extract_audio(self, input_path: Path, *, reuse_existing: bool = False) -> Path:
         """Extract audio to a 16 kHz mono WAV file."""
         context = self._context(input_path)
         self._record_stage_started(context, TaskStage.EXTRACTING_AUDIO)
         try:
-            result = extract_audio_stage(context, project_root=PROJECT_ROOT)
+            result = extract_audio_stage(
+                context, project_root=PROJECT_ROOT, reuse_existing=reuse_existing
+            )
         except BaseException as exc:
             self._record_stage_error(context, TaskStage.EXTRACTING_AUDIO, exc)
             raise
         self._record_stage_result(context, result)
         return result.outputs[0]
 
-    def _transcribe(self, audio_path: Path, srt_path: Path) -> dict | None:
+    def _transcribe(
+        self, audio_path: Path, srt_path: Path, *, reuse_existing: bool = False
+    ) -> dict | None:
         """Run Whisper transcription and return language detection details."""
         input_path = Path(audio_path)
         context = self._context(input_path)
         self._record_stage_started(context, TaskStage.TRANSCRIBING)
         try:
             result = transcribe_stage(
-                context, audio_path=audio_path, srt_path=srt_path, config=self.config
+                context,
+                audio_path=audio_path,
+                srt_path=srt_path,
+                config=self.config,
+                reuse_existing=reuse_existing,
             )
         except BaseException as exc:
             self._record_stage_error(context, TaskStage.TRANSCRIBING, exc)
@@ -662,9 +804,17 @@ class BatchPipeline:
             result = archive_stage(context, archive_dir=DIR_ARCHIVE)
             self._record_stage_result(context, result)
             if result.outputs:
+                archived = result.outputs[0].resolve()
+                task.input_location = "archive"
+                task.current_input_path = str(archived)
+                task.archived_at = time.time()
+                task.archive_warning = ""
+                task.save()
                 print(f"      archived: {result.outputs[0].name}")
         except (OSError, StageError) as exc:
             self._record_stage_error(self._context(input_path), "archiving", exc)
+            task.archive_warning = str(exc)
+            task.save()
             print(f"      archive failed: {exc}")
 
 
@@ -707,6 +857,7 @@ def main() -> int:
         asr_hotword_prompt=effective["asr_hotword_prompt"],
         effective_asr_config=effective["effective_asr_config"],
         translate=not args.no_translate,
+        provider_id=effective["provider_id"],
         api_provider=effective["api_provider"],
         api_base=effective["api_base"],
         api_key=effective["api_key"],
@@ -733,24 +884,23 @@ def main() -> int:
         move_completed=not args.no_move_completed,
     )
 
-    pipeline = BatchPipeline(config)
-
     if args.scan:
-        tasks = pipeline.scan()
-        if not tasks:
+        plan = build_pipeline_plan(config, read_only=True)
+        if plan.blockers:
+            for blocker in plan.blockers:
+                print(f"  [blocker:{blocker.code}] {blocker.message}")
+            return 1
+        if not plan.tasks:
             print("No pending files found.")
             return 0
-        print(f"\nPending files ({len(tasks)}):")
-        for t in tasks:
-            status_mark = {"completed": "[OK]", "failed": "[FAILED]", "pending": "[ ]"}.get(t.status, "[?]")
-            print(f"  {status_mark} {t.file} - {t.stage}")
+        print(f"\nPipeline plan ({len(plan.tasks)}):")
+        for item in plan.tasks:
+            migration = " planned-migration" if item.planned_migration else ""
+            print(f"  [{item.category}] {item.display_name}{migration}")
         return 0
 
     if args.status:
         return show_status(DIR_WORK_STATES)
-
-    if args.retry_failed:
-        return _retry_failed(pipeline)
 
     if args.review:
         return show_review(config.output_dir)
@@ -764,28 +914,119 @@ def main() -> int:
         print("Set a provider, pass --api-key, set SUBTITLE_LLM_API_KEY, or use --no-translate.")
         return 1
 
-    result = pipeline.run()
-    return 0 if result["failed"] == 0 else 1
+    run_id = os.environ.get("CINESUB_PIPELINE_RUN_ID", "") or uuid.uuid4().hex
+    run_record_path = config.work_dir / "pipeline_run.json"
+    lock = None
+    worker_lease = None
+    handoff_lock_path = os.environ.get("CINESUB_PIPELINE_LOCK_PATH", "")
+    if handoff_lock_path:
+        worker_lease = PipelineRunLock(Path(handoff_lock_path), offset=1)
+        deadline = time.monotonic() + 10.0
+        while not worker_lease.acquire() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if worker_lease._handle is None:
+            print("Could not acquire the pipeline worker lease.")
+            return 1
+        ack_path = Path(os.environ.get("CINESUB_PIPELINE_LOCK_ACK", ""))
+        if ack_path:
+            ack_path.write_text(run_id, encoding="ascii")
+    else:
+        lock = PipelineRunLock(config.work_dir / "pipeline_run.lock")
+        if not lock.acquire():
+            print("Another pipeline process is already running.")
+            return 1
+    try:
+        if args.retry_failed:
+            blockers = local_provider_preflight(config)
+            if blockers:
+                for blocker in blockers:
+                    print(f"  [blocker:{blocker.code}] {blocker.message}")
+                return 1
+            task_ids = plan_retry_failed_tasks(
+                sorted(DIR_WORK_STATES.glob("*.state.json"))
+            ).selected_task_ids
+            plan = None
+            action = "retry-failed"
+        else:
+            plan = build_pipeline_plan(config, read_only=True)
+            if plan.blockers:
+                for blocker in plan.blockers:
+                    print(f"  [blocker:{blocker.code}] {blocker.message}")
+                return 1
+            task_ids = [item.task_id for item in plan.tasks]
+            action = "run"
+        expected_plan = os.environ.get("CINESUB_PIPELINE_EXPECTED_PLAN", "")
+        observed_plan = plan.plan_fingerprint if plan else canonical_hash(task_ids)
+        if expected_plan and expected_plan != observed_plan:
+            print("Pipeline plan changed after preflight; no task state was modified.")
+            return 1
+        record = write_run_record(run_record_path, {
+            "schema_version": 1,
+            "run_id": run_id,
+            "action": action,
+            "status": "running",
+            "server_pid": int(os.environ.get("CINESUB_PIPELINE_SERVER_PID", "0") or 0),
+            "worker_pid": os.getpid(),
+            "worker_creation_filetime": windows_process_creation_filetime(os.getpid()),
+            "plan_fingerprint": observed_plan,
+            "effective_config_hash": plan.effective_config_hash if plan else canonical_hash(config.asr_signature_payload()),
+            "task_ids": task_ids,
+            "current_task_id": "",
+            "current_stage": "",
+            "started_at": time.time(),
+            "finished_at": 0,
+            "counts": {},
+            "failure_stage_counts": {},
+        })
+        pipeline = BatchPipeline(config, plan=plan, run_id=run_id)
+        if args.retry_failed:
+            returncode = _retry_failed(pipeline, run_id=run_id)
+            counts = {"failed": int(returncode != 0)}
+        else:
+            result = pipeline.run()
+            returncode = 0 if result["failed"] == 0 else 1
+            counts = result
+        failure_stage_counts: dict[str, int] = {}
+        for task in pipeline.tasks:
+            if task.status == "failed":
+                stage = task.error_stage or task.stage or "unknown"
+                failure_stage_counts[stage] = failure_stage_counts.get(stage, 0) + 1
+        write_run_record(run_record_path, {
+            **record,
+            "status": "completed" if returncode == 0 else "failed",
+            "finished_at": time.time(),
+            "counts": counts,
+            "failure_stage_counts": failure_stage_counts,
+            "current_task_id": "",
+            "current_stage": "",
+        })
+        return returncode
+    finally:
+        if lock:
+            lock.release()
+        if worker_lease:
+            worker_lease.release()
 
 
 def _show_status() -> int:
     return show_status(DIR_WORK_STATES)
 
 
-def _retry_failed(pipeline: BatchPipeline) -> int:
+def _retry_failed(pipeline: BatchPipeline, *, run_id: str = "") -> int:
     """Retry only tasks currently marked as failed."""
     if not DIR_WORK_STATES.exists():
         print("No task records found.")
         return 0
 
     state_files = sorted(DIR_WORK_STATES.glob("*.state.json"))
-    retry_plan = prepare_retry_failed_tasks(state_files)
-    for task in retry_plan.reset_tasks:
-        print(f"  reset: {task.file}")
-
-    if not retry_plan.reset_tasks:
+    retry_plan = plan_retry_failed_tasks(state_files)
+    if not retry_plan.selected_tasks:
         print("No failed tasks need retry.")
         return 0
+    apply_retry_failed_plan(retry_plan, run_id=run_id)
+    pipeline.tasks = list(retry_plan.selected_tasks)
+    for task in retry_plan.selected_tasks:
+        print(f"  reset: {task.file}")
 
     print(
         f"\nReset {retry_plan.reset_count} failed task(s); "
@@ -795,9 +1036,10 @@ def _retry_failed(pipeline: BatchPipeline) -> int:
 
     completed = 0
     failed = 0
-    for i, task in enumerate(retry_plan.reset_tasks, start=1):
+    for i, task in enumerate(retry_plan.selected_tasks, start=1):
         print(f"[{i}/{retry_plan.reset_count}] Retrying: {task.file}")
         try:
+            pipeline._current_task = task
             pipeline._process_one(task)
             completed += 1
             print("  [OK] completed")
@@ -807,10 +1049,13 @@ def _retry_failed(pipeline: BatchPipeline) -> int:
             failed += 1
             task.status = "failed"
             task.error = str(exc)
+            task.error_category = type(exc).__name__
             task.error_stage = task.stage
             task.save()
             print(f"  [FAILED] {exc}")
             traceback.print_exc()
+        finally:
+            pipeline._current_task = None
 
     print(f"\nRetry finished: completed {completed}, failed {failed}")
     return 0 if failed == 0 else 1

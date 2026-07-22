@@ -151,16 +151,13 @@ def test_batch_asr_uses_language_profile_over_legacy_provider(monkeypatch):
             "llm_stages": {},
         }
 
-    class FakePipeline:
-        def __init__(self, config):
-            captured["config"] = config
-
-        def scan(self):
-            return []
+    def fake_plan(config, *, read_only=True):
+        captured["config"] = config
+        return type("Plan", (), {"blockers": [], "tasks": []})()
 
     monkeypatch.setattr(provider_store, "resolve_provider_config", fake_provider_config)
     monkeypatch.setattr(language_profile_store, "resolve_language_profile_config", fake_profile_config)
-    monkeypatch.setattr(batch_worker, "BatchPipeline", FakePipeline)
+    monkeypatch.setattr(batch_worker, "build_pipeline_plan", fake_plan)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -210,15 +207,12 @@ def test_batch_explicit_cli_asr_overrides_language_profile(monkeypatch):
             "llm_stages": {},
         }
 
-    class FakePipeline:
-        def __init__(self, config):
-            captured["config"] = config
-
-        def scan(self):
-            return []
+    def fake_plan(config, *, read_only=True):
+        captured["config"] = config
+        return type("Plan", (), {"blockers": [], "tasks": []})()
 
     monkeypatch.setattr(language_profile_store, "resolve_language_profile_config", fake_profile_config)
-    monkeypatch.setattr(batch_worker, "BatchPipeline", FakePipeline)
+    monkeypatch.setattr(batch_worker, "build_pipeline_plan", fake_plan)
     monkeypatch.setattr(
         sys,
         "argv",

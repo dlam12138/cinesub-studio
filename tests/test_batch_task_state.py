@@ -2,6 +2,14 @@ from pathlib import Path
 
 import batch_worker
 from batch_worker import BatchConfig, BatchPipeline, TaskState
+from pipeline_reliability import (
+    artifact_fingerprint,
+    artifact_set_fingerprint,
+    expected_stage_signatures,
+    input_fingerprint,
+    task_identity,
+)
+from task_state import apply_retry_failed_plan, plan_retry_failed_tasks
 
 
 def test_task_state_default_max_retries_is_three():
@@ -11,7 +19,7 @@ def test_task_state_default_max_retries_is_three():
     assert task.retry_count == 0
 
 
-def test_scan_initializes_new_task_with_configured_max_retries(monkeypatch, tmp_path):
+def test_scan_is_read_only_and_initializes_planned_task(monkeypatch, tmp_path):
     input_dir = tmp_path / "input"
     work_dir = tmp_path / "work"
     output_dir = tmp_path / "output"
@@ -42,7 +50,8 @@ def test_scan_initializes_new_task_with_configured_max_retries(monkeypatch, tmp_
     assert len(tasks) == 1
     assert tasks[0].file == "movie.mp4"
     assert tasks[0].max_retries == 7
-    assert (states_dir / "movie.state.json").is_file()
+    assert tasks[0].task_id == task_identity(media, input_dir)[0]
+    assert not states_dir.exists() or not list(states_dir.glob("*.state.json"))
 
 
 def _patch_runtime_dirs(monkeypatch, tmp_path):
@@ -96,10 +105,32 @@ def _write_required_outputs(pipeline: BatchPipeline, task: TaskState, content: b
     task.asr_mode = pipeline.config.asr_mode
     task.language = pipeline.config.language or ""
     task.asr_config_signature = pipeline.config.asr_signature()
+    task.output_stem = task.output_stem or Path(task.file).stem
+    task.input_fingerprint = input_fingerprint(Path(task.input_path))
+    task.audio_path = task.audio_path or str(pipeline.config.work_dir / f"{task.output_stem}.wav")
+    audio = Path(task.audio_path)
+    audio.parent.mkdir(parents=True, exist_ok=True)
+    if not audio.exists():
+        audio.write_bytes(content)
+    required = pipeline.required_final_outputs(task)
+    task.source_srt = str(required[0])
+    task.translated_srt = str(required[1]) if len(required) > 1 else ""
+    task.quality_report = str(required[-1]) if len(required) > 2 else ""
+    task.artifact_fingerprints = {
+        "audio": artifact_fingerprint(audio, force_full=True),
+        "source_srt": artifact_fingerprint(required[0], force_full=True),
+    }
+    if len(required) > 1:
+        task.artifact_fingerprints["translation_output"] = artifact_fingerprint(required[1], force_full=True)
+    if len(required) > 2:
+        task.artifact_fingerprints["quality_report"] = artifact_fingerprint(required[-1], force_full=True)
+    task.artifact_fingerprints["final_output"] = artifact_set_fingerprint(required)
+    expected = expected_stage_signatures(pipeline.config, task.to_dict(), task.input_fingerprint)
+    task.stage_build_signatures = expected
     task.save()
 
 
-def test_prepare_retry_failed_tasks_resets_only_failed(monkeypatch, tmp_path):
+def test_retry_plan_is_pure_then_apply_resets_only_failed(monkeypatch, tmp_path):
     states_dir = _patch_runtime_dirs(monkeypatch, tmp_path)
     pipeline = _pipeline(tmp_path)
     input_dir = pipeline.config.input_dir
@@ -108,11 +139,13 @@ def test_prepare_retry_failed_tasks_resets_only_failed(monkeypatch, tmp_path):
     pending = _save_task("pending.mp4", "pending", input_dir)
     running = _save_task("running.mp4", "running", input_dir)
 
-    plan = batch_worker.prepare_retry_failed_tasks(sorted(states_dir.glob("*.state.json")))
+    plan = plan_retry_failed_tasks(sorted(states_dir.glob("*.state.json")))
 
     assert plan.reset_count == 1
     assert plan.untouched_count == 3
     assert plan.selected_task_ids == [failed.file]
+    assert TaskState.load(failed.state_path()).status == "failed"
+    apply_retry_failed_plan(plan, run_id="run-1")
     assert TaskState.load(failed.state_path()).status == "pending"
     assert TaskState.load(failed.state_path()).stage == batch_worker.TaskStage.PENDING
     assert TaskState.load(failed.state_path()).error == ""
@@ -169,12 +202,12 @@ def test_completed_final_outputs_follow_translation_mode(monkeypatch, tmp_path):
     assert pipeline.completed_outputs_valid(task) is True
 
 
-def test_completed_output_is_not_reused_when_asr_signature_changes(monkeypatch, tmp_path):
+def test_completed_output_is_not_reused_when_asr_stage_signature_changes(monkeypatch, tmp_path):
     _patch_runtime_dirs(monkeypatch, tmp_path)
     pipeline = _pipeline(tmp_path)
     task = _save_task("movie.mp4", "completed", pipeline.config.input_dir)
     _write_required_outputs(pipeline, task)
-    task.asr_config_signature = "outdated-signature"
+    task.stage_build_signatures["asr"] = "outdated-signature"
     task.save()
 
     assert pipeline.completed_outputs_valid(task) is False
