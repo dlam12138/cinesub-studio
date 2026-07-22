@@ -247,8 +247,25 @@ def test_bundled_flat_model_directory_is_used_without_hub_lookup(tmp_path):
     bundled.mkdir()
     (bundled / "config.json").write_text("{}", encoding="utf-8")
     (bundled / "model.bin").write_bytes(b"model")
+    (bundled / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (bundled / "vocabulary.txt").write_text("token", encoding="utf-8")
 
     assert transcribe._resolve_local_model_source("small", tmp_path) == str(
         bundled.resolve()
     )
     assert transcribe._resolve_local_model_source("medium", tmp_path) == "medium"
+
+
+def test_uncovered_speech_intervals_are_padded_filtered_and_merged():
+    cues = [
+        transcribe.TranscriptionCue(start=1.0, end=2.0, text="covered"),
+        transcribe.TranscriptionCue(start=6.0, end=7.0, text="covered"),
+    ]
+    result = transcribe.uncovered_speech_intervals(
+        [(0.0, 3.5), (3.8, 5.7), (7.2, 9.0)],
+        cues,
+    )
+    assert result == [
+        {"start": 2.35, "end": 5.65, "duration": 3.3},
+        {"start": 7.35, "end": 9.0, "duration": 1.65},
+    ]

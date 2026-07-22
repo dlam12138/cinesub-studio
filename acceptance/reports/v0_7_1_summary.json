@@ -1,0 +1,81 @@
+{
+  "report_schema_version": 1,
+  "acceptance": "conditional_pass",
+  "release_candidate": {
+    "quality_retry_mode": "dry_run",
+    "automatic_apply_accepted": false,
+    "reason": "accepted_window_evidence_below_minimum"
+  },
+  "sha": {
+    "base_sha": "ff2f48b754687346410c850ecdf628045056de8c",
+    "implementation_sha": "6d13655d4597b331073ce480f94fbff1f5836a5c",
+    "acceptance_runner_sha": "dd170e3cbfcb341482558013bbb87e14294f568a",
+    "evaluated_sha": "dd170e3cbfcb341482558013bbb87e14294f568a"
+  },
+  "environment": {
+    "python": "3.12.10",
+    "faster_whisper": "1.2.1",
+    "ctranslate2": "4.8.1",
+    "pyav": "18.0.0",
+    "numpy": "2.5.1",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "cuda_runtime": "13.0",
+    "device": "cuda",
+    "compute_type": "float16",
+    "local_files_only": true
+  },
+  "models": {
+    "small": {
+      "revision": "flat",
+      "model_bin_sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"
+    },
+    "large_v3": {
+      "revision": "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+      "model_bin_sha256": "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1"
+    }
+  },
+  "ocr": {
+    "tool": "VideOCR CLI",
+    "version": "1.5.1",
+    "engine": "paddleocr",
+    "language": "fr",
+    "weak_evidence_only": true,
+    "archive_verified": false,
+    "executable_sha256": "7b366641db86c89e3fa559b9f97824040049959e909362ac3b7fec7616337d7c"
+  },
+  "samples": [
+    {"id": "sample-01", "duration_seconds": 292, "category": "low_volume_dialogue"},
+    {"id": "sample-02", "duration_seconds": 300, "category": "clear_dialogue_control"},
+    {"id": "sample-03", "duration_seconds": 300, "category": "distant_stage_speech"}
+  ],
+  "final_matrix": {
+    "run_count": 12,
+    "successful_run_count": 12,
+    "timeline_invariant_failures": 0,
+    "enabled_resegment_run_count": 9,
+    "resegment_applied_count": 9,
+    "resegment_fallback_count": 0,
+    "quality_retry_mode": "dry_run",
+    "quality_planned_window_count": 1,
+    "quality_executed_window_count": 1,
+    "quality_accepted_window_count": 0,
+    "vad_uncovered_applied_count": 0,
+    "legacy_speed_byte_equal": true
+  },
+  "aggregate_performance": {
+    "speed": {"pipeline_seconds": 31.184, "end_to_end_seconds": 42.991, "pipeline_ratio": 1.0, "end_to_end_ratio": 1.0},
+    "balanced": {"pipeline_seconds": 31.267, "end_to_end_seconds": 42.603, "pipeline_ratio": 1.003, "end_to_end_ratio": 0.991},
+    "large_control": {"pipeline_seconds": 134.387, "end_to_end_seconds": 152.585, "pipeline_ratio": 4.31, "end_to_end_ratio": 3.549},
+    "quality": {"pipeline_seconds": 119.245, "end_to_end_seconds": 137.696, "pipeline_ratio": 3.824, "end_to_end_ratio": 3.203}
+  },
+  "attempts": [
+    {"attempt": 2, "evaluated_sha": "b1e28c639102f36afc7d9aa51f2d3a1aae5d5381", "conclusion": "failed", "reason": "real_french_zero_duration_tokens_triggered_text_conservation_fallback"},
+    {"attempt": 3, "evaluated_sha": "c07496e706c8dd7596eeb043532b45c146294eab", "conclusion": "insufficient_evidence", "reason": "apply_accepted_zero_windows"},
+    {"attempt": 4, "evaluated_sha": "dd170e3cbfcb341482558013bbb87e14294f568a", "conclusion": "conditional_pass", "reason": "quality_remediated_to_dry_run"}
+  ],
+  "hotword_isolation": {
+    "target_improved": false,
+    "accepted_window_count": 0,
+    "conclusion": "not_demonstrated"
+  }
+}

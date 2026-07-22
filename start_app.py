@@ -149,6 +149,7 @@ def _run_smoke(args: argparse.Namespace) -> int:
     ffmpeg_ok = _check_ffmpeg()
     if _is_web_ready(args.port):
         print(f"Smoke result: existing server is responding at {_url(args.port)}")
+        print("No browser was opened. No model download or media processing was started.")
         return 0
     if _is_port_in_use(args.port):
         print(f"Smoke result: port {args.port} is in use, but CineSub Studio did not return HTTP 200.")

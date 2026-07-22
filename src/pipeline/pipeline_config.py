@@ -44,6 +44,7 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
     profile_reliability = profile.get("translation_reliability", {})
     profile_translation_strategy = profile.get("translation_strategy", {})
     from asr_runtime import normalize_asr_request
+    from asr_runtime import resolve_quality_loop_config
 
     profile_language = _first(
         asr.get("language"),
@@ -68,6 +69,20 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
     asr_mode, source_language = normalize_asr_request(
         requested_mode,
         requested_language,
+    )
+    loop_explicit: dict[str, object] = {}
+    if explicit("--word-timestamps", "--no-word-timestamps"):
+        loop_explicit["word_timestamps"] = args.word_timestamps
+    if explicit("--resegment-subtitles", "--no-resegment-subtitles"):
+        loop_explicit["resegment_subtitles"] = args.resegment_subtitles
+    if explicit("--asr-retry-mode"):
+        loop_explicit["asr_retry_mode"] = args.asr_retry_mode
+    if explicit("--asr-hotword-prompt"):
+        loop_explicit["asr_hotword_prompt"] = args.asr_hotword_prompt
+    loop, loop_sources = resolve_quality_loop_config(
+        explicit=loop_explicit,
+        preset=args.quality_preset if explicit("--quality-preset") else "",
+        profile_asr=asr,
     )
     from translation_reliability import normalize_reliability_config
 
@@ -125,7 +140,12 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
             provider.get("translation_quality_model"),
             "",
         ),
-        "model": _first(args.model if explicit("--model") else None, asr.get("whisper_model"), "large-v3"),
+        "model": _first(
+            args.model if explicit("--model") else None,
+            loop.get("model") if loop_sources.get("model", {}).get("source") == "quality_preset" else None,
+            asr.get("whisper_model"),
+            "small",
+        ),
         "asr_mode": asr_mode,
         "device": _first(args.device if explicit("--device") else None, asr.get("whisper_device"), "auto"),
         "compute_type": _first(args.compute_type if explicit("--compute-type") else None, asr.get("compute_type")),
@@ -150,6 +170,27 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
         ),
         "subtitle_style": style,
         "profile_info": profile_info,
+        "quality_preset": loop.get("quality_preset", ""),
+        "word_timestamps": loop.get("word_timestamps", False),
+        "resegment_subtitles": loop.get("resegment_subtitles", False),
+        "asr_retry_mode": loop.get("asr_retry_mode", "off"),
+        "asr_hotword_prompt": loop.get("asr_hotword_prompt", ""),
+        "effective_asr_config": {
+            **loop_sources,
+            "model": {
+                "value": _first(
+                    args.model if explicit("--model") else None,
+                    loop.get("model") if loop_sources.get("model", {}).get("source") == "quality_preset" else None,
+                    asr.get("whisper_model"),
+                    "small",
+                ),
+                "source": "explicit_request" if explicit("--model") else (
+                    "quality_preset"
+                    if loop_sources.get("model", {}).get("source") == "quality_preset"
+                    else ("language_profile" if asr.get("whisper_model") else "default")
+                ),
+            },
+        },
         "translation_reliability": reliability,
         "translation_strategy": translation_strategy,
     }

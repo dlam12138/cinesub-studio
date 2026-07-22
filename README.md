@@ -2,6 +2,8 @@
 
 CineSub Studio 是一款 Windows 本地字幕工作台，可把视频或音频转写为 SRT，并通过 OpenAI-compatible Provider 生成中文字幕或双语字幕。当前正式版本为 `0.6.2`。
 
+> `main` 当前包含尚未正式发布的 v0.7.x 源码候选；最新可下载便携版本仍为 0.6.2。源码接口和正式二进制可能暂时不同。
+
 ## 下载与启动
 
 普通用户只需要从 [GitHub Release v0.6.2](https://github.com/dlam12138/cinesub-studio/releases/tag/v0.6.2) 下载：
@@ -76,7 +78,7 @@ data/.cache/    Electron、pip 和 Hugging Face 缓存
 - `固定单语言`：必须选择英语、法语、中文等具体语言，整片按指定语言转写。
 - `多语言`：按语音停顿分块，每块独立检测语言并转写，再恢复原时间轴并去除边界重复。
 
-三种模式都只使用 faster-whisper。置信度和异常检测仅用于日志、报告及“建议人工听取”标记，不会自动换模型、改写字幕或局部重跑。
+三种模式都只使用 faster-whisper。默认旧调用仍只把置信度和异常检测用于日志、报告及“建议人工听取”标记，不会自动换模型。v0.7 的“识别质量闭环”可选启用词级时间戳、确定性重切分和固定配方局部重试；真实媒体验收尚未积累足够的自动替换证据，因此 `balanced` 和 `quality` 预设都只执行 dry-run 并写入 ASR 审计报告。只有显式请求 `apply` 时，才会在预算、硬拒绝和事务校验全部通过后局部替换 suspicious cue。
 
 ## 翻译 Provider
 
