@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -44,7 +45,7 @@ class SubtitleResegmenter:
             return ResegmentResult(artifact, empty_summary)
 
         words = _flatten_words(artifact)
-        if not words:
+        if not words or not any(_has_valid_timing(word) for word in words):
             empty_summary["fallback_reason"] = "no_word_timestamps"
             return ResegmentResult(artifact, empty_summary)
 
@@ -83,8 +84,7 @@ class SubtitleResegmenter:
         return groups
 
     def _should_break(self, group: list[TranscriptionWord], word: TranscriptionWord) -> bool:
-        start = _word_start(group[0])
-        end = _word_end(group[-1])
+        start, end = _group_time_bounds(group)
         if start is None or end is None:
             return False
         duration = max(0.001, end - start)
@@ -104,8 +104,9 @@ class SubtitleResegmenter:
         return False
 
     def _group_to_cue(self, group: list[TranscriptionWord]) -> TranscriptionCue:
-        start = _word_start(group[0]) or 0.0
-        end = _word_end(group[-1]) or max(start + 0.001, start)
+        start, end = _group_time_bounds(group)
+        start = start or 0.0
+        end = end or max(start + 0.001, start)
         text = _join_word_text(group)
         return TranscriptionCue(
             start=max(0.0, start),
@@ -119,13 +120,24 @@ def _flatten_words(artifact: TranscriptionArtifact) -> list[TranscriptionWord]:
     words: list[TranscriptionWord] = []
     for cue in artifact.cues:
         for word in cue.words:
-            start = _word_start(word)
-            end = _word_end(word)
             text = str(word.text or "")
-            if not text.strip() or start is None or end is None or end <= start:
+            if not text.strip():
                 continue
             words.append(word)
-    return sorted(words, key=lambda item: (_word_start(item) or 0.0, _word_end(item) or 0.0, item.text))
+    return words
+
+
+def _group_time_bounds(group: list[TranscriptionWord]) -> tuple[float | None, float | None]:
+    valid = [word for word in group if _has_valid_timing(word)]
+    if not valid:
+        return None, None
+    return _word_start(valid[0]), _word_end(valid[-1])
+
+
+def _has_valid_timing(word: TranscriptionWord) -> bool:
+    start = _word_start(word)
+    end = _word_end(word)
+    return start is not None and end is not None and end > start
 
 
 def _validate_resegment(source: TranscriptionArtifact, candidate: TranscriptionArtifact) -> str | None:
@@ -150,11 +162,17 @@ def _validate_resegment(source: TranscriptionArtifact, candidate: TranscriptionA
 
 
 def _word_start(word: TranscriptionWord) -> float | None:
-    return float(word.start) if word.start is not None else None
+    if word.start is None:
+        return None
+    value = float(word.start)
+    return value if math.isfinite(value) else None
 
 
 def _word_end(word: TranscriptionWord) -> float | None:
-    return float(word.end) if word.end is not None else None
+    if word.end is None:
+        return None
+    value = float(word.end)
+    return value if math.isfinite(value) else None
 
 
 def _join_word_text(words: list[TranscriptionWord]) -> str:

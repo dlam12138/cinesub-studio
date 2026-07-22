@@ -177,6 +177,25 @@ def test_subtitle_resegmenter_conserves_text_and_falls_back_without_words() -> N
     assert fallback.summary["fallback_reason"] == "no_word_timestamps"
 
 
+def test_subtitle_resegmenter_preserves_zero_duration_text_tokens_in_order() -> None:
+    words = (
+        TranscriptionWord(0.0, 0.4, " Je", 0.9),
+        TranscriptionWord(0.5, 0.8, " c", 0.9),
+        TranscriptionWord(0.8, 0.8, "'est", 0.9),
+        TranscriptionWord(0.9, 1.2, " vrai.", 0.9),
+    )
+    artifact = TranscriptionArtifact(
+        cues=(TranscriptionCue(0.0, 1.2, " Je c'est vrai.", words=words),),
+        duration_seconds=1.2,
+    )
+
+    result = SubtitleResegmenter(max_units=4).resegment(artifact, enabled=True)
+
+    assert result.summary["applied"] is True
+    assert "".join(cue.text for cue in result.artifact.cues).replace(" ", "") == "Jec'estvrai."
+    assert tuple(word for cue in result.artifact.cues for word in cue.words) == words
+
+
 def test_retry_budget_transaction_and_report_omit_transcripts() -> None:
     baseline = TranscriptionArtifact(
         cues=(
