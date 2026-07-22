@@ -216,3 +216,21 @@ def test_retry_hard_rejects_empty_candidate() -> None:
 
     assert selection.accepted is False
     assert "empty_candidate" in selection.reasons
+
+
+def test_asr_review_message_reports_apply_and_dry_run_truthfully() -> None:
+    accepted = transcribe._retry_summary_message(
+        warning=True,
+        mode="apply",
+        report={"accepted_window_count": 2, "executed_window_count": 3},
+    )
+    dry_run = transcribe._retry_summary_message(
+        warning=True,
+        mode="dry_run",
+        report={"accepted_window_count": 0, "executed_window_count": 3},
+    )
+
+    assert "2" in accepted
+    assert "已事务式接受" in accepted
+    assert "dry-run" in dry_run
+    assert "未改写输出" in dry_run

@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
+import ctranslate2
+
 
 MODEL_CATALOG: dict[str, dict[str, object]] = {
     "tiny": {
@@ -58,6 +60,8 @@ class AsrModelLocation:
     source: str
     local_path: str
     missing_files: tuple[str, ...] = ()
+    revision: str = ""
+    error: str = ""
 
     def to_dict(self) -> dict:
         payload = asdict(self)
@@ -92,27 +96,56 @@ def validate_model_directory(path: Path) -> tuple[bool, tuple[str, ...]]:
             valid = False
         if not valid:
             missing.append(name)
-    return not missing, tuple(missing)
+    if not _has_any_nonempty(path, ("tokenizer.json", "tokenizer.model")):
+        missing.append("tokenizer.*")
+    if not _has_any_nonempty(
+        path,
+        ("vocabulary.json", "vocabulary.txt", "vocabulary.bin"),
+    ):
+        missing.append("vocabulary.*")
+    try:
+        contains_model = ctranslate2.contains_model(str(path))
+    except (OSError, RuntimeError, ValueError):
+        contains_model = False
+    if not contains_model:
+        missing.append("ctranslate2_model")
+    return not missing, tuple(dict.fromkeys(missing))
 
 
 def locate_asr_model(
     model_name: str,
     model_dir: Path,
     hf_cache_dir: Path | None = None,
+    *,
+    revision: str = "",
 ) -> AsrModelLocation:
     requested_text = str(model_name or "").strip()
     requested_path = Path(requested_text).expanduser()
     repo_id = model_repo_id(requested_text)
 
+    allowed_roots = tuple(
+        root.resolve() for root in (model_dir, hf_cache_dir) if root is not None
+    )
     if requested_text and (requested_path.is_absolute() or requested_path.is_dir()):
+        resolved_requested = requested_path.resolve()
+        if not _inside_any_root(resolved_requested, allowed_roots):
+            return AsrModelLocation(
+                requested=requested_text,
+                repo_id=repo_id,
+                available=False,
+                source="outside_allowed_model_root",
+                local_path="",
+                error="model_path_outside_allowed_root",
+            )
         valid, missing = validate_model_directory(requested_path)
         return AsrModelLocation(
             requested=requested_text,
             repo_id=repo_id,
             available=valid,
             source="absolute_path",
-            local_path=str(requested_path.resolve()) if valid else "",
+            local_path=str(resolved_requested) if valid else "",
             missing_files=missing,
+            revision=requested_path.name if requested_path.parent.name == "snapshots" else "",
         )
 
     flat = model_target_dir(requested_text, model_dir)
@@ -126,17 +159,31 @@ def locate_asr_model(
             local_path=str(flat.resolve()),
         )
 
-    for snapshot in _snapshot_candidates(repo_id, hf_cache_dir):
+    valid_snapshots: list[tuple[Path, str]] = []
+    for snapshot, source in _snapshot_candidates(repo_id, model_dir, hf_cache_dir, revision):
         snapshot_valid, snapshot_missing = validate_model_directory(snapshot)
         if snapshot_valid:
-            return AsrModelLocation(
-                requested=requested_text,
-                repo_id=repo_id,
-                available=True,
-                source="huggingface_cache",
-                local_path=str(snapshot.resolve()),
-            )
+            valid_snapshots.append((snapshot, source))
         missing = snapshot_missing
+    if len(valid_snapshots) == 1:
+        snapshot, source = valid_snapshots[0]
+        return AsrModelLocation(
+            requested=requested_text,
+            repo_id=repo_id,
+            available=True,
+            source=source,
+            local_path=str(snapshot.resolve()),
+            revision=snapshot.name,
+        )
+    if len(valid_snapshots) > 1:
+        return AsrModelLocation(
+            requested=requested_text,
+            repo_id=repo_id,
+            available=False,
+            source="ambiguous",
+            local_path="",
+            error="multiple_valid_model_snapshots",
+        )
 
     return AsrModelLocation(
         requested=requested_text,
@@ -165,7 +212,12 @@ def installed_models(model_dir: Path, hf_cache_dir: Path | None = None) -> list[
             resolved = str(candidate.resolve())
             if resolved.casefold() in seen:
                 continue
-            repo_id = _repo_from_cache_name(candidate.parent.name if source == "huggingface_cache" else candidate.name)
+            cache_name = (
+                candidate.parent.parent.name
+                if source in {"models_dir_snapshot", "huggingface_cache"}
+                else candidate.name
+            )
+            repo_id = _repo_from_cache_name(cache_name)
             rows.append(
                 AsrModelLocation(
                     requested=repo_id,
@@ -210,16 +262,29 @@ def model_plan(
     }
 
 
-def _snapshot_candidates(repo_id: str, hf_cache_dir: Path | None) -> Iterable[Path]:
-    if hf_cache_dir is None:
-        return ()
-    repo_root = hf_cache_dir / model_cache_name(repo_id) / "snapshots"
-    if not repo_root.is_dir():
-        return ()
-    try:
-        return tuple(path for path in sorted(repo_root.iterdir(), reverse=True) if path.is_dir())
-    except OSError:
-        return ()
+def _snapshot_candidates(
+    repo_id: str,
+    model_dir: Path,
+    hf_cache_dir: Path | None,
+    revision: str = "",
+) -> Iterable[tuple[Path, str]]:
+    roots = [(model_dir, "models_dir_snapshot")]
+    if hf_cache_dir is not None:
+        roots.append((hf_cache_dir, "huggingface_cache"))
+    candidates: list[tuple[Path, str]] = []
+    for root, source in roots:
+        snapshot_root = root / model_cache_name(repo_id) / "snapshots"
+        if not snapshot_root.is_dir():
+            continue
+        try:
+            if revision:
+                paths = (snapshot_root / revision,)
+            else:
+                paths = tuple(sorted(snapshot_root.iterdir()))
+            candidates.extend((path, source) for path in paths if path.is_dir())
+        except OSError:
+            continue
+    return tuple(candidates)
 
 
 def _inventory_roots(
@@ -232,18 +297,43 @@ def _inventory_roots(
             flat = tuple(path for path in model_dir.glob("models--*--*") if path.is_dir())
         except OSError:
             pass
-    snapshots: list[Path] = []
-    if hf_cache_dir and hf_cache_dir.is_dir():
+    snapshots: list[tuple[Path, str]] = []
+    for root, source in (
+        (model_dir, "models_dir_snapshot"),
+        (hf_cache_dir, "huggingface_cache"),
+    ):
+        if root is None or not root.is_dir():
+            continue
         try:
-            for repo_root in hf_cache_dir.glob("models--*--*"):
+            for repo_root in root.glob("models--*--*"):
                 snap_root = repo_root / "snapshots"
                 if snap_root.is_dir():
-                    snapshots.extend(path for path in snap_root.iterdir() if path.is_dir())
+                    snapshots.extend(
+                        (path, source) for path in snap_root.iterdir() if path.is_dir()
+                    )
         except OSError:
             pass
-    return [(flat, "models_dir"), (tuple(snapshots), "huggingface_cache")]
+    rows: list[tuple[tuple[Path, ...], str]] = [(flat, "models_dir")]
+    for source in ("models_dir_snapshot", "huggingface_cache"):
+        rows.append((tuple(path for path, item_source in snapshots if item_source == source), source))
+    return rows
 
 
 def _repo_from_cache_name(value: str) -> str:
     text = value.removeprefix("models--")
     return text.replace("--", "/", 1)
+
+
+def _has_any_nonempty(path: Path, names: tuple[str, ...]) -> bool:
+    for name in names:
+        candidate = path / name
+        try:
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _inside_any_root(path: Path, roots: tuple[Path, ...]) -> bool:
+    return any(path == root or path.is_relative_to(root) for root in roots)

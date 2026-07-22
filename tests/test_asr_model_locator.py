@@ -15,6 +15,8 @@ def _write_model(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "config.json").write_text("{}", encoding="utf-8")
     (path / "model.bin").write_bytes(b"model")
+    (path / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (path / "vocabulary.txt").write_text("token", encoding="utf-8")
 
 
 def test_locator_supports_flat_snapshot_absolute_and_unicode_paths(tmp_path: Path) -> None:
@@ -40,11 +42,48 @@ def test_locator_supports_flat_snapshot_absolute_and_unicode_paths(tmp_path: Pat
     assert medium.source == "huggingface_cache"
     assert Path(medium.local_path) == snapshot.resolve()
 
-    absolute = tmp_path / "自定义 模型"
+    absolute = model_dir / "自定义 模型"
     _write_model(absolute)
     custom = locate_asr_model(str(absolute), model_dir, cache_dir)
     assert custom.available is True
     assert custom.source == "absolute_path"
+
+
+def test_locator_supports_model_dir_snapshot_and_rejects_ambiguity(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models"
+    snapshots = (
+        model_target_dir("large-v3", model_dir) / "snapshots"
+    )
+    first = snapshots / "revision-one"
+    second = snapshots / "revision-two"
+    _write_model(first)
+
+    selected = locate_asr_model("large-v3", model_dir)
+    assert selected.available is True
+    assert selected.source == "models_dir_snapshot"
+    assert selected.revision == "revision-one"
+
+    _write_model(second)
+    ambiguous = locate_asr_model("large-v3", model_dir)
+    assert ambiguous.available is False
+    assert ambiguous.source == "ambiguous"
+    assert ambiguous.error == "multiple_valid_model_snapshots"
+
+    explicit = locate_asr_model("large-v3", model_dir, revision="revision-two")
+    assert explicit.available is True
+    assert explicit.revision == "revision-two"
+
+
+def test_absolute_model_must_stay_inside_allowed_root(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models"
+    outside = tmp_path / "outside"
+    _write_model(outside)
+
+    location = locate_asr_model(str(outside), model_dir)
+
+    assert location.available is False
+    assert location.source == "outside_allowed_model_root"
+    assert location.error == "model_path_outside_allowed_root"
 
 
 def test_incomplete_model_is_not_available(tmp_path: Path) -> None:
@@ -53,7 +92,12 @@ def test_incomplete_model_is_not_available(tmp_path: Path) -> None:
     (target / "config.json").write_text("{}", encoding="utf-8")
     valid, missing = validate_model_directory(target)
     assert valid is False
-    assert missing == ("model.bin",)
+    assert missing == (
+        "model.bin",
+        "tokenizer.*",
+        "vocabulary.*",
+        "ctranslate2_model",
+    )
     assert locate_asr_model("small", tmp_path).available is False
 
 

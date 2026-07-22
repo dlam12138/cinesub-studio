@@ -149,7 +149,7 @@ def load_ocr_cues(path: Path, sidecar: Path | None = None) -> tuple[list[OcrCue]
         start, end = _bounds(item.time_line)
         source, target = _split_ocr_text(item.text)
         row = metadata.get(item.index, {})
-        stability_raw = row.get("stability")
+        stability_raw = row.get("temporal_stability", row.get("stability"))
         stability = None
         if isinstance(stability_raw, (int, float)) and math.isfinite(float(stability_raw)):
             stability = min(1.0, max(0.0, float(stability_raw)))

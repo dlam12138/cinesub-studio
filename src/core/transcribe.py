@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from dataclasses import dataclass
 from importlib.metadata import version as package_version
 from types import SimpleNamespace
@@ -140,6 +141,7 @@ def create_asr_session(
 
 
 def main() -> int:
+    process_started = time.perf_counter()
     args = parse_args()
     project_root = PROJECT_ROOT
     subtitle_formats = normalize_subtitle_formats(args.subtitle_formats)
@@ -161,7 +163,12 @@ def main() -> int:
     os.environ.setdefault("HF_HOME", str(project_root / ".cache" / "huggingface"))
     os.environ.setdefault("HF_HUB_CACHE", str(project_root / ".cache" / "huggingface" / "hub"))
 
+    extract_started = time.perf_counter()
     audio_path = prepare_audio(input_path, work_dir)
+    phase_timings = {
+        "ffmpeg_extract_seconds": time.perf_counter() - extract_started,
+        "process_started": process_started,
+    }
     srt_path = output_dir / f"{input_path.stem}.{args.model}.srt"
 
     from pipeline_stages import TaskContext, transcribe_stage
@@ -185,6 +192,7 @@ def main() -> int:
             asr_hotword_prompt=args.asr_hotword_prompt,
             profile_glossary=getattr(args, "profile_glossary", []),
             effective_asr_config=getattr(args, "effective_asr_config", {}),
+            phase_timings=phase_timings,
         ),
     )
 
@@ -569,6 +577,7 @@ def transcribe_to_srt(
     asr_hotword_prompt: str = "",
     profile_glossary: list[dict] | None = None,
     effective_asr_config: dict | None = None,
+    phase_timings: dict[str, float] | None = None,
 ) -> dict | None:
     """Run the selected faster-whisper mode and atomically write SRT + diagnostics."""
     asr_mode, language = normalize_asr_request(asr_mode, language)
@@ -578,6 +587,10 @@ def transcribe_to_srt(
     options.validate()
     asr_retry_mode = normalize_asr_retry_mode(asr_retry_mode)
     initial_prompt = _bounded_prompt([asr_hotword_prompt], max_chars=512)
+    function_started = time.perf_counter()
+    timings = dict(phase_timings or {})
+    model_load_started = time.perf_counter()
+    reused_session = session is not None
     if session is None:
         session = create_asr_session(
             model_name=model_name, model_dir=model_dir, device=device,
@@ -585,12 +598,16 @@ def transcribe_to_srt(
         )
     elif session.model_name != model_name or session.local_files_only != local_files_only:
         raise ValueError("ASR session configuration does not match transcription request")
+    timings["model_load_seconds"] = (
+        0.0 if reused_session else time.perf_counter() - model_load_started
+    )
     model = session.model
     device = session.device
     compute_type = session.compute_type
     backend_version = _package_version("faster-whisper")
 
     blocks: list[dict[str, Any]] = []
+    initial_asr_started = time.perf_counter()
     if asr_mode == "multilingual":
         artifact, blocks = _transcribe_multilingual(
             model=model,
@@ -623,6 +640,7 @@ def transcribe_to_srt(
             duration_seconds=float(getattr(info, "duration", 0.0) or 0.0) or None,
             backend_versions=(("faster-whisper", backend_version),),
         )
+    timings["initial_asr_seconds"] = time.perf_counter() - initial_asr_started
     if not artifact.cues:
         raise RuntimeError("未检测到可转写语音。请确认视频包含清晰对白后重试。")
 
@@ -631,6 +649,7 @@ def transcribe_to_srt(
     print(f"ASR mode: {asr_mode}")
     print(f"Detected language: {detected or 'unknown'} ({prob_str})")
     review_indexes = suspicious_cue_indexes(original_artifact.cues)
+    retry_started = time.perf_counter()
     retry_report = _run_controlled_asr_retry(
         model=model,
         audio_path=audio_path,
@@ -645,6 +664,7 @@ def transcribe_to_srt(
         asr_hotword_prompt=asr_hotword_prompt,
         profile_glossary=profile_glossary or [],
     )
+    timings["retry_seconds"] = time.perf_counter() - retry_started
     if asr_retry_mode == "apply" and retry_report["accepted_window_count"]:
         accepted_windows = [
             tuple(window["window"])
@@ -656,7 +676,9 @@ def transcribe_to_srt(
             artifact = merge_retry_artifact(original_artifact, retry_artifact, accepted_windows)
     else:
         retry_report.pop("_retry_artifact", None)
+    resegment_started = time.perf_counter()
     resegment_result = SubtitleResegmenter().resegment(artifact, enabled=resegment_subtitles)
+    timings["resegment_seconds"] = time.perf_counter() - resegment_started
     artifact = resegment_result.artifact
     distinct_languages = sorted({
         str(block.get("language") or "") for block in blocks if block.get("language")
@@ -669,6 +691,24 @@ def transcribe_to_srt(
         "resegment_subtitles": {"value": bool(resegment_subtitles), "source": "explicit_request" if resegment_subtitles else "default"},
         "asr_retry_mode": {"value": asr_retry_mode, "source": "explicit_request" if asr_retry_mode != "off" else "default"},
         "asr_hotword_prompt": {"value": bool(asr_hotword_prompt), "source": "explicit_request" if asr_hotword_prompt else "default"},
+    }
+    process_started = timings.pop("process_started", None)
+    timings.setdefault("ffmpeg_extract_seconds", 0.0)
+    timings["total_elapsed_seconds"] = (
+        time.perf_counter() - float(process_started)
+        if process_started is not None
+        else timings["ffmpeg_extract_seconds"] + (time.perf_counter() - function_started)
+    )
+    phase_timing_report = {
+        key: round(float(timings.get(key, 0.0)), 6)
+        for key in (
+            "ffmpeg_extract_seconds",
+            "model_load_seconds",
+            "initial_asr_seconds",
+            "retry_seconds",
+            "resegment_seconds",
+            "total_elapsed_seconds",
+        )
     }
     lang_info = {
         "report_schema_version": 2,
@@ -701,6 +741,7 @@ def transcribe_to_srt(
         "effective_asr_config": effective_config,
         "backend_versions": dict(artifact.backend_versions),
         "local_files_only": local_files_only,
+        "phase_timings": phase_timing_report,
     }
 
     review_payload = _build_asr_review(
@@ -719,6 +760,7 @@ def transcribe_to_srt(
         asr_retry_mode=asr_retry_mode,
         asr_retry_report=_public_retry_report(retry_report),
         effective_asr_config=effective_config,
+        phase_timings=phase_timing_report,
     )
     report_root = srt_path.parent.parent if srt_path.parent.name == "source" else srt_path.parent
     review_report_path = report_root / "reports" / f"{srt_path.stem}.asr_review.json"
@@ -773,6 +815,7 @@ def _build_asr_review(
     asr_retry_mode: str = "off",
     asr_retry_report: dict | None = None,
     effective_asr_config: dict | None = None,
+    phase_timings: dict | None = None,
 ) -> dict:
     speech_intervals: list[tuple[float, float]] = []
     diagnostic_error = ""
@@ -843,6 +886,14 @@ def _build_asr_review(
         },
         "asr_retry_report": asr_retry_report or empty_retry_report(asr_retry_mode),
         "effective_asr_config": effective_asr_config or {},
+        "phase_timings": phase_timings or {
+            "ffmpeg_extract_seconds": 0.0,
+            "model_load_seconds": 0.0,
+            "initial_asr_seconds": 0.0,
+            "retry_seconds": 0.0,
+            "resegment_seconds": 0.0,
+            "total_elapsed_seconds": 0.0,
+        },
         "summary": {
             "status": "warning" if warning else "pass",
             "uncovered_speech_count": len(uncovered),
@@ -850,10 +901,10 @@ def _build_asr_review(
             "candidates": candidate_summary,
             "suspicious_cue_count": len(suspicious),
             "diagnostic_available": not bool(diagnostic_error),
-            "message": (
-                "发现可能漏识别或低可信区间，仅供人工复核；未自动重跑或改写。"
-                if warning
-                else "未发现需要人工关注的 ASR 区间。"
+            "message": _retry_summary_message(
+                warning=warning,
+                mode=asr_retry_mode,
+                report=asr_retry_report or empty_retry_report(asr_retry_mode),
             ),
         },
         "uncovered_speech_intervals": uncovered,
@@ -877,6 +928,22 @@ def _build_asr_review(
         },
         "diagnostic_error": diagnostic_error,
     }
+
+
+def _retry_summary_message(*, warning: bool, mode: str, report: dict) -> str:
+    accepted = int(report.get("accepted_window_count") or 0)
+    executed = int(report.get("executed_window_count") or 0)
+    if mode == "apply" and accepted:
+        return f"ASR 复核已事务式接受 {accepted} 个局部重试窗口；请继续核对审计报告。"
+    if mode == "apply":
+        return "ASR 已执行受控局部重试，但没有候选通过替换门槛。"
+    if mode == "dry_run" and executed:
+        return f"ASR 已 dry-run 评估 {executed} 个局部重试窗口，未改写输出。"
+    if mode == "dry_run":
+        return "ASR retry 为 dry-run，未规划可执行窗口，未改写输出。"
+    if warning:
+        return "发现可能漏识别或低可信区间，仅供人工复核；ASR retry 已关闭。"
+    return "未发现需要人工关注的 ASR 区间；ASR retry 已关闭。"
 
 
 def _transcribe_multilingual(

@@ -73,7 +73,7 @@ Electron 便携模式：
 
 ```text
 .venv/                 .cache/                 .tmp/
-acceptance/            research/               .superdesign/
+research/               .superdesign/
 .claude/               .agents/
 models/                tools/python/           tools/wheelhouse/
 tools/ffmpeg/          tools/cuda/
@@ -83,6 +83,21 @@ reports/               uploads/                data/
 config/providers.local.json
 config/language_profiles.local.json
 ```
+
+`acceptance/` 只允许提交下列 v0.7.1 匿名验收文件，且不得使用 `git add -f`
+绕过 allowlist：
+
+```text
+acceptance/v0_7_1_real_media_acceptance.md
+acceptance/reports/v0_7_1_summary.json
+acceptance/reports/v0_7_1_performance.csv
+acceptance/reports/v0_7_1_retry_window_audit.csv
+```
+
+其余 `acceptance/` 内容均为本地私有证据，包括媒体片段、OCR 帧、完整 transcript、
+原始 OCR、运行 artifact、绝对路径和本地审核记录，严禁提交。
+真实媒体验收可在私有目录中使用经版本和哈希校验的 VideOCR CLI，
+但只允许本地 PaddleOCR 引擎，不得使用 Google Lens 云端 OCR，不得将该工具集成进产品链路。
 
 还不得提交 API Key、token、用户媒体、字幕产物、测试私有样本、构建 staging、EXE、DLL、模型或 Release ZIP。公开源码只保留 example 配置、代码、必要测试、许可证和当前用户/开发者文档。
 

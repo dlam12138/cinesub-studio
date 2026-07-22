@@ -152,6 +152,7 @@ def transcribe_stage(
         asr_hotword_prompt=getattr(config, "asr_hotword_prompt", ""),
         profile_glossary=profile.get("glossary", []),
         effective_asr_config=getattr(config, "effective_asr_config", {}),
+        phase_timings=getattr(config, "phase_timings", None),
     )
     if not _valid(srt_path):
         raise StageError("transcribing", "Transcription completed without a non-empty SRT output.")

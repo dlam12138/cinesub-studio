@@ -247,6 +247,8 @@ def test_bundled_flat_model_directory_is_used_without_hub_lookup(tmp_path):
     bundled.mkdir()
     (bundled / "config.json").write_text("{}", encoding="utf-8")
     (bundled / "model.bin").write_bytes(b"model")
+    (bundled / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (bundled / "vocabulary.txt").write_text("token", encoding="utf-8")
 
     assert transcribe._resolve_local_model_source("small", tmp_path) == str(
         bundled.resolve()

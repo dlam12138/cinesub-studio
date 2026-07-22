@@ -88,7 +88,13 @@ vendor/ffmpeg/
 ffmpeg/bin/
 
 # Internal planning, acceptance, research, and design-tool artifacts
-acceptance/
+acceptance/*
+!acceptance/v0_7_1_real_media_acceptance.md
+!acceptance/reports/
+acceptance/reports/*
+!acceptance/reports/v0_7_1_summary.json
+!acceptance/reports/v0_7_1_performance.csv
+!acceptance/reports/v0_7_1_retry_window_audit.csv
 .superdesign/
 research/
 TRIAL.md
