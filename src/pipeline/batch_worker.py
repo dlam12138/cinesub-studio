@@ -66,6 +66,7 @@ from subtitle_model import (
     DEFAULT_ASS_STYLE_ID,
     normalize_subtitle_formats,
 )
+from asr_runtime import ASR_RETRY_RECIPE_VERSION
 
 PATHS = resolve_runtime_paths(Path(__file__).resolve())
 PROJECT_ROOT = PATHS.project_root
@@ -123,6 +124,12 @@ class BatchConfig:
     beam_size: int = 5
     vad_filter: bool = True
     local_files_only: bool = False
+    quality_preset: str = ""
+    word_timestamps: bool = False
+    resegment_subtitles: bool = False
+    asr_retry_mode: str = "off"
+    asr_hotword_prompt: str = ""
+    effective_asr_config: dict | None = None
 
     translate: bool = True
     api_provider: str = "openai-compatible"
@@ -182,7 +189,7 @@ class BatchConfig:
 
     def asr_signature(self) -> str:
         payload = {
-            "schema": 1,
+            "schema": 2,
             "mode": self.asr_mode,
             "language": self.language,
             "model": self.model,
@@ -190,6 +197,12 @@ class BatchConfig:
             "compute_type": self.compute_type,
             "beam_size": self.beam_size,
             "vad_filter": self.vad_filter,
+            "quality_preset": self.quality_preset,
+            "word_timestamps": self.word_timestamps,
+            "resegment_subtitles": self.resegment_subtitles,
+            "asr_retry_mode": self.asr_retry_mode,
+            "asr_retry_recipe_version": ASR_RETRY_RECIPE_VERSION,
+            "asr_hotword_prompt": self.asr_hotword_prompt,
         }
         encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
@@ -401,6 +414,8 @@ class BatchPipeline:
             lang_info = self._transcribe(Path(task.audio_path), source_srt)
             task.source_srt = str(source_srt.resolve())
             task.language_detection = lang_info
+            task.asr_review_report = str(lang_info.get("asr_review_report") or "")
+            task.asr_review_summary = lang_info.get("asr_review_summary")
             task.asr_config_signature = self.config.asr_signature()
             task.save()
             transcribed_now = True
@@ -409,9 +424,24 @@ class BatchPipeline:
             task.status = "running"
             task.source_srt = str(source_srt.resolve())
             lang_json = source_srt.with_suffix(".lang.json")
-            if lang_json.exists() and task.language_detection is None:
+            if lang_json.exists() and (
+                task.language_detection is None
+                or not task.asr_review_report
+                or task.asr_review_summary is None
+            ):
                 try:
-                    task.language_detection = read_json(lang_json)
+                    loaded_language = read_json(lang_json)
+                    if task.language_detection is None:
+                        task.language_detection = loaded_language
+                    task.asr_review_report = str(
+                        loaded_language.get("asr_review_report")
+                        or task.asr_review_report
+                        or ""
+                    )
+                    task.asr_review_summary = (
+                        loaded_language.get("asr_review_summary")
+                        or task.asr_review_summary
+                    )
                 except (OSError, json.JSONDecodeError):
                     pass
             task.save()
@@ -670,6 +700,12 @@ def main() -> int:
         beam_size=effective["beam_size"],
         vad_filter=effective["vad_filter"],
         local_files_only=args.local_files_only,
+        quality_preset=effective["quality_preset"],
+        word_timestamps=bool(effective["word_timestamps"]),
+        resegment_subtitles=bool(effective["resegment_subtitles"]),
+        asr_retry_mode=effective["asr_retry_mode"],
+        asr_hotword_prompt=effective["asr_hotword_prompt"],
+        effective_asr_config=effective["effective_asr_config"],
         translate=not args.no_translate,
         api_provider=effective["api_provider"],
         api_base=effective["api_base"],

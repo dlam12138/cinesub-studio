@@ -22,38 +22,39 @@
     }
     :root {
       color-scheme: dark;
-      --bg: #090d14;
-      --panel: #111823;
-      --panel-strong: #151f2d;
-      --panel-soft: #1b2736;
+      --bg: #070B12;
+      --panel: #0D1420;
+      --panel-strong: #141E2C;
+      --panel-soft: #192536;
       --text: #edf2f7;
       --muted: #9aa8ba;
-      --line: rgba(170, 188, 212, .18);
-      --primary: #63b3ff;
+      --line: #26364A;
+      --line-soft: rgba(170, 188, 212, .13);
+      --primary: #63B3FF;
       --primary-dark: #3187d8;
-      --danger: #ff6b6b;
+      --primary-soft: rgba(99, 179, 255, .11);
+      --danger: #FF7676;
       --danger-dark: #e14d4d;
       --danger-bg: rgba(255, 107, 107, .15);
-      --ok: #49d18d;
+      --ok: #49D18D;
       --ok-bg: rgba(73, 209, 141, .14);
-      --warn: #f7b955;
+      --warn: #E8B45B;
       --warn-bg: rgba(247, 185, 85, .14);
       --err-bg: rgba(255, 107, 107, .15);
       --info-bg: rgba(99, 179, 255, .13);
       --ink: #f8fbff;
       --soft: #0e1520;
       --radius: 8px;
-      --shadow: 0 20px 48px rgba(0, 0, 0, .28);
+      --shadow: 0 18px 44px rgba(0, 0, 0, .24);
+      --shadow-tight: 0 8px 24px rgba(0, 0, 0, .2);
+      --mono: Consolas, "Cascadia Mono", "Courier New", monospace;
     }
 
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: "CineSub Sans", "Microsoft YaHei UI", sans-serif;
-      background:
-        linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px) 0 0 / 34px 34px,
-        radial-gradient(circle at 20% 0%, rgba(77, 151, 255, .16), transparent 32%),
-        var(--bg);
+      background: radial-gradient(circle at 18% -18%, rgba(99, 179, 255, .1), transparent 32%), var(--bg);
       color: var(--text);
     }
 
@@ -126,13 +127,13 @@
 
     /* ── Main Layout ── */
     main {
-      padding: 18px 28px 28px;
-      max-width: 1480px;
+      max-width: 1328px;
       margin: 0 auto;
+      padding: 24px;
     }
 
     .tab-content { display: none; }
-    .tab-content.active { display: block; }
+    .tab-content.active { display: block; animation: panelIn .18s ease-out; }
 
     /* ── Pipeline: Action Buttons ── */
     .actions {
@@ -1212,15 +1213,44 @@
     }
     .modal-overlay.active { display: flex; }
     .modal {
-      background: var(--panel); border-radius: var(--radius);
-      padding: 24px; width: 520px; max-height: 85vh; overflow-y: auto;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+      width: 520px;
+      max-height: min(88vh, 820px);
+      padding: 24px;
+      overflow-y: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .45);
     }
-    .modal h3 { margin: 0 0 16px; }
-    .modal .btn-row { display: flex; gap: 10px; margin-top: 16px; }
-    .modal .btn-row button { flex: 1; min-height: 38px; border: 0; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600; }
+    .modal > h3 {
+      position: sticky;
+      top: -20px;
+      z-index: 2;
+      margin: -20px -20px 16px;
+      padding: 16px 20px 13px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(13, 20, 32, .97);
+      backdrop-filter: blur(10px);
+      color: var(--ink);
+      font-family: "CineSub Display", "Microsoft YaHei UI", sans-serif;
+      font-size: 18px;
+    }
+    .modal .btn-row {
+      position: sticky;
+      bottom: -20px;
+      z-index: 2;
+      display: flex;
+      gap: 10px;
+      margin: 18px -20px -20px;
+      padding: 12px 20px 16px;
+      border-top: 1px solid var(--line);
+      background: rgba(13, 20, 32, .97);
+      backdrop-filter: blur(10px);
+    }
+    .modal .btn-row button { flex: 1; min-height: 40px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600; }
     .modal .btn-save { background: var(--primary); color: #fff; }
-    .modal .btn-cancel { background: #eef2f6; color: var(--text); }
+    .modal .btn-cancel { border-color: var(--line); background: var(--panel-strong); color: var(--text); }
 
     /* ── Provider table ── */
     .provider-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -1276,11 +1306,11 @@
     }
     .settings-jump:hover { background: #eef2f6; }
 
-    /* ── v0.2 Premium UI Refresh: cinema control-room shell ── */
+    /* ── Professional workstation: application shell and shared components ── */
     .app-shell {
       min-height: 100vh;
       display: grid;
-      grid-template-columns: 264px minmax(0, 1fr);
+      grid-template-columns: 256px minmax(0, 1fr);
     }
 
     .sidebar {
@@ -1289,34 +1319,35 @@
       height: 100vh;
       display: flex;
       flex-direction: column;
-      gap: 22px;
-      padding: 22px 18px;
+      gap: 0;
+      padding: 0;
       border-right: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .025)), #0b111b;
-      box-shadow: inset -1px 0 0 rgba(255, 255, 255, .04);
+      background: #0b111b;
+      box-shadow: none;
     }
 
     .brand-block {
-      padding: 14px 14px 16px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: rgba(255, 255, 255, .045);
+      padding: 20px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
     }
 
     .brand-kicker,
     .eyebrow {
       display: block;
       color: var(--primary);
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 800;
       letter-spacing: .12em;
       text-transform: uppercase;
     }
 
     .brand-block h1 {
-      margin: 10px 0 2px;
+      margin: 1px 0 0;
       color: var(--ink);
-      font-size: 25px;
+      font-size: 18px;
       line-height: 1;
       letter-spacing: 0;
     }
@@ -1324,36 +1355,42 @@
     .brand-block strong {
       display: block;
       color: var(--muted);
-      font-size: 14px;
+      font-size: 11px;
       font-weight: 650;
     }
 
     .version-chip {
       display: inline-flex;
-      margin-top: 14px;
-      padding: 4px 8px;
+      margin-top: 12px;
+      padding: 3px 7px;
       border: 1px solid rgba(99, 179, 255, .34);
       border-radius: 999px;
       color: #c7e4ff;
       background: rgba(99, 179, 255, .12);
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 750;
     }
 
     .rail-nav {
-      display: grid;
-      gap: 8px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      padding: 0 12px;
     }
 
     .rail-nav .tab-btn {
+      position: relative;
       width: 100%;
-      min-height: 44px;
+      min-height: 40px;
       display: flex;
       align-items: center;
       justify-content: flex-start;
-      padding: 10px 12px;
-      border: 1px solid transparent;
-      border-radius: var(--radius);
+      gap: 10px;
+      padding: 0 12px;
+      border: 0;
+      border-right: 2px solid transparent;
+      border-radius: 0;
       background: transparent;
       color: var(--muted);
       text-align: left;
@@ -1361,39 +1398,29 @@
     }
 
     .rail-nav .tab-btn:hover {
-      border-color: rgba(99, 179, 255, .22);
+      border-right-color: rgba(99, 179, 255, .22);
       background: rgba(255, 255, 255, .055);
       color: var(--text);
     }
 
     .rail-nav .tab-btn.active {
       margin-bottom: 0;
-      border-color: rgba(99, 179, 255, .38);
-      background: linear-gradient(90deg, rgba(99, 179, 255, .18), rgba(73, 209, 141, .075));
+      border-right-color: var(--primary);
+      background: linear-gradient(90deg, rgba(99, 179, 255, .12), rgba(99, 179, 255, 0));
       color: var(--ink);
-      box-shadow: 0 12px 30px rgba(20, 80, 140, .22);
+      box-shadow: none;
     }
 
     .rail-note {
       margin-top: auto;
-      padding: 12px;
+      padding: 16px;
       border-top: 1px solid var(--line);
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       line-height: 1.55;
     }
 
     .app-main { min-width: 0; }
-
-    main {
-      max-width: none;
-      padding: 24px 28px 34px;
-    }
-
-    .tab-content.active {
-      display: block;
-      animation: panelIn .18s ease-out;
-    }
 
     @keyframes panelIn {
       from { opacity: .75; transform: translateY(4px); }
@@ -1407,8 +1434,8 @@
     .provider-active-bar,
     .option-card {
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255, 255, 255, .072), rgba(255, 255, 255, .038));
-      box-shadow: var(--shadow);
+      background: linear-gradient(180deg, rgba(255, 255, 255, .028), transparent 72%), var(--panel);
+      box-shadow: var(--shadow-tight);
     }
 
     .settings-head h2,
@@ -1433,9 +1460,10 @@
     input,
     select,
     textarea {
-      border-color: rgba(170, 188, 212, .24);
-      background: rgba(5, 9, 14, .46);
+      border-color: rgba(170, 188, 212, .22);
+      background: #080e17;
       color: var(--text);
+      transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
     }
     .pipeline-stat,
     .task-filter-bar button,
@@ -1502,6 +1530,10 @@
       outline: 2px solid rgba(99, 179, 255, .78);
       outline-offset: 2px;
     }
+
+    input:hover,
+    select:hover,
+    textarea:hover { border-color: rgba(99, 179, 255, .36); }
 
     button,
     .secondary-btn,
@@ -1648,12 +1680,14 @@
       color: var(--text);
     }
 
-    .modal {
-      border: 1px solid var(--line);
-      background: #111823;
-      color: var(--text);
-      box-shadow: 0 28px 80px rgba(0, 0, 0, .45);
+    #providerList,
+    #lpList {
+      max-width: 100%;
+      overflow-x: auto;
+      scrollbar-width: thin;
     }
+    #providerList .provider-table { min-width: 800px; }
+    #lpList .provider-table { min-width: 620px; }
 
     .toast-layer {
       position: fixed;
@@ -1704,6 +1738,9 @@
         position: relative;
         height: auto;
         padding: 14px;
+        display: grid;
+        grid-template-columns: 240px minmax(0, 1fr);
+        align-items: center;
       }
       .rail-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .rail-nav .tab-btn {
@@ -1714,6 +1751,7 @@
     }
 
     @media (max-width: 900px) {
+      .sidebar { grid-template-columns: 1fr; }
       .rail-nav { grid-template-columns: 1fr 1fr; }
       main { padding: 14px; }
       .cards { grid-template-columns: 1fr; }
@@ -1731,19 +1769,24 @@
       .modal { width: 95vw; }
     }
 
-    /* ── v0.6 Stage 2: operational readiness and unified states ── */
+    /* ── Professional workstation: shared readiness and async states ── */
     .brand-lockup {
       display: grid;
-      grid-template-columns: 46px minmax(0, 1fr);
+      grid-template-columns: 40px minmax(0, 1fr);
       gap: 12px;
       align-items: center;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.025);
+      min-height: 80px;
     }
     .brand-mark {
-      width: 46px;
-      height: 46px;
-      border: 1px solid rgba(99, 179, 255, .34);
-      border-radius: 10px;
-      box-shadow: 0 10px 28px rgba(49, 135, 216, .2);
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
     }
     .brand-block h1,
     .progress-header strong,
@@ -1869,6 +1912,9 @@
       .readiness-grid { grid-template-columns: 1fr 1fr; }
     }
     @media (max-width: 700px) {
+      .workspace-header { align-items: flex-start; flex-direction: column; }
+      .workspace-header .workspace-actions,
+      .workspace-header .workspace-actions button { width: 100%; }
       .readiness-grid { grid-template-columns: 1fr; }
       .readiness-head,
       .overview-head { align-items: flex-start; flex-direction: column; }
@@ -1876,7 +1922,65 @@
       .async-state button { grid-column: 1 / -1; }
     }
 
-    /* ── Stage 6: task-focused operations desk ── */
+    /* ── Professional workstation: page hierarchy and task operations ── */
+    .workspace-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+      padding: 0 1px 13px;
+      border-bottom: 1px solid var(--line);
+    }
+    .workspace-title { min-width: 0; }
+    .workspace-kicker {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--primary);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .workspace-header h2 {
+      margin: 0;
+      color: var(--ink);
+      font-family: "CineSub Display", "Microsoft YaHei UI", sans-serif;
+      font-size: 23px;
+      line-height: 1.05;
+      letter-spacing: .01em;
+    }
+    .workspace-header p {
+      max-width: 760px;
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .workspace-header .workspace-actions { flex: none; }
+    .workspace-header .workspace-actions button { min-width: 104px; }
+    .workspace-context {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 28px;
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font: 10px/1.4 var(--mono);
+      white-space: nowrap;
+    }
+    .workspace-context::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 8px rgba(73, 209, 141, .48);
+    }
     .ui-language-switch {
       display: inline-flex;
       align-items: center;
@@ -1914,21 +2018,24 @@
       color: var(--primary);
     }
     .ui-language-switch button[aria-disabled="true"] { opacity: .72; }
-    .stage6-pipeline-shell { display: grid; gap: 14px; }
+    .stage6-pipeline-shell { display: grid; gap: 24px; }
     .stage6-stage-ribbon {
       display: grid;
       grid-template-columns: repeat(5, minmax(0, 1fr));
+      min-height: 99px;
       overflow: hidden;
+      padding: 0;
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      background: rgba(5,9,14,.5);
-      box-shadow: var(--shadow);
+      background: var(--panel);
+      box-shadow: var(--shadow-tight);
     }
     .stage6-stage {
       position: relative;
       min-width: 0;
-      padding: 10px 13px 11px;
+      padding: 16px 16px 18px;
       border-right: 1px solid var(--line);
+      background: rgba(5, 9, 14, .24);
     }
     .stage6-stage:last-child { border-right: 0; }
     .stage6-stage::after {
@@ -1940,42 +2047,89 @@
       height: 2px;
       background: var(--line);
     }
-    .stage6-stage.active::after { background: var(--primary); box-shadow: 0 0 12px var(--primary); }
+    .stage6-stage.active { background: linear-gradient(180deg, rgba(99, 179, 255, .08), rgba(99, 179, 255, .015)); }
+    .stage6-stage.active::after { background: var(--primary); box-shadow: 0 0 12px rgba(99, 179, 255, .72); }
     .stage6-stage.done::after { background: var(--ok); }
-    .stage6-stage span { display: block; color: var(--primary); font-family: "CineSub Display", sans-serif; font-size: 12px; }
-    .stage6-stage strong { display: block; margin-top: 2px; color: var(--ink); font-size: 12px; }
-    .stage6-stage small { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .stage6-stage.failed::after { background: var(--danger); box-shadow: none; }
+    .stage6-stage.failed span { color: var(--danger); }
+    .stage6-stage span { display: block; color: var(--muted); font-family: var(--mono); font-size: 10px; letter-spacing: .06em; }
+    .stage6-stage.active span,
+    .stage6-stage.done span { color: var(--primary); }
+    .stage6-stage strong { display: block; margin-top: 5px; color: var(--ink); font-size: 13px; }
+    .stage6-stage small { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
     .stage6-pipeline-layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 340px;
-      gap: 14px;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 24px;
       align-items: start;
     }
     .pipeline-task-desk {
       min-width: 0;
       overflow: hidden;
+      padding: 0;
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      background: rgba(17,24,35,.76);
-      box-shadow: var(--shadow);
+      background: var(--panel);
+      box-shadow: var(--shadow-tight);
     }
     .pipeline-desk-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 14px 16px;
+      padding: 16px;
+      min-height: 64px;
+      background: rgba(255,255,255,.02);
       border-bottom: 1px solid var(--line);
     }
-    .pipeline-desk-head h2 { margin: 0; color: var(--ink); font-size: 17px; }
-    .pipeline-desk-head p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
-    .readiness-compact { padding: 10px 14px; border-bottom: 1px solid var(--line); }
-    .readiness-compact .readiness-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-    .readiness-compact .readiness-step { padding: 9px 10px; }
-    .readiness-compact .readiness-step .step-index { display: inline; margin: 0 6px 0 0; font-size: 12px; }
-    .readiness-compact .readiness-step strong { display: inline; font-size: 12px; }
+    .pipeline-desk-head h2 { display: inline; margin: 0; color: var(--ink); font-size: 16px; }
+    .pipeline-desk-head p { display: inline; margin: 0 0 0 8px; color: var(--muted); font-size: 11px; }
+    .pipeline-desk-head button {
+      min-height: 32px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255,255,255,.04);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .readiness-compact { padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel-strong); }
+    .readiness-compact .readiness-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; overflow: visible; border: 0; background: transparent; }
+    .readiness-compact .readiness-step { position: relative; height: 80px; min-height: 80px; overflow: hidden; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); box-shadow: none; }
+    .readiness-compact .readiness-step .step-index { display: block; margin: 0 0 5px; font-size: 10px; }
+    .readiness-compact .readiness-step strong { display: block; font-size: 11px; }
     .readiness-compact .readiness-step span:not(.step-index) { margin-top: 3px; font-size: 10px; }
-    .stage6-progress-host { padding: 14px; }
+    .readiness-compact .readiness-step button {
+      position: absolute;
+      top: 9px;
+      right: 9px;
+      width: 20px;
+      min-height: 20px;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--primary);
+      font-size: 0;
+    }
+    .readiness-compact .readiness-step button::before { content: "↗"; font-size: 12px; }
+    .stage6-progress-host { padding: 0; }
+    .stage6-progress-host > .progress-panel { padding: 16px; }
+    .stage6-progress-host > .async-state.empty,
+    .stage6-progress-host .progress-panel > .async-state.empty {
+      min-height: 266px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 0;
+      background: var(--panel);
+      text-align: center;
+    }
+    .stage6-progress-host .async-state.empty .async-state-icon { margin: 0 auto 4px; border: 0; color: var(--muted); font-size: 28px; opacity: .4; }
+    .stage6-progress-host .async-state.empty strong { color: var(--muted); }
     .stage6-progress-host .task-list { max-height: none; overflow: visible; }
     .stage6-progress-host .progress-panel { gap: 12px; }
     .stage6-progress-host .pipeline-stats { grid-template-columns: repeat(5,minmax(84px,1fr)); }
@@ -2007,26 +2161,27 @@
     .task-table-progress .progress-track { height: 6px; }
     .pipeline-control-rail {
       position: sticky;
-      top: 112px;
-      max-height: calc(100vh - 130px);
+      top: 24px;
+      max-height: calc(100vh - 48px);
       overflow-y: auto;
-      padding: 14px;
+      padding: 20px;
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      background: rgba(11,17,27,.96);
-      box-shadow: var(--shadow);
+      background: var(--panel-strong);
+      box-shadow: var(--shadow-tight);
       scrollbar-width: thin;
     }
-    .pipeline-control-rail .settings-head { margin-bottom: 12px; }
-    .pipeline-control-rail .settings-head h2 { margin: 0; font-size: 16px; }
+    .pipeline-control-rail .settings-head { display: block; margin: 24px 0 10px; padding-top: 20px; border-top: 1px solid var(--line); }
+    .pipeline-control-rail .settings-head h2 { margin: 0; font-size: 16px; white-space: nowrap; }
+    .pipeline-control-rail .settings-head p { margin: 5px 0 0; }
     .pipeline-control-rail .toolbar { grid-template-columns: 1fr; gap: 9px; }
     .pipeline-control-rail .toolbar .wide { grid-column: auto; }
     .pipeline-control-rail .option-card { padding: 10px; }
     .pipeline-control-rail .help-text { font-size: 10px; line-height: 1.4; }
     .pipeline-control-rail .settings-jump { width: 100%; }
-    .pipeline-control-actions { display: grid; gap: 8px; margin-bottom: 14px; }
+    .pipeline-control-actions { display: grid; gap: 11px; margin-bottom: 0; }
     .pipeline-control-actions .primary-action { min-height: 44px; }
-    .pipeline-control-actions .secondary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .pipeline-control-actions .secondary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .pipeline-control-actions button {
       min-height: 36px;
       border: 1px solid var(--line);
@@ -2038,12 +2193,118 @@
       font-weight: 750;
       cursor: pointer;
     }
-    .pipeline-control-actions .primary-action { border-color: rgba(99,179,255,.58); background: linear-gradient(135deg,#4da3ff,#2d7ed1); color: white; }
+    .pipeline-control-actions .primary-action {
+      border-color: rgba(99,179,255,.64);
+      background: var(--primary);
+      color: #06101a;
+      box-shadow: 0 4px 20px rgba(99,179,255,.2);
+    }
+    .pipeline-control-actions .primary-action::before { content: "▷"; margin-right: 7px; font-size: 17px; }
     .pipeline-control-actions .danger-action { color: var(--danger); border-color: rgba(255,107,107,.3); }
-    .pipeline-support { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 14px 14px; }
+    .pipeline-support { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; border-top: 1px solid var(--line); }
     .pipeline-support details { min-width: 0; }
-    .runtime-operations-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+    .pipeline-support summary { list-style: none; }
+    .pipeline-support summary::-webkit-details-marker { display: none; }
+    .pipeline-support summary::before { content: "▱"; margin-right: 8px; color: var(--primary); }
+    .pipeline-support details:nth-child(2) summary::before { content: "▣"; color: var(--warn); }
+    .runtime-operations-grid { display: grid; grid-template-columns: minmax(0,.9fr) minmax(0,1.1fr); gap: 14px; margin-top: 0; }
     .runtime-operations-grid > .card:last-child { grid-column: 1 / -1; }
+    .runtime-operations-grid > .card { margin: 0; }
+    .runtime-operations-grid > .card > h2 {
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+    .card-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .card-title-row h2 { margin: 0; padding: 0; border: 0; font-size: 14px; }
+    .card-title-row button { min-height: 32px; padding: 0 12px; font-size: 11px; }
+    .runtime-section {
+      border-radius: var(--radius);
+      background: var(--panel-strong);
+      box-shadow: none;
+    }
+    .runtime-section h3 {
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .transcribe-layout > section:first-child > .hint { display: none; }
+    .transcribe-layout > section:first-child > h2 { display: none; }
+    .single-result-panel {
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      box-shadow: var(--shadow-tight);
+    }
+    .single-result-head {
+      margin: -16px -16px 12px;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(5,9,14,.28);
+    }
+    .single-result-head h2 { margin: 0; font-size: 14px; }
+    .single-result-panel .log-panel {
+      border-radius: 6px;
+      background: #050a11;
+      font-family: var(--mono);
+    }
+    .settings-intro {
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      border-left: 3px solid var(--primary);
+      background: var(--primary-soft);
+      box-shadow: none;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .provider-active-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      background: var(--panel);
+      box-shadow: none;
+      font-size: 12px;
+    }
+    .provider-active-bar::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 8px rgba(73,209,141,.42);
+    }
+    .provider-active-bar strong { color: var(--ink); }
+    #tab-providers > .actions,
+    #tab-langprofiles > .actions {
+      margin: 10px 0 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-strong);
+    }
+    #tab-providers > .card,
+    #tab-langprofiles > .card { margin-top: 0 !important; }
+    #tab-providers > .card > h2,
+    #tab-langprofiles > .card > h2 {
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
     .task-drawer-backdrop {
       position: fixed;
       inset: 0;
@@ -2136,15 +2397,14 @@
       border-radius: var(--radius);
       background: rgba(5, 9, 14, .52);
       cursor: pointer;
-      transition: border-color .15s ease, background .15s ease, transform .15s ease;
+      transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
     }
     .asr-mode-card:hover {
       border-color: rgba(99, 179, 255, .38);
-      transform: translateY(-1px);
     }
     .asr-mode-card:has(input:checked) {
       border-color: rgba(99, 179, 255, .72);
-      background: linear-gradient(145deg, rgba(99, 179, 255, .17), rgba(73, 209, 141, .075));
+      background: linear-gradient(145deg, rgba(99, 179, 255, .15), rgba(99, 179, 255, .035));
       box-shadow: 0 0 0 1px rgba(99, 179, 255, .12);
     }
     .asr-mode-card input {
@@ -2234,9 +2494,114 @@
     @media (max-width: 460px) {
       .stage6-stage-ribbon { grid-template-columns: 1fr; }
     }
+
+    /* ── Professional workstation: interaction, diagnostics and accessibility ── */
+    button, .dl-link, input, select, summary { min-height: 40px; }
+    .hint-inline, .help-text, .panel-copy, .mode-diagnostic-note { font-size: 12px; }
+    .backend-banner {
+      position: sticky;
+      top: 0;
+      z-index: 75;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 46px;
+      padding: 9px 18px;
+      border-bottom: 1px solid rgba(255, 118, 118, .45);
+      background: #29151b;
+      color: #ffd8d8;
+      font-size: 13px;
+    }
+    .backend-banner[hidden] { display: none; }
+    .backend-banner button { min-height: 32px; }
+    .nav-icon { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; }
+    .rail-nav .tab-btn.active::before {
+      content: none;
+    }
+    .pipeline-retry-row {
+      display: flex;
+      justify-content: flex-end;
+      padding: 0 14px 14px;
+    }
+    .pipeline-retry-row:has(button:disabled) { display: none; }
+    .config-group {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.018);
+    }
+    .config-group > summary {
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .config-group-body { display: grid; gap: 9px; padding: 0 9px 9px; }
+    .terminal-shell { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: #060a10; }
+    .terminal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 38px;
+      padding: 5px 9px;
+      border-bottom: 1px solid var(--line);
+      background: #101925;
+      color: var(--muted);
+      font: 12px/1.4 Consolas, "Courier New", monospace;
+    }
+    .terminal-head .inline-actions { margin: 0; }
+    .terminal-head button { min-height: 28px; padding: 3px 8px; }
+    .terminal-shell .mini-log { margin: 0; border: 0; border-radius: 0; }
+    .runtime-detail-group { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+    .runtime-detail-group > summary { display: flex; align-items: center; padding: 0 14px; color: var(--ink); font-size: 13px; font-weight: 750; cursor: pointer; }
+    .runtime-detail-group .runtime-diagnostics-layout { margin: 0; padding: 0 12px 12px; }
+    .single-result-head, .result-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .result-updated { color: var(--muted); font-size: 12px; }
+    .effective-config-card { display: grid; gap: 10px; }
+    .effective-config-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .effective-config-item { padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-strong); }
+    .effective-config-item span { display: block; color: var(--muted); font-size: 11px; }
+    .effective-config-item strong { display: block; margin-top: 3px; color: var(--ink); font-size: 13px; overflow-wrap: anywhere; }
+    .model-plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+    .model-plan-grid div { padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-strong); }
+    .model-plan-grid span { display: block; color: var(--muted); font-size: 11px; }
+    .model-plan-grid strong { display: block; margin-top: 3px; font-size: 13px; overflow-wrap: anywhere; }
+    .model-download-status { min-height: 42px; margin-top: 10px; padding: 9px; border-left: 3px solid var(--primary); background: var(--info-bg); font-size: 12px; }
+    .asr-review-note { margin-top: 8px; padding: 9px; border: 1px solid rgba(232,180,91,.35); border-radius: 7px; background: var(--warn-bg); color: var(--text); font-size: 12px; }
+    :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+    @media (max-width: 700px) {
+      .effective-config-grid, .model-plan-grid { grid-template-columns: 1fr; }
+      .backend-banner { align-items: flex-start; flex-direction: column; }
+      .workspace-header { align-items: flex-start; flex-direction: column; }
+      .workspace-header .workspace-actions,
+      .workspace-header .workspace-actions button { width: 100%; }
+    }
   </style>
 </head>
 <body>
+
+<div id="backendBanner" class="backend-banner" role="alert" hidden>
+  <span><strong>本地后端未连接。</strong> 状态与诊断暂时不可用，已暂停会改变数据的操作。</span>
+  <button type="button" onclick="probeBackendConnection()">刷新诊断</button>
+</div>
 
 <div class="app-shell" data-refresh="v0.6-stage2-ui">
   <aside class="sidebar" aria-label="主导航">
@@ -2252,11 +2617,11 @@
       <span id="appVersionChip" class="version-chip">读取版本...</span><span id="appFlavorChip" class="build-chip">开发版</span>
     </div>
     <nav class="tabs rail-nav">
-      <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')">批量处理</button>
-      <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')">单个处理</button>
-      <button class="tab-btn" data-tab="runtime" onclick="switchTab('runtime')">运行环境</button>
-      <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')">翻译接口</button>
-      <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')">语言风格</button>
+      <button class="tab-btn active" data-tab="pipeline" onclick="switchTab('pipeline')"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="11" cy="18" r="1"/></svg>批量处理</button>
+      <button class="tab-btn" data-tab="transcribe" onclick="switchTab('transcribe')"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg>单个处理</button>
+      <button class="tab-btn" data-tab="runtime" onclick="switchTab('runtime')"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H4zM8 21h8M12 17v4M7 9l2 2-2 2M11 13h5"/></svg>运行环境</button>
+      <button class="tab-btn" data-tab="providers" onclick="switchTab('providers')"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7zM3 10h4M17 10h4M10 3v4M10 17v4M14 3v4M14 17v4"/></svg>翻译接口</button>
+      <button class="tab-btn" data-tab="langprofiles" onclick="switchTab('langprofiles')"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>语言风格</button>
     </nav>
     <div class="rail-note">本地优先的视频字幕识别与大模型翻译工作台</div>
   </aside>
@@ -2267,18 +2632,18 @@
   <div id="tab-pipeline" class="tab-content active">
     <div class="stage6-pipeline-shell">
       <section class="stage6-stage-ribbon" aria-label="字幕处理阶段" data-i18n-en="Subtitle timeline">
-        <div class="stage6-stage active" data-pipeline-stage="pending"><span>阶段 01</span><strong>扫描文件</strong><small>识别输入目录中的媒体</small></div>
-        <div class="stage6-stage" data-pipeline-stage="extracting_audio"><span>阶段 02</span><strong>提取音频</strong><small>生成项目内临时音轨</small></div>
-        <div class="stage6-stage" data-pipeline-stage="transcribing"><span>阶段 03</span><strong>语音转写</strong><small>生成原文 SRT</small></div>
-        <div class="stage6-stage" data-pipeline-stage="translating"><span>阶段 04</span><strong>字幕翻译</strong><small>按需调用当前翻译接口</small></div>
-        <div class="stage6-stage" data-pipeline-stage="quality_checking"><span>阶段 05</span><strong>质检输出</strong><small>生成字幕与复核报告</small></div>
+        <div class="stage6-stage active" data-pipeline-stage="pending"><span>STAGE 01</span><strong>扫描文件</strong><small>识别输入目录中的媒体</small></div>
+        <div class="stage6-stage" data-pipeline-stage="extracting_audio"><span>STAGE 02</span><strong>提取音频</strong><small>生成项目内临时音轨</small></div>
+        <div class="stage6-stage" data-pipeline-stage="transcribing"><span>STAGE 03</span><strong>语音转写</strong><small>生成原文 SRT</small></div>
+        <div class="stage6-stage" data-pipeline-stage="translating"><span>STAGE 04</span><strong>字幕翻译</strong><small>按需调用当前翻译接口</small></div>
+        <div class="stage6-stage" data-pipeline-stage="quality_checking"><span>STAGE 05</span><strong>质检输出</strong><small>生成字幕与复核报告</small></div>
       </section>
 
       <div class="stage6-pipeline-layout">
         <section class="pipeline-task-desk" aria-labelledby="pipeline-overview-title">
           <div class="pipeline-desk-head">
-            <div><h2 id="pipeline-overview-title">批量任务</h2><p>选择任务可查看阶段、质检、产物和字幕预览。<span class="sr-only">运行环境 → 翻译接口 → 语言配置 → 开始任务</span></p></div>
-            <button type="button" onclick="loadPipelineProgress()">刷新任务</button>
+            <div><h2 id="pipeline-overview-title">批量任务</h2><p>/ Batch Queue<span class="sr-only">。选择任务可查看阶段、质检、产物和字幕预览。运行环境 → 翻译接口 → 语言配置 → 开始任务</span></p></div>
+            <button type="button" onclick="loadPipelineProgress()">刷新队列</button>
           </div>
           <div class="readiness-compact" aria-labelledby="readiness-title">
             <h2 id="readiness-title" class="sr-only">开始前检查</h2>
@@ -2289,7 +2654,8 @@
               <div class="readiness-step"><span class="step-index">04</span><strong>开始任务</strong><span>等待检查结果。</span></div>
             </div>
           </div>
-          <div id="status-result" class="stage6-progress-host"><div class="async-state empty"><span class="async-state-icon">—</span><div><strong>还没有任务状态</strong><p>扫描视频目录或开始处理后，这里会显示总体进度。</p></div></div></div>
+          <div id="status-result" class="stage6-progress-host"><div class="async-state empty"><span class="async-state-icon">▱</span><div><strong>队列目前为空</strong><p>请配置输入目录并执行「扫描文件」</p></div></div></div>
+          <div class="pipeline-retry-row"><button onclick="pipelineAction('retry')" id="btn-retry" class="danger-action" disabled>重试失败任务</button></div>
           <div class="pipeline-support">
             <details><summary>待处理文件</summary><div id="scan-result" class="placeholder">点击“扫描文件”查看输入目录。</div></details>
             <details><summary>异常复核摘要</summary><div id="review-result" class="placeholder">点击“异常复核”查看需人工关注的片段。</div></details>
@@ -2304,11 +2670,13 @@
               <button onclick="pipelineAction('status')" id="btn-status">查看状态</button>
               <button onclick="pipelineAction('review')" id="btn-review">异常复核</button>
               <button onclick="refreshAll()" id="btn-refresh">刷新全部</button>
-              <button onclick="pipelineAction('retry')" id="btn-retry" class="danger-action">重试失败任务</button>
             </div>
           </div>
           <div class="settings-head"><h2>流水线配置</h2><p class="panel-copy">常用参数集中在这里；不了解的选项保持默认。</p></div>
           <div class="toolbar">
+      <details class="config-group" open>
+        <summary>输入与识别</summary>
+        <div class="config-group-body">
       <div class="field wide option-card">
         <label for="pipelineInputDir">视频目录<span class="recommend-badge">可填绝对路径</span></label>
         <div class="directory-picker-row">
@@ -2353,8 +2721,19 @@
         </div>
         <p class="mode-diagnostic-note">置信度仅用于日志和人工复核提示，不会触发换模型、重跑或自动改写。</p>
       </div>
+        </div>
+      </details>
       <details class="advanced-settings wide">
-        <summary>识别性能设置</summary>
+        <summary>高级性能</summary>
+      <div class="field option-card">
+        <label for="pipelineQualityPreset">识别质量闭环<span class="recommend-badge">balanced 默认</span></label>
+        <select id="pipelineQualityPreset">
+          <option value="speed">速度优先</option>
+          <option value="balanced" selected>平衡模式</option>
+          <option value="quality">质量优先</option>
+        </select>
+        <span class="help-text">平衡模式启用词级时间戳、字幕重切分和 dry-run 局部复核；质量优先会请求 large-v3，但验收完成前同样只执行 dry-run。</span>
+      </div>
       <div class="field option-card">
         <label for="pipelineModel">语音识别模型<span class="recommend-badge">small 稳妥</span></label>
         <select id="pipelineModel">
@@ -2386,7 +2765,18 @@
         </select>
         <span class="help-text">自动会按设备选择。CPU 通常 int8 省内存；CUDA 通常 float16；float32 最吃内存。</span>
       </div>
+      <div class="field option-card">
+        <label for="pipelineModelSource">模型来源</label>
+        <select id="pipelineModelSource">
+          <option value="official" selected>Hugging Face 官方</option>
+          <option value="mirror">hf-mirror 镜像</option>
+        </select>
+        <span class="help-text">只有模型缺失并经你确认后才会使用该来源。</span>
+      </div>
       </details>
+      <details class="config-group">
+        <summary>翻译</summary>
+        <div class="config-group-body">
       <label class="check compact option-card">
         <input type="checkbox" id="pipelineTranslateEnabled" checked>
         启用翻译
@@ -2419,6 +2809,8 @@
         <label for="pipelineTranslationSceneGap">场景静音间隔（秒）</label>
         <input id="pipelineTranslationSceneGap" type="number" min="1" max="600" step="1" value="30">
       </div>
+        </div>
+      </details>
           </div>
 
         </aside>
@@ -2428,21 +2820,17 @@
 
   <!-- ═══════════════ Runtime Diagnostics Tab ═══════════════ -->
   <div id="tab-runtime" class="tab-content">
-    <div class="runtime-toolbar">
-      <div>
-        <h2>运行环境</h2>
-        <p class="help-text">只读检查本地 Python、FFmpeg、模型缓存、运行目录和设备状态；不会启动流水线，也不会下载模型。</p>
-      </div>
-      <button type="button" onclick="loadRuntimeDiagnostics()">刷新诊断</button>
-    </div>
     <div class="runtime-operations-grid">
       <section class="card">
-        <h2>运行环境摘要</h2>
+        <div class="card-title-row"><h2>运行环境摘要</h2><button type="button" onclick="loadRuntimeDiagnostics()">刷新诊断</button></div>
         <div id="runtime-summary-result" class="placeholder">正在读取 Python、FFmpeg、模型缓存和目录状态...</div>
       </section>
       <section class="card">
         <h2>操作日志</h2>
-        <pre id="pipeline-log" class="mini-log">就绪。批量操作日志会显示在这里。</pre>
+        <div class="terminal-shell">
+          <div class="terminal-head"><span>LOCAL / PIPELINE</span><span class="inline-actions"><label class="check"><input id="logAutoScroll" type="checkbox" checked> 自动滚动</label><button type="button" onclick="copyPipelineLog()">复制</button></span></div>
+          <pre id="pipeline-log" class="mini-log">[INFO] 就绪。批量操作日志会显示在这里。</pre>
+        </div>
       </section>
       <section class="card">
         <h2>缓存与中间文件</h2>
@@ -2457,6 +2845,8 @@
         </div>
       </section>
     </div>
+    <details class="runtime-detail-group">
+      <summary>展开完整诊断</summary>
     <div class="runtime-diagnostics-layout">
       <section class="card">
         <h2>总体状态</h2>
@@ -2496,6 +2886,7 @@
         </div>
       </section>
     </div>
+    </details>
   </div>
 
   <!-- ═══════════════ Transcribe Tab ═══════════════ -->
@@ -2503,7 +2894,7 @@
     <div class="transcribe-layout">
       <section>
         <h2>语音识别与翻译</h2>
-        <p class="hint"><strong>使用流程：</strong>选择视频 → 配置识别参数 → 选择翻译设置 → 点击"开始识别"。<br>第一次使用某个模型会自动下载；国内网络可尝试 hf-mirror.com。翻译接口的 API Key 不会持久化到磁盘或日志中。</p>
+        <p class="hint"><strong>使用流程：</strong>选择视频 → 配置识别参数 → 选择翻译设置 → 点击“开始识别”。<br>若模型尚未安装，会先显示大小、来源和目标位置，确认完成后才创建任务。翻译接口的 API Key 不会写入日志。</p>
         <form id="jobForm">
           <div class="form-block settings-panel">
             <div class="settings-head">
@@ -2520,12 +2911,6 @@
               </div>
               <div id="inspect-result" class="inspect-result" hidden></div>
 
-              <details class="small-upload">
-                <summary>上传小样本测试</summary>
-                <label for="file">上传视频或音频（仅建议短样本）</label>
-                <input id="file" name="file" type="file" accept="video/*,audio/*,.mkv,.srt,.wav,.mp3,.m4a,.flac,.opus">
-                <span class="hint-inline">上传会先保存一份到 uploads/；大电影请使用上面的本机路径。</span>
-              </details>
             </div>
           </div>
 
@@ -2573,6 +2958,15 @@
             <p class="settings-section-label">识别性能</p>
             <div class="row">
               <div class="option-card">
+                <label for="quality_preset">识别质量闭环<span class="recommend-badge">balanced 默认</span></label>
+                <select id="quality_preset" name="quality_preset">
+                  <option value="speed">速度优先</option>
+                  <option value="balanced" selected>平衡模式</option>
+                  <option value="quality">质量优先</option>
+                </select>
+                <span class="help-text">速度优先接近旧行为；平衡模式只 dry-run 局部复核；质量优先会请求 large-v3，但验收完成前不自动替换。</span>
+              </div>
+              <div class="option-card">
                 <label for="model">语音识别模型<span class="recommend-badge">small 默认</span></label>
                 <select id="model" name="model">
                   <option value="tiny">tiny - 快速测试</option>
@@ -2611,10 +3005,10 @@
                 <div class="option-card">
                   <label for="hf_endpoint">模型下载源</label>
                   <select id="hf_endpoint" name="hf_endpoint">
-                    <option value="">Hugging Face 官方</option>
-                    <option value="https://hf-mirror.com" selected>hf-mirror.com 镜像</option>
+                    <option value="" selected>Hugging Face 官方</option>
+                    <option value="https://hf-mirror.com">hf-mirror.com 镜像</option>
                   </select>
-                  <span class="help-text">首次使用模型会下载到项目目录。国内网络可用镜像；模型下好后可勾选“只使用本地模型”。</span>
+                  <span class="help-text">这里只决定确认弹窗中的固定来源；未确认前不会联网或写入模型目录。</span>
                 </div>
               </div>
               <div class="row">
@@ -2630,11 +3024,7 @@
                   </label>
                   <span class="help-text">自动跳过无声片段，电影对白建议开启；极短音频或音乐素材异常时再关闭。</span>
 
-                  <label class="check">
-                    <input id="local_files_only" name="local_files_only" type="checkbox">
-                    只使用本地已下载模型
-                  </label>
-                  <span class="help-text">离线或模型已下载时启用；第一次跑某个模型不要勾，否则会找不到模型。</span>
+                  <input id="local_files_only" name="local_files_only" type="hidden" value="on">
 
                   <label class="check">
                     <input id="condition_on_previous_text" name="condition_on_previous_text" type="checkbox" checked>
@@ -2801,13 +3191,19 @@
       </section>
 
       <section class="single-result-panel" aria-label="当前任务状态与结果">
-        <h2 data-i18n-en="Step 4 · Results">步骤 4 · 任务状态与结果</h2>
+        <div class="single-result-head">
+          <h2 data-i18n-en="Step 4 · Results">步骤 4 · 任务状态与结果</h2>
+          <div class="result-toolbar"><span id="singleLastUpdated" class="result-updated">尚未刷新</span><button id="singleRefreshButton" type="button" disabled>刷新状态</button></div>
+        </div>
         <div class="job-status">
           <span id="badge" class="badge-status">等待开始</span>
           <a id="downloadSource" class="dl-link" href="#" hidden>下载原文 SRT</a>
           <a id="downloadTranslated" class="dl-link" href="#" hidden>下载双语 SRT</a>
+          <a id="downloadAsrReview" class="dl-link" href="#" hidden>下载识别复核报告</a>
         </div>
+        <div id="singleNetworkError" class="inspect-result err" hidden></div>
         <pre id="log" class="log-panel">等待任务开始。</pre>
+        <div id="job-result" hidden></div>
 
       </section>
     </div>
@@ -3053,6 +3449,23 @@
     </section>
   </div>
 </aside>
+<div class="modal-overlay" id="modelDownloadModal" role="dialog" aria-modal="true" aria-labelledby="modelDownloadTitle">
+  <div class="modal">
+    <h3 id="modelDownloadTitle">确认准备语音识别模型</h3>
+    <p class="panel-copy">当前选择的模型尚未在本机通过完整性校验。确认后才会开始下载；任务会在模型就绪后自动重提一次。</p>
+    <div id="modelPlanDetails" class="model-plan-grid"></div>
+    <label for="modelDownloadSource">固定来源</label>
+    <select id="modelDownloadSource">
+      <option value="official">Hugging Face 官方</option>
+      <option value="mirror">hf-mirror 镜像</option>
+    </select>
+    <div id="modelDownloadStatus" class="model-download-status">等待确认。取消不会创建或改变任务。</div>
+    <div class="btn-row">
+      <button id="modelDownloadCancel" class="btn-cancel" type="button" onclick="closeModelDownloadModal()">取消</button>
+      <button id="modelDownloadConfirm" class="btn-save" type="button" onclick="confirmModelDownload()">确认下载</button>
+    </div>
+  </div>
+</div>
 <div id="toastLayer" class="toast-layer" aria-live="polite"></div>
 
 <script>
@@ -3094,6 +3507,180 @@ window.fetch = function(input, init) {
     return nativeFetch(input, options);
   });
 };
+
+var backendConnected = true;
+var pendingModelRetry = null;
+var pendingModelPlan = null;
+var modelDownloadPollTimer = null;
+var modelDownloadReturnFocus = null;
+
+function setBackendConnected(connected) {
+  backendConnected = !!connected;
+  var banner = document.getElementById('backendBanner');
+  if (banner) banner.hidden = backendConnected;
+  ['startBtn', 'btn-run', 'btn-retry'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (!backendConnected) {
+      if (!el.disabled) el.dataset.offlineDisabled = 'true';
+      el.disabled = true;
+    } else if (el.dataset.offlineDisabled === 'true') {
+      delete el.dataset.offlineDisabled;
+      if (id !== 'btn-retry') el.disabled = false;
+    }
+  });
+}
+
+async function probeBackendConnection() {
+  try {
+    var response = await fetch('/api/runtime/diagnostics', {cache: 'no-store'});
+    if (!response.ok) throw new Error('diagnostics unavailable');
+    setBackendConnected(true);
+    loadRuntimeDiagnostics();
+    loadReadinessChecklist();
+  } catch (error) {
+    setBackendConnected(false);
+  }
+}
+
+function modelSourceFromForm() {
+  var endpoint = document.getElementById('hf_endpoint');
+  return endpoint && endpoint.value ? 'mirror' : 'official';
+}
+
+function renderModelPlan(plan) {
+  pendingModelPlan = plan || {};
+  var el = document.getElementById('modelPlanDetails');
+  if (!el) return;
+  var items = [
+    ['模型', pendingModelPlan.model || '-'],
+    ['仓库', pendingModelPlan.repo_id || '-'],
+    ['预计大小', pendingModelPlan.estimated_size || '未知'],
+    ['来源', pendingModelPlan.source_label || pendingModelPlan.source || '-'],
+    ['目标位置', pendingModelPlan.target_dir || '-']
+  ];
+  el.innerHTML = items.map(function(item) {
+    return '<div><span>' + escapeHtml(item[0]) + '</span><strong>' + escapeHtml(item[1]) + '</strong></div>';
+  }).join('');
+}
+
+async function refreshModelPlanSource() {
+  if (!pendingModelPlan || !pendingModelPlan.model) return;
+  var source = document.getElementById('modelDownloadSource').value;
+  try {
+    var response = await fetch('/api/runtime/asr-models?selected=' + encodeURIComponent(pendingModelPlan.model) + '&source=' + encodeURIComponent(source));
+    var payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || '无法读取模型计划');
+    renderModelPlan(payload.selected);
+  } catch (error) {
+    document.getElementById('modelDownloadStatus').textContent = '读取来源信息失败：' + String(error.message || error);
+  }
+}
+
+function handleModelRequirement(payload, retryFn) {
+  modelDownloadReturnFocus = document.activeElement;
+  pendingModelRetry = retryFn;
+  renderModelPlan(payload.model_plan || {model: payload.model});
+  var source = (payload.model_plan || {}).source || modelSourceFromForm();
+  var sourceEl = document.getElementById('modelDownloadSource');
+  if (sourceEl) {
+    sourceEl.disabled = false;
+    sourceEl.value = source === 'mirror' ? 'mirror' : 'official';
+  }
+  var downloadable = (payload.model_plan || {}).download_supported !== false;
+  document.getElementById('modelDownloadStatus').textContent = downloadable
+    ? '等待确认。取消不会创建或改变任务。'
+    : '该本地目录不完整，不能联网补齐。请导入完整离线模型包，或切换到 small。';
+  document.getElementById('modelDownloadConfirm').disabled = !downloadable;
+  if (sourceEl) sourceEl.disabled = !downloadable;
+  document.getElementById('modelDownloadCancel').disabled = false;
+  document.getElementById('modelDownloadModal').classList.add('active');
+  document.getElementById('modelDownloadSource').focus();
+}
+
+function closeModelDownloadModal() {
+  if (modelDownloadPollTimer) clearInterval(modelDownloadPollTimer);
+  modelDownloadPollTimer = null;
+  pendingModelRetry = null;
+  document.getElementById('modelDownloadModal').classList.remove('active');
+  if (modelDownloadReturnFocus && typeof modelDownloadReturnFocus.focus === 'function') modelDownloadReturnFocus.focus();
+  modelDownloadReturnFocus = null;
+}
+
+async function confirmModelDownload() {
+  if (!pendingModelPlan || !pendingModelPlan.model) return;
+  var statusEl = document.getElementById('modelDownloadStatus');
+  var confirmBtn = document.getElementById('modelDownloadConfirm');
+  var cancelBtn = document.getElementById('modelDownloadCancel');
+  confirmBtn.disabled = true;
+  cancelBtn.disabled = true;
+  statusEl.textContent = '正在建立受控下载任务…';
+  try {
+    var response = await fetch('/api/runtime/asr-model-download', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: pendingModelPlan.model, source: document.getElementById('modelDownloadSource').value, confirmed: true})
+    });
+    var payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || '模型下载未能开始');
+    if (payload.already_available) {
+      finishModelDownload();
+      return;
+    }
+    pollModelDownload();
+    modelDownloadPollTimer = setInterval(pollModelDownload, 1200);
+  } catch (error) {
+    statusEl.textContent = '下载未开始：' + String(error.message || error) + '。可切换到 small、导入离线模型包或刷新诊断。';
+    confirmBtn.disabled = false;
+    cancelBtn.disabled = false;
+  }
+}
+
+async function pollModelDownload() {
+  var statusEl = document.getElementById('modelDownloadStatus');
+  try {
+    var response = await fetch('/api/runtime/asr-model-download', {cache: 'no-store'});
+    var payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || '读取下载状态失败');
+    var task = payload.task || {};
+    statusEl.textContent = task.status === 'downloading'
+      ? '下载进行中：' + (task.stage || 'downloading') + (task.progress == null ? '（服务器未提供可验证百分比）' : ' ' + task.progress + '%')
+      : (task.status || 'idle');
+    if (task.status === 'completed') finishModelDownload();
+    if (task.status === 'failed') {
+      clearInterval(modelDownloadPollTimer);
+      modelDownloadPollTimer = null;
+      statusEl.textContent = '下载失败：' + (task.error || '未知错误') + '。可切换到 small、导入离线模型包或刷新诊断。';
+      document.getElementById('modelDownloadConfirm').disabled = false;
+      document.getElementById('modelDownloadCancel').disabled = false;
+    }
+  } catch (error) {
+    statusEl.textContent = '状态读取失败：' + String(error.message || error);
+  }
+}
+
+function finishModelDownload() {
+  if (modelDownloadPollTimer) clearInterval(modelDownloadPollTimer);
+  modelDownloadPollTimer = null;
+  var retry = pendingModelRetry;
+  pendingModelRetry = null;
+  document.getElementById('modelDownloadStatus').textContent = '模型已校验并发布，正在重新提交原请求…';
+  window.setTimeout(function() {
+    document.getElementById('modelDownloadModal').classList.remove('active');
+    if (retry) retry();
+  }, 350);
+}
+
+document.getElementById('modelDownloadSource').addEventListener('change', refreshModelPlanSource);
+document.getElementById('modelDownloadModal').addEventListener('click', function(event) {
+  if (event.target === this && !document.getElementById('modelDownloadCancel').disabled) closeModelDownloadModal();
+});
+
+function copyPipelineLog() {
+  var log = document.getElementById('pipeline-log');
+  if (!log || !navigator.clipboard) return;
+  navigator.clipboard.writeText(log.textContent).then(function() { showToast('操作日志已复制。', true); });
+}
 
 // ═══════════════════ Pipeline API ═══════════════════
 
@@ -3161,7 +3748,7 @@ function drawerFact(label, value) {
 }
 
 function previewArtifactLabel(kind) {
-  var labels = {source:'原文字幕', translated:'纯译文字幕', bilingual:'双语字幕', review_needed:'复核字幕'};
+  var labels = {source:'原文字幕', translated:'纯译文字幕', bilingual:'双语字幕', review_needed:'复核字幕', asr_review_report:'识别复核报告'};
   return labels[kind] || kind;
 }
 
@@ -3211,6 +3798,10 @@ function renderDrawerArtifacts(artifacts) {
     if (!first) first = kind;
     html += '<button type="button" data-preview-artifact="' + kind + '" onclick="loadTaskPreview(\'' + kind + '\',0)">预览' + escapeHtml(previewArtifactLabel(kind)) + '</button>';
     if (artifact.download_url) html += '<a class="dl-link" href="' + escapeHtml(artifact.download_url) + '">下载' + escapeHtml(previewArtifactLabel(kind)) + '</a>';
+  }
+  var asrReport = artifacts.asr_review_report;
+  if (asrReport && asrReport.downloadable && asrReport.download_url) {
+    html += '<a class="dl-link" href="' + escapeHtml(asrReport.download_url) + '">下载识别复核报告</a>';
   }
   host.innerHTML = html || '<span class="placeholder">当前没有可预览的字幕产物。</span>';
   document.getElementById('taskPreviewList').innerHTML = '';
@@ -3367,6 +3958,24 @@ function closeTaskDrawer() {
 }
 
 document.addEventListener('keydown', function(event) {
+  var modelModal = document.getElementById('modelDownloadModal');
+  if (modelModal && modelModal.classList.contains('active')) {
+    if (event.key === 'Escape' && !document.getElementById('modelDownloadCancel').disabled) {
+      event.preventDefault();
+      closeModelDownloadModal();
+      return;
+    }
+    if (event.key === 'Tab') {
+      var modalFocusable = modelModal.querySelectorAll('button:not([disabled]),select:not([disabled])');
+      if (modalFocusable.length) {
+        var modalFirst = modalFocusable[0];
+        var modalLast = modalFocusable[modalFocusable.length - 1];
+        if (event.shiftKey && document.activeElement === modalFirst) { event.preventDefault(); modalLast.focus(); }
+        else if (!event.shiftKey && document.activeElement === modalLast) { event.preventDefault(); modalFirst.focus(); }
+      }
+    }
+    return;
+  }
   var drawer = document.getElementById('taskDrawer');
   if (!drawer || drawer.hidden) return;
   if (event.key === 'Escape') {
@@ -3476,8 +4085,9 @@ function setLoading(action, state) {
 function appendLog(text) {
   var el = document.getElementById('pipeline-log');
   var now = new Date().toLocaleTimeString();
-  el.textContent += '[' + now + '] ' + text + '\n';
-  el.scrollTop = el.scrollHeight;
+  el.textContent += '[' + (String(text).indexOf('失败') >= 0 || String(text).indexOf('[409]') >= 0 ? 'ERROR ' : 'INFO ') + now + '] ' + text + '\n';
+  var autoScroll = document.getElementById('logAutoScroll');
+  if (!autoScroll || autoScroll.checked) el.scrollTop = el.scrollHeight;
 }
 
 async function pipelineAction(action) {
@@ -3505,6 +4115,7 @@ async function pipelineAction(action) {
     var provSel = document.getElementById('pipelineProviderSelect');
     var lpSel = document.getElementById('pipelineLangProfileSelect');
     var modelSel = document.getElementById('pipelineModel');
+    var presetSel = document.getElementById('pipelineQualityPreset');
     var deviceSel = document.getElementById('pipelineDevice');
     var computeTypeSel = document.getElementById('pipelineComputeType');
     var languageSel = document.getElementById('pipelineLanguage');
@@ -3515,7 +4126,10 @@ async function pipelineAction(action) {
     if (provSel && provSel.value) body.provider_id = provSel.value;
     if (lpSel && lpSel.value) body.language_profile_id = lpSel.value;
     body.model = modelSel ? modelSel.value : 'small';
+    body.quality_preset = presetSel ? presetSel.value : 'balanced';
     body.device = deviceSel ? deviceSel.value : 'cpu';
+    var pipelineModelSource = document.getElementById('pipelineModelSource');
+    body.hf_endpoint = pipelineModelSource && pipelineModelSource.value === 'mirror' ? 'https://hf-mirror.com' : '';
     if (computeTypeSel && computeTypeSel.value) body.compute_type = computeTypeSel.value;
     body.translate_enabled = translateCb ? translateCb.checked : true;
     body.asr_mode = selectedAsrMode('pipeline');
@@ -3547,6 +4161,12 @@ async function pipelineAction(action) {
 
     // Handle 409 Conflict (task already running)
     if (resp.status === 409) {
+      if (data.code === 'asr_model_required' || data.code === 'asr_model_download_required') {
+        appendLog('所选模型尚未安装，等待用户确认下载。');
+        setLoading(action, false);
+        handleModelRequirement(data, function() { pipelineAction(action); });
+        return;
+      }
       /*
       appendLog('[409] ' + (data.error || '已有流水线任务正在运行，请等待完成'));
       appendLog('  提示: 可通过"查看状态"或"操作日志"了解当前进度');
@@ -3897,14 +4517,15 @@ function artifactLabel(kind) {
     translated: '译文',
     bilingual: '双语',
     quality_report: '质检',
-    review_needed: '复核'
+    review_needed: '复核',
+    asr_review_report: '识别复核'
   };
   return labels[kind] || kind;
 }
 
 function renderTaskArtifactChips(task) {
   var artifacts = task.artifacts || {};
-  var order = ['bilingual', 'translated', 'source', 'quality_report', 'review_needed'];
+  var order = ['bilingual', 'translated', 'source', 'quality_report', 'review_needed', 'asr_review_report'];
   var html = '';
   var seenPaths = {};
   for (var i = 0; i < order.length; i++) {
@@ -3947,6 +4568,17 @@ function renderTaskSignals(task) {
   var issueTypes = qs.issue_types || {};
   if (issueTypes.mixed_language || issueTypes.possibly_untranslated) {
     html += '<div class="task-sub"><span class="badge badge-warn">可能有混合语言或未翻译残留。若素材确实包含多种语言，请改用“多语言”识别方式并人工复核标记片段。</span></div>';
+  }
+  var asrReview = task.asr_review_summary || {};
+  if (asrReview.candidate_count !== undefined) {
+    html += '<div class="asr-review-note"><strong>识别复核候选 ' + escapeHtml(String(asrReview.candidate_count || 0)) + ' 段</strong>';
+    var intervals = asrReview.candidates || asrReview.intervals || [];
+    if (intervals.length) {
+      html += '<div>' + intervals.slice(0, 8).map(function(item) {
+        return escapeHtml(String(item.timecode || item.start_timecode || item.start || '') + (item.end_timecode ? ' → ' + item.end_timecode : ''));
+      }).join('、') + '</div>';
+    }
+    html += '<div>仅供人工复核，未自动重跑或改写。</div></div>';
   }
   return html;
 }
@@ -4019,9 +4651,11 @@ function updatePipelineStageRibbon(progress) {
   if (progress && progress.total && Number(progress.overall_progress || 0) >= 100) currentIndex = stages.length;
   if (currentIndex < 0) currentIndex = 0;
   var nodes = document.querySelectorAll('[data-pipeline-stage]');
+  var failed = Boolean(progress && progress.current && progress.current.status === 'failed');
   for (var i = 0; i < nodes.length; i++) {
     nodes[i].classList.toggle('done', i < currentIndex);
     nodes[i].classList.toggle('active', i === currentIndex);
+    nodes[i].classList.toggle('failed', failed && i === currentIndex);
   }
 }
 
@@ -4039,6 +4673,10 @@ function renderPipelineProgress(progress) {
   var counts = progress.counts || {};
   updateRetryButton(!!progress.can_retry_failed);
   var current = progress.current;
+  if (!progress.total) {
+    el.innerHTML = asyncStateMarkup('empty', '队列目前为空', '请配置输入目录并执行「扫描文件」');
+    return;
+  }
   var html = '<div class="progress-panel">';
   html += '<div class="progress-header"><span>整体进度</span><span>' + (progress.overall_progress || 0) + '%</span></div>';
   html += renderProgressBar(progress.overall_progress || 0);
@@ -4053,12 +4691,6 @@ function renderPipelineProgress(progress) {
   html += '</div>';
   if (current) {
     html += '<div class="hint">当前：' + escapeHtml(current.file || '-') + ' / ' + escapeHtml(current.stage_label || current.stage || '-') + '</div>';
-  }
-  if (!progress.total) {
-    html += asyncStateMarkup('empty', '暂无任务状态', '先扫描或开始处理视频目录。');
-    html += '</div>';
-    el.innerHTML = html;
-    return;
   }
   if (progress.can_retry_failed) {
     html += '<div class="hint">发现 ' + escapeHtml(String(progress.recoverable_failed_count || 0)) + ' 个失败任务可重试。已完成任务会跳过，已有且有效的中间产物会复用。</div>';
@@ -4112,6 +4744,8 @@ async function loadPipelineProgress() {
   try {
     var resp = await fetch('/api/pipeline/progress');
     var data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '进度接口不可用');
+    setBackendConnected(true);
     renderPipelineProgress(data);
     if (pipelinePollTimer) {
       clearTimeout(pipelinePollTimer);
@@ -4121,6 +4755,7 @@ async function loadPipelineProgress() {
       pipelinePollTimer = setTimeout(loadPipelineProgress, 3000);
     }
   } catch (err) {
+    setBackendConnected(false);
     renderAsyncState('status-result', 'error', '进度读取失败', err.message, {label:'重试', onclick:'loadPipelineProgress()'});
   }
 }
@@ -4411,8 +5046,11 @@ async function loadRuntimeDiagnostics() {
   try {
     var resp = await fetch('/api/runtime/diagnostics');
     var data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '诊断接口不可用');
+    setBackendConnected(true);
     renderRuntimeDiagnostics(data);
   } catch (err) {
+    setBackendConnected(false);
     var html = '<div class="placeholder">运行环境诊断读取失败: ' + escapeHtml(err.message) + '</div>';
     if (el) el.innerHTML = html;
     if (summaryEl) summaryEl.innerHTML = html;
@@ -4536,13 +5174,23 @@ function renderJobResult(job) {
     if (job.source_output) html += '<div>原文字幕：' + escapeHtml(job.source_output) + '</div>';
     if (job.translated_output) html += '<div>翻译字幕：' + escapeHtml(job.translated_output) + '</div>';
     if (job.quality_report) html += '<div>质检报告：' + escapeHtml(job.quality_report) + '</div>';
+    if (job.asr_review_summary) {
+      var review = job.asr_review_summary;
+      html += '<div class="asr-review-note"><strong>识别复核候选：' + escapeHtml(String(review.candidate_count || 0)) + ' 段</strong>';
+      if (review.candidates && review.candidates.length) {
+        html += '<div>' + review.candidates.slice(0, 8).map(function(item) {
+          return escapeHtml(String(item.timecode || item.start_timecode || item.start || '') + (item.end_timecode ? ' → ' + item.end_timecode : ''));
+        }).join('、') + '</div>';
+      }
+      html += '<div>仅供人工复核，未自动重跑或改写。</div></div>';
+    }
     html += '</div>';
   } else if (job.status === 'failed') {
     html += '<div class="inspect-result err">';
     html += '<strong>✗ 处理失败</strong>';
     var lastLog = (job.logs || []).slice(-3).join('\n');
     if (lastLog) html += '<div style="margin-top:6px">' + escapeHtml(lastLog) + '</div>';
-    html += '<div style="margin-top:6px;font-size:12px">请检查上方日志了解详情，或确认视频文件可正常播放。</div>';
+    html += '<div style="margin-top:6px;font-size:12px">请检查日志中的具体原因；可切换到 small、确认下载缺失模型、导入离线模型包或刷新运行诊断。</div>';
     html += '</div>';
   }
   resultEl.innerHTML = html;
@@ -4595,12 +5243,16 @@ function showToast(message, ok) {
   var logBox = document.getElementById("log");
   var downloadSource = document.getElementById("downloadSource");
   var downloadTranslated = document.getElementById("downloadTranslated");
+  var downloadAsrReview = document.getElementById("downloadAsrReview");
+  var refreshButton = document.getElementById("singleRefreshButton");
+  var lastUpdated = document.getElementById("singleLastUpdated");
+  var networkError = document.getElementById("singleNetworkError");
 
   var translateCheck = document.getElementById("translate_enabled");
   var contextCheck = document.getElementById("context_enabled");
   var contextWindow = document.getElementById("context_window");
 
-  var activeJob = null;
+  var activeJob = sessionStorage.getItem('cinesub_active_job') || null;
   var timer = null;
 
   function setTranslateFieldsVisible(visible) {
@@ -4636,47 +5288,77 @@ function showToast(message, ok) {
     badge.className = "badge-status " + status;
   }
 
+  function clearActiveJob() {
+    activeJob = null;
+    sessionStorage.removeItem('cinesub_active_job');
+    if (timer) clearInterval(timer);
+    timer = null;
+    refreshButton.disabled = true;
+  }
+
+  function schedulePolling() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(pollJob, 1200);
+  }
+
   async function pollJob() {
     if (!activeJob) return;
-    var response = await fetch("/api/jobs/" + activeJob);
-    var job = await response.json();
-    if (!response.ok) {
-      /*
-      logBox.textContent += (job.error || "状态读取失败") + "\n";
-      return;
-    }
-
-      */
-      logBox.textContent += (job.error || "Failed to read job status.") + "\n";
-      return;
-    }
-
-    setStatus(job.status);
-    logBox.textContent = (job.logs || []).join("\n");
-    logBox.scrollTop = logBox.scrollHeight;
-
-    if (job.status === "done" || job.status === "failed") {
-      clearInterval(timer);
-      startBtn.disabled = false;
-      renderJobResult(job);
-    }
-
-    if (job.status === "done") {
-      if (job.source_output) {
-        downloadSource.href = "/download?job=" + job.id + "&type=source";
-        downloadSource.hidden = false;
+    refreshButton.disabled = true;
+    try {
+      var response = await fetch("/api/jobs/" + activeJob, {cache: 'no-store'});
+      var job = await response.json();
+      if (response.status === 404) {
+        clearActiveJob();
+        setStatus('idle');
+        networkError.hidden = false;
+        networkError.textContent = '此前任务已不存在，已安全清除本页保存的任务编号。';
+        return;
       }
-      if (job.translated_output) {
-        downloadTranslated.href = "/download?job=" + job.id + "&type=translated";
-        downloadTranslated.hidden = false;
+      if (!response.ok) throw new Error(job.error || "状态读取失败。");
+      setBackendConnected(true);
+      networkError.hidden = true;
+      lastUpdated.textContent = '最近更新 ' + new Date().toLocaleTimeString();
+
+      setStatus(job.status);
+      logBox.textContent = (job.logs || []).join("\n");
+      logBox.scrollTop = logBox.scrollHeight;
+
+      if (job.status === "done" || job.status === "failed") {
+        if (timer) clearInterval(timer);
+        timer = null;
+        startBtn.disabled = false;
+        renderJobResult(job);
       }
-      if (!job.source_output && !job.translated_output && job.output) {
-        downloadSource.textContent = "下载 SRT";
-        downloadSource.href = "/download?job=" + job.id;
-        downloadSource.hidden = false;
+
+      if (job.status === "done") {
+        if (job.source_output) {
+          downloadSource.href = "/download?job=" + job.id + "&type=source";
+          downloadSource.hidden = false;
+        }
+        if (job.translated_output) {
+          downloadTranslated.href = "/download?job=" + job.id + "&type=translated";
+          downloadTranslated.hidden = false;
+        }
+        if (job.asr_review_report) {
+          downloadAsrReview.href = "/download?job=" + job.id + "&type=asr_review_report";
+          downloadAsrReview.hidden = false;
+        }
+        if (!job.source_output && !job.translated_output && job.output) {
+          downloadSource.textContent = "下载 SRT";
+          downloadSource.href = "/download?job=" + job.id;
+          downloadSource.hidden = false;
+        }
       }
+    } catch (error) {
+      networkError.hidden = false;
+      networkError.textContent = '状态刷新失败：' + String(error.message || error) + '。请确认本地后端已启动后重试。';
+      setBackendConnected(false);
+    } finally {
+      if (activeJob) refreshButton.disabled = false;
     }
   }
+
+  refreshButton.addEventListener('click', pollJob);
 
   /*
   form.addEventListener("submit", async function(event) {
@@ -4722,18 +5404,11 @@ function showToast(message, ok) {
   });
   */
 
-  form.addEventListener("submit", async function(event) {
-    event.preventDefault();
-    var fileEl = document.getElementById("file");
+  async function submitSingleJob() {
     var pathEl = document.getElementById("path");
-    var file = fileEl && fileEl.files ? fileEl.files[0] : null;
     var path = pathEl ? pathEl.value.trim() : "";
-    if (!file && !path) {
-      showToast("请填写本机文件路径，或上传一个小样本。", false);
-      return;
-    }
-    if (file && file.size > 256 * 1024 * 1024) {
-      showToast("上传入口只适合小样本。大文件请填写本机路径，后台会直接读取原文件，不复制原片。", false);
+    if (!path) {
+      showToast("请填写本机文件路径。", false);
       return;
     }
     if (selectedAsrMode('single') === 'fixed' && !document.getElementById('language').value) {
@@ -4754,9 +5429,11 @@ function showToast(message, ok) {
 
     startBtn.disabled = true;
     setStatus("queued");
-    logBox.textContent = path ? "正在创建直处理任务...\n" : "正在上传小样本并创建任务...\n";
+    logBox.textContent = "正在创建本机直处理任务...\n";
     downloadSource.hidden = true;
     downloadTranslated.hidden = true;
+    downloadAsrReview.hidden = true;
+    networkError.hidden = true;
 
     try {
       var response = await fetch("/api/jobs", {
@@ -4764,17 +5441,38 @@ function showToast(message, ok) {
         body: new FormData(form),
       });
       var payload = await response.json();
+      if (response.status === 409 && (payload.code === 'asr_model_required' || payload.code === 'asr_model_download_required')) {
+        setStatus('idle');
+        startBtn.disabled = false;
+        handleModelRequirement(payload, submitSingleJob);
+        return;
+      }
       if (!response.ok) throw new Error(payload.error || "创建任务失败。");
       activeJob = payload.id;
+      sessionStorage.setItem('cinesub_active_job', activeJob);
+      refreshButton.disabled = false;
       pollJob();
-      timer = setInterval(pollJob, 1200);
+      schedulePolling();
     } catch (err) {
       setStatus("failed");
       logBox.textContent += "请按错误提示检查输入与设置后重试。\n" + String(err.message || err) + "\n";
       showToast("任务未能启动，请查看下方错误详情。", false);
       startBtn.disabled = false;
     }
+  }
+
+  form.addEventListener("submit", function(event) {
+    event.preventDefault();
+    submitSingleJob();
   });
+
+  if (activeJob) {
+    refreshButton.disabled = false;
+    setStatus('queued');
+    logBox.textContent = '正在恢复上次查看的任务状态…\n';
+    pollJob();
+    schedulePolling();
+  }
 })();
 
 // ═══════════════════ Pipeline Selects ═══════════════════
@@ -5649,14 +6347,21 @@ async function loadEffectiveConfigPreview() {
     var lp = data.language_profile || {};
     var q = lp.quality || {};
     var warnings = data.warnings || [];
-    var html = '<strong>本次翻译有效配置</strong>';
-    html += '<div>接口：' + escapeHtml(p.name || p.id || '未配置') + ' / ' + escapeHtml(p.protocol || '-') + ' / ' + escapeHtml(p.model || '-') + '</div>';
-    html += '<div>API Key：' + (p.api_key_present ? '已配置 ' + escapeHtml(p.api_key_masked || '') : '未配置') + '</div>';
-    html += '<div>语言配置：' + escapeHtml(lp.name || lp.id || '默认') + ' / ' + escapeHtml(lp.source_language || 'auto') + ' → ' + escapeHtml(lp.target_language || 'zh-CN') + '</div>';
-    html += '<div>翻译风格：' + (lp.style_present ? '已配置' : '默认') + ' / 术语表：' + (lp.glossary_count || 0) + ' 条</div>';
-    html += '<div>质检：警告=' + escapeHtml(String(q.language_probability_warning || '-')) + '，错误=' + escapeHtml(String(q.language_probability_error || '-')) + '，CPS=' + escapeHtml(String(q.max_cps_zh || '-')) + '，来源=' + escapeHtml(lp.quality_source || '-') + '</div>';
-    html += '<div>' + escapeHtml((data.cache_behavior || {}).note || '') + '</div>';
+    var configItems = [
+      ['接口 / 模型', (p.name || p.id || '未配置') + ' · ' + (p.model || '-')],
+      ['密钥状态', p.api_key_present ? '已配置 ' + (p.api_key_masked || '') : '未配置'],
+      ['语言方向', (lp.source_language || 'auto') + ' → ' + (lp.target_language || 'zh-CN')],
+      ['风格 / 术语', (lp.style_present ? '已配置风格' : '默认风格') + ' · ' + (lp.glossary_count || 0) + ' 条术语'],
+      ['质检阈值', 'warning ' + (q.language_probability_warning || '-') + ' · error ' + (q.language_probability_error || '-') + ' · CPS ' + (q.max_cps_zh || '-')],
+      ['缓存说明', (data.cache_behavior || {}).note || '按有效配置签名复用缓存']
+    ];
+    var html = '<div class="effective-config-card"><strong>本次翻译有效配置</strong><div class="effective-config-grid">';
+    html += configItems.map(function(item) {
+      return '<div class="effective-config-item"><span>' + escapeHtml(item[0]) + '</span><strong>' + escapeHtml(String(item[1])) + '</strong></div>';
+    }).join('');
+    html += '</div><details><summary>详细值</summary><div class="help-text">协议：' + escapeHtml(p.protocol || '-') + '；语言配置：' + escapeHtml(lp.name || lp.id || '默认') + '；质检来源：' + escapeHtml(lp.quality_source || '-') + '</div></details>';
     if (warnings.length) html += '<div style="color:var(--warn)">注意：' + escapeHtml(warnings.join('; ')) + '</div>';
+    html += '</div>';
     el.innerHTML = html;
   } catch (err) {
     renderAsyncState('effectiveConfigPreview', 'error', '有效配置读取失败', err.message || err, {label:'重试', onclick:'loadEffectiveConfigPreview()'});

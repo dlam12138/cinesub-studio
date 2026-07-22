@@ -9,6 +9,8 @@ from extract_burned_subtitles import (
     _observation_stability,
     _parse_sampling_offsets,
     _sample_offsets,
+    _select_language_tag,
+    _temporal_stability,
     _uniform_sampling_cues,
     run,
 )
@@ -65,6 +67,27 @@ def test_multiframe_offsets_and_consensus_are_deterministic():
     assert _sample_offsets(3) == [0.25, 0.5, 0.75]
     assert _parse_sampling_offsets("0.2,0.5,0.8") == [0.2, 0.5, 0.8]
     assert _consensus_text(["Bonjour", "Bon jour", "Bonjour"]) == "Bonjour"
+
+
+def test_temporal_stability_uses_text_presence_position_and_persistence():
+    boxes = [
+        {"left": 10, "top": 20, "width": 100, "height": 20},
+        {"left": 11, "top": 20, "width": 100, "height": 20},
+        {"left": 10, "top": 21, "width": 100, "height": 20},
+    ]
+
+    score = _temporal_stability("Bonjour", ["Bonjour", "Bonjour", "Bonjour"], boxes)
+
+    assert score is not None
+    assert score >= 0.95
+
+
+def test_ocr_language_selection_uses_enumerated_tags_without_default_fallback():
+    available = ["en-US", "fr-FR", "zh-Hans-CN"]
+    assert _select_language_tag(available, "fr-FR") == "fr-FR"
+    assert _select_language_tag(available, "zh-Hans", hans=True) == "zh-Hans-CN"
+    with pytest.raises(RuntimeError, match="unavailable"):
+        _select_language_tag(available, "de-DE")
 
 
 @pytest.mark.parametrize("value", ["0", "0.5,0.5", "0.8,0.2", "abc"])

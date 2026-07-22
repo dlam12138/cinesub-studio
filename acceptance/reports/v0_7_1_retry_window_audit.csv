@@ -1,0 +1,11 @@
+attempt,sample_id,profile,window_id,duration_seconds,mode,executed,accepted,classification,reasons
+3,sample-01,balanced,b8d1bb694f5cdd2b,27.800,dry_run,false,false,budget_skipped,retry_budget_exceeded;dry_run
+3,sample-01,balanced,d7ffd64e8be85fe7,25.280,dry_run,false,false,budget_skipped,retry_budget_exceeded;dry_run
+3,sample-01,balanced,3c8e850cc294ad10,15.800,dry_run,false,false,budget_skipped,retry_budget_exceeded;dry_run
+3,sample-01,balanced,23d1a576507971f6,19.330,dry_run,true,false,gate_passed_dry_run,candidate_gate_passed;dry_run
+3,sample-01,quality,b5b4178ad5d8a071,2.820,apply,true,false,rejected,coverage_out_of_range;text_length_out_of_range
+4,sample-01,balanced,f65e9e1a56a29e0d,27.800,dry_run,false,false,budget_skipped,retry_budget_exceeded;dry_run
+4,sample-01,balanced,615018ffbd0d8f76,25.280,dry_run,false,false,budget_skipped,retry_budget_exceeded;dry_run
+4,sample-01,balanced,9270d193b97a3bb7,15.800,dry_run,false,false,budget_skipped,retry_budget_exceeded;dry_run
+4,sample-01,balanced,593122a35c1504f3,19.330,dry_run,true,false,gate_passed_dry_run,candidate_gate_passed;dry_run
+4,sample-01,quality,174aed698550a9b7,2.820,dry_run,true,false,rejected,coverage_out_of_range;text_length_out_of_range;dry_run

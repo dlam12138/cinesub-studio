@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from app_info import get_app_info
 from file_inspection_api import inspect_input_file
-from job_api import get_job, list_jobs, retry_job, sanitize_filename, start_job
+from job_api import get_job, has_active_jobs, list_jobs, retry_job, sanitize_filename, start_job
 from pipeline_api import (
     get_pipeline_task,
     pipeline_progress,
@@ -53,6 +53,14 @@ from config_recovery import (
     all_config_status,
     recover_store,
 )
+from asr_model_api import (
+    AsrModelDownloadConflict,
+    download_is_running,
+    get_asr_models_payload,
+    get_download_task,
+    missing_model_payload,
+    start_model_download,
+)
 
 
 PATHS = resolve_runtime_paths()
@@ -84,6 +92,26 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".opus",
     ".wma",
 }
+
+
+def _effective_web_asr_model(payload: dict, language_profile_id: str = "") -> str:
+    """Resolve the model that Web execution will actually receive."""
+    explicit = str(payload.get("model") or "").strip()
+    if explicit:
+        return explicit
+    from language_profile_store import resolve_language_profile_config
+    from asr_runtime import resolve_quality_loop_config
+
+    profile = resolve_language_profile_config(language_profile_id or None)
+    asr = profile.get("asr") or {}
+    loop, sources = resolve_quality_loop_config(
+        explicit={},
+        preset=str(payload.get("quality_preset") or "balanced"),
+        profile_asr=asr,
+    )
+    if sources.get("model", {}).get("source") == "quality_preset":
+        return str(loop.get("model") or "large-v3")
+    return str(asr.get("whisper_model") or "small").strip() or "small"
 
 
 class RequestBodyError(ValueError):
@@ -244,6 +272,8 @@ class Handler(BaseHTTPRequestHandler):
                 output_path_str = job.get("quality_report", "")
             elif download_type == "review_needed":
                 output_path_str = job.get("review_needed", "")
+            elif download_type == "asr_review_report":
+                output_path_str = job.get("asr_review_report", "")
             else:
                 # Default: prefer translated, fallback to source
                 output_path_str = job.get("translated_output", "") or job.get("output", "")
@@ -257,7 +287,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error_json(404, "Output not found")
                 return
 
-            self.send_file(output_path, "application/x-subrip", download_name=output_path.name)
+            content_type = (
+                "application/json; charset=utf-8"
+                if output_path.suffix.lower() == ".json"
+                else "application/x-subrip"
+            )
+            self.send_file(output_path, content_type, download_name=output_path.name)
             return
 
         # Pipeline API
@@ -341,6 +376,20 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/runtime/diagnostics":
             self.send_json(_runtime_diagnostics())
+            return
+
+        if parsed.path == "/api/runtime/asr-models":
+            query = parse_qs(parsed.query)
+            selected = (query.get("selected") or ["small"])[0].strip()
+            source = (query.get("source") or ["official"])[0].strip()
+            try:
+                self.send_json(get_asr_models_payload(selected, source))
+            except ValueError as exc:
+                self.send_error_json(400, str(exc), code="invalid_asr_model_request")
+            return
+
+        if parsed.path == "/api/runtime/asr-model-download":
+            self.send_json(get_download_task())
             return
 
         if parsed.path == "/api/runtime/download-plan":
@@ -512,7 +561,17 @@ class Handler(BaseHTTPRequestHandler):
             provider_id = body.get("provider") or body.get("provider_id", "")
             language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
             input_dir = body.get("input_dir", "").strip()
-            model = body.get("model", "small")
+            body.setdefault("quality_preset", "balanced")
+            model = _effective_web_asr_model(body, str(language_profile_id or ""))
+            hf_endpoint = body.get("hf_endpoint", "").strip()
+            model_source = "mirror" if hf_endpoint == "https://hf-mirror.com" else "official"
+            missing = missing_model_payload(str(model), model_source)
+            if missing:
+                self.send_json(missing, status=409)
+                return
+            if download_is_running():
+                self.send_error_json(409, "模型下载正在进行，请等待完成。", code="asr_model_download_busy")
+                return
             device = body.get("device", "auto")
             compute_type = body.get("compute_type", "")
             translate_enabled = body.get("translate_enabled", True)
@@ -521,8 +580,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
                 return
-            hf_endpoint = body.get("hf_endpoint", "").strip()
-            local_files_only = bool(body.get("local_files_only", False))
+            local_files_only = True
             try:
                 reliability = _parse_translation_reliability_payload(body)
                 quality_strategy = _parse_quality_strategy_payload(body)
@@ -544,6 +602,11 @@ class Handler(BaseHTTPRequestHandler):
                 language=asr_request["language"],
                 hf_endpoint=hf_endpoint,
                 local_files_only=local_files_only,
+                quality_preset=str(body.get("quality_preset") or ""),
+                word_timestamps=body.get("word_timestamps"),
+                resegment_subtitles=body.get("resegment_subtitles"),
+                asr_retry_mode=body.get("asr_retry_mode"),
+                asr_hotword_prompt=str(body.get("asr_hotword_prompt") or ""),
                 **quality_strategy,
                 **reliability,
                 subtitle_formats=subtitle_formats,
@@ -558,7 +621,17 @@ class Handler(BaseHTTPRequestHandler):
             provider_id = body.get("provider") or body.get("provider_id", "")
             language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
             input_dir = body.get("input_dir", "").strip()
-            model = body.get("model", "small")
+            body.setdefault("quality_preset", "balanced")
+            model = _effective_web_asr_model(body, str(language_profile_id or ""))
+            hf_endpoint = body.get("hf_endpoint", "").strip()
+            model_source = "mirror" if hf_endpoint == "https://hf-mirror.com" else "official"
+            missing = missing_model_payload(str(model), model_source)
+            if missing:
+                self.send_json(missing, status=409)
+                return
+            if download_is_running():
+                self.send_error_json(409, "模型下载正在进行，请等待完成。", code="asr_model_download_busy")
+                return
             device = body.get("device", "auto")
             compute_type = body.get("compute_type", "")
             translate_enabled = body.get("translate_enabled", True)
@@ -567,8 +640,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
                 return
-            hf_endpoint = body.get("hf_endpoint", "").strip()
-            local_files_only = bool(body.get("local_files_only", False))
+            local_files_only = True
             try:
                 reliability = _parse_translation_reliability_payload(body)
                 quality_strategy = _parse_quality_strategy_payload(body)
@@ -590,6 +662,11 @@ class Handler(BaseHTTPRequestHandler):
                 language=asr_request["language"],
                 hf_endpoint=hf_endpoint,
                 local_files_only=local_files_only,
+                quality_preset=str(body.get("quality_preset") or ""),
+                word_timestamps=body.get("word_timestamps"),
+                resegment_subtitles=body.get("resegment_subtitles"),
+                asr_retry_mode=body.get("asr_retry_mode"),
+                asr_hotword_prompt=str(body.get("asr_hotword_prompt") or ""),
                 **quality_strategy,
                 **reliability,
                 subtitle_formats=subtitle_formats,
@@ -670,6 +747,27 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_runtime_download(components, dry_run=dry_run))
             return
 
+        if parsed.path == "/api/runtime/asr-model-download":
+            body = self._read_json_body() or {}
+            busy_reason = ""
+            if get_pipeline_task().get("running"):
+                busy_reason = "流水线正在运行，完成后才能下载模型。"
+            elif has_active_jobs():
+                busy_reason = "单任务正在运行，完成后才能下载模型。"
+            try:
+                payload, status = start_model_download(
+                    model_name=str(body.get("model") or ""),
+                    source=str(body.get("source") or "official"),
+                    confirmed=body.get("confirmed") is True,
+                    busy_reason=busy_reason,
+                )
+                self.send_json(payload, status=status)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc), code="invalid_asr_model_download")
+            except AsrModelDownloadConflict as exc:
+                self.send_error_json(409, str(exc), code="asr_model_download_busy")
+            return
+
         if parsed.path == "/api/runtime/import-package":
             try:
                 if "multipart/form-data" in self.headers.get("Content-Type", ""):
@@ -709,6 +807,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not safe_job.get("can_retry"):
                     self.send_error_json(400, safe_job.get("retry_reason") or "无法重试此任务")
                     return
+                retry_options = safe_job.get("options") or {}
+                model = str(retry_options.get("model") or "small")
+                retry_source = (
+                    "mirror"
+                    if retry_options.get("hf_endpoint") == "https://hf-mirror.com"
+                    else "official"
+                )
+                missing = missing_model_payload(model, retry_source)
+                if missing:
+                    self.send_json(missing, status=409)
+                    return
+                if download_is_running():
+                    self.send_error_json(409, "模型下载正在进行，请等待完成。", code="asr_model_download_busy")
+                    return
                 new_job = retry_job(job_id)
                 if new_job is None:
                     self.send_error_json(500, "重试失败：无法创建新任务")
@@ -721,6 +833,36 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             form = self.read_multipart_form()
+            path_value = form.get("path")
+            path_text = (
+                str(path_value).strip()
+                if isinstance(path_value, (str, int, float))
+                else ""
+            )
+            upload = form.get("file")
+            has_upload = isinstance(upload, dict) and bool(upload.get("content"))
+            if not path_text and not has_upload:
+                raise ValueError("Enter a local target file path, or upload a small sample file.")
+            if path_text and not Path(path_text).expanduser().resolve().exists():
+                raise ValueError(f"Input path does not exist: {Path(path_text).expanduser().resolve()}")
+            profile_id = str(form.get("language_profile") or "")
+            if "quality_preset" not in form:
+                form["quality_preset"] = "balanced"
+            has_explicit_model = bool(str(form.get("model") or "").strip())
+            model = _effective_web_asr_model(form, profile_id)
+            form["model"] = model
+            if not has_explicit_model:
+                form["_model_from_preflight"] = "1"
+            hf_endpoint = str(form.get("hf_endpoint") or "")
+            model_source = "mirror" if hf_endpoint == "https://hf-mirror.com" else "official"
+            missing = missing_model_payload(model, model_source)
+            if missing:
+                self.send_json(missing, status=409)
+                return
+            if download_is_running():
+                self.send_error_json(409, "模型下载正在进行，请等待完成。", code="asr_model_download_busy")
+                return
+            form["local_files_only"] = "on"
             job = start_job(form)
         except ValueError as exc:
             self.send_error_json(400, str(exc))

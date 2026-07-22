@@ -52,6 +52,8 @@ class TaskState:
     translated_srt: str = ""
     bilingual_srt: str = ""
     quality_report: str = ""
+    asr_review_report: str = ""
+    asr_review_summary: dict | None = None
     semantic_review_report: str = ""
     error: str = ""
     error_stage: str = ""

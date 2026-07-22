@@ -1,14 +1,16 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$InputDirectory,
-    [Parameter(Mandatory = $true)]
-    [string]$OutputJson
+    [string]$InputDirectory = "",
+    [string]$SourceInputDirectory = "",
+    [string]$TargetInputDirectory = "",
+    [string]$OutputJson = "",
+    [string]$SourceLanguageTag = "en-US",
+    [string]$TargetLanguageTag = "zh-Hans-CN",
+    [switch]$ListLanguages,
+    [switch]$ValidateLanguages
 )
 
-# This is intentionally a thin Windows-only bridge. The project Python runtime
-# has no WinRT OCR binding, and using Windows.Media.Ocr avoids downloading an
-# OCR package or model. Frame extraction, cleanup, merging, and SRT writing stay
-# in Python.
+# Thin Windows-only bridge. OCR capability selection is explicit: unavailable
+# languages fail instead of falling back to the system default engine.
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -29,20 +31,87 @@ function Wait-WinRtOperation($Operation, [Type]$ResultType) {
     return $task.Result
 }
 
+$available = @(
+    [Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages |
+        ForEach-Object { $_.LanguageTag }
+)
+
+if ($ListLanguages -and -not $ValidateLanguages) {
+    $payload = [ordered]@{ available_ocr_languages = $available }
+    $json = $payload | ConvertTo-Json -Depth 4
+    if ($OutputJson) {
+        [System.IO.File]::WriteAllText(
+            [System.IO.Path]::GetFullPath($OutputJson),
+            $json,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    }
+    else {
+        Write-Output $json
+    }
+    exit 0
+}
+
+if (-not $OutputJson) {
+    throw 'OutputJson is required.'
+}
+if (-not $ValidateLanguages) {
+    if (-not $SourceInputDirectory) {
+        $SourceInputDirectory = $InputDirectory
+    }
+    if (-not $TargetInputDirectory) {
+        $TargetInputDirectory = $InputDirectory
+    }
+    if (-not $SourceInputDirectory -or -not $TargetInputDirectory) {
+        throw 'SourceInputDirectory and TargetInputDirectory are required.'
+    }
+}
+
+foreach ($tag in @($SourceLanguageTag, $TargetLanguageTag)) {
+    if ($available -notcontains $tag) {
+        throw "Windows OCR language is unavailable: $tag"
+    }
+}
+
 $engines = @{}
-foreach ($tag in @('zh-Hans-CN', 'en-US')) {
+foreach ($tag in @($SourceLanguageTag, $TargetLanguageTag)) {
+    if ($engines.ContainsKey($tag)) {
+        continue
+    }
     $language = [Windows.Globalization.Language]::new($tag)
     $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($language)
     if ($null -eq $engine) {
-        throw "Windows OCR language is unavailable: $tag"
+        throw "Windows OCR engine creation failed: $tag"
     }
     $engines[$tag] = $engine
 }
 
-$results = @()
-foreach ($image in Get-ChildItem -LiteralPath $InputDirectory -Filter '*.png' -File | Sort-Object Name) {
+if ($ValidateLanguages) {
+    $payload = [ordered]@{
+        requested_ocr_languages = @($SourceLanguageTag, $TargetLanguageTag)
+        available_ocr_languages = $available
+        source_language_tag = $SourceLanguageTag
+        target_language_tag = $TargetLanguageTag
+        source_engine_created = $engines.ContainsKey($SourceLanguageTag)
+        target_engine_created = $engines.ContainsKey($TargetLanguageTag)
+    }
+    $json = $payload | ConvertTo-Json -Depth 4
+    if ($OutputJson) {
+        [System.IO.File]::WriteAllText(
+            [System.IO.Path]::GetFullPath($OutputJson),
+            $json,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    }
+    else {
+        Write-Output $json
+    }
+    exit 0
+}
+
+function Invoke-OcrImage([string]$Path, [string]$Tag) {
     $file = Wait-WinRtOperation (
-        [Windows.Storage.StorageFile]::GetFileFromPathAsync($image.FullName)
+        [Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)
     ) ([Windows.Storage.StorageFile])
     $stream = Wait-WinRtOperation (
         $file.OpenAsync([Windows.Storage.FileAccessMode]::Read)
@@ -55,16 +124,25 @@ foreach ($image in Get-ChildItem -LiteralPath $InputDirectory -Filter '*.png' -F
             $decoder.GetSoftwareBitmapAsync()
         ) ([Windows.Graphics.Imaging.SoftwareBitmap])
         try {
-            $row = [ordered]@{ id = [int]$image.BaseName; languages = @{} }
-            foreach ($tag in @('zh-Hans-CN', 'en-US')) {
-                $ocr = Wait-WinRtOperation (
-                    $engines[$tag].RecognizeAsync($bitmap)
-                ) ([Windows.Media.Ocr.OcrResult])
-                $row.languages[$tag] = @(
-                    $ocr.Lines | ForEach-Object { $_.Text }
+            $ocr = Wait-WinRtOperation (
+                $engines[$Tag].RecognizeAsync($bitmap)
+            ) ([Windows.Media.Ocr.OcrResult])
+            return [ordered]@{
+                lines = @($ocr.Lines | ForEach-Object { $_.Text })
+                words = @(
+                    $ocr.Lines | ForEach-Object {
+                        $_.Words | ForEach-Object {
+                            [ordered]@{
+                                text = $_.Text
+                                left = [double]$_.BoundingRect.X
+                                top = [double]$_.BoundingRect.Y
+                                width = [double]$_.BoundingRect.Width
+                                height = [double]$_.BoundingRect.Height
+                            }
+                        }
+                    }
                 )
             }
-            $results += [pscustomobject]$row
         }
         finally {
             $bitmap.Dispose()
@@ -75,7 +153,35 @@ foreach ($image in Get-ChildItem -LiteralPath $InputDirectory -Filter '*.png' -F
     }
 }
 
-$json = $results | ConvertTo-Json -Depth 6
+$sourceImages = @{}
+Get-ChildItem -LiteralPath $SourceInputDirectory -Filter '*.png' -File |
+    ForEach-Object { $sourceImages[$_.BaseName] = $_.FullName }
+$targetImages = @{}
+Get-ChildItem -LiteralPath $TargetInputDirectory -Filter '*.png' -File |
+    ForEach-Object { $targetImages[$_.BaseName] = $_.FullName }
+$ids = @($sourceImages.Keys + $targetImages.Keys | Sort-Object -Unique)
+
+$results = @()
+foreach ($id in $ids) {
+    if (-not $sourceImages.ContainsKey($id) -or -not $targetImages.ContainsKey($id)) {
+        throw "OCR ROI frame pair is incomplete: $id"
+    }
+    $source = Invoke-OcrImage $sourceImages[$id] $SourceLanguageTag
+    $target = Invoke-OcrImage $targetImages[$id] $TargetLanguageTag
+    $results += [pscustomobject][ordered]@{
+        id = [int]$id
+        languages = [ordered]@{
+            $SourceLanguageTag = $source.lines
+            $TargetLanguageTag = $target.lines
+        }
+        words = [ordered]@{
+            $SourceLanguageTag = $source.words
+            $TargetLanguageTag = $target.words
+        }
+    }
+}
+
+$json = $results | ConvertTo-Json -Depth 8
 [System.IO.File]::WriteAllText(
     [System.IO.Path]::GetFullPath($OutputJson),
     $json,
