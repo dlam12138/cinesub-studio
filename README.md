@@ -2,6 +2,8 @@
 
 CineSub Studio 是一款 Windows 本地字幕工作台，可把视频或音频转写为 SRT，并通过 OpenAI-compatible Provider 生成中文字幕或双语字幕。当前正式版本为 `0.6.2`。
 
+> `main` 当前包含尚未正式发布的 v0.7.x 源码候选；最新可下载便携版本仍为 0.6.2。源码接口和正式二进制可能暂时不同。
+
 ## 下载与启动
 
 普通用户只需要从 [GitHub Release v0.6.2](https://github.com/dlam12138/cinesub-studio/releases/tag/v0.6.2) 下载：

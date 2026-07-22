@@ -130,9 +130,10 @@ acceptance/reports/v0_7_1_retry_window_audit.csv
 优先级：
 
 1. CLI/Web 显式参数
-2. Language Profile
-3. Provider
-4. 默认值
+2. `quality_preset` 展开值
+3. Language Profile
+4. Provider
+5. 默认值
 
 ## Pipeline 与输出
 

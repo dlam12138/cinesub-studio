@@ -54,6 +54,7 @@ and model loading; end-to-end time includes the complete independent process.
 - Base SHA: `ff2f48b754687346410c850ecdf628045056de8c`
 - v0.7 implementation SHA: `6d13655d4597b331073ce480f94fbff1f5836a5c`
 - Final evaluated SHA: `dd170e3cbfcb341482558013bbb87e14294f568a`
+- Acceptance report commit: `2bdea2282f6d858609419e40339c442dd98f4ed5`
 - large-v3 revision: `edaa852ec7e145841d8ffdb056a99866b5f0a478`
 - large-v3 `model.bin` SHA256: `69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1`
 - VideOCR executable SHA256: `7b366641db86c89e3fa559b9f97824040049959e909362ac3b7fec7616337d7c`
