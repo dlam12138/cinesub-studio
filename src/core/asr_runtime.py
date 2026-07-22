@@ -7,6 +7,9 @@ from typing import Any, Iterable
 
 
 ASR_MODES = {"auto", "fixed", "multilingual"}
+QUALITY_PRESETS = {"speed", "balanced", "quality"}
+ASR_RETRY_MODES = {"off", "dry_run", "apply"}
+ASR_RETRY_RECIPE_VERSION = "local-retry-selective-v2"
 SAMPLE_RATE = 16000
 MULTILINGUAL_TARGET_SECONDS = 45.0
 MULTILINGUAL_MAX_SECONDS = 60.0
@@ -80,10 +83,19 @@ class AsrDecodeOptions:
 
 
 @dataclass(frozen=True)
+class TranscriptionWord:
+    start: float | None
+    end: float | None
+    text: str
+    probability: float | None = None
+
+
+@dataclass(frozen=True)
 class TranscriptionCue:
     start: float
     end: float
     text: str
+    words: tuple[TranscriptionWord, ...] = ()
     avg_logprob: float | None = None
     compression_ratio: float | None = None
     no_speech_prob: float | None = None
@@ -105,6 +117,7 @@ class TranscriptionArtifact:
             "language_probability": self.language_probability,
             "duration_seconds": self.duration_seconds,
             "backend_versions": dict(self.backend_versions),
+            "word_timing_count": sum(len(cue.words) for cue in self.cues),
             "suspicious_cue_count": len(suspicious_cue_indexes(self.cues)),
         }
 
@@ -198,6 +211,183 @@ def suspicious_cue_indexes(cues: Iterable[TranscriptionCue]) -> list[int]:
     return indexes
 
 
+def normalize_quality_preset(value: object = None) -> str:
+    preset = str(value or "").strip().lower()
+    if not preset:
+        return ""
+    if preset not in QUALITY_PRESETS:
+        raise ValueError("quality_preset must be one of: speed, balanced, quality")
+    return preset
+
+
+def normalize_asr_retry_mode(value: object = None) -> str:
+    mode = str(value or "off").strip().lower()
+    if mode not in ASR_RETRY_MODES:
+        raise ValueError("asr_retry_mode must be one of: off, dry_run, apply")
+    return mode
+
+
+def quality_preset_values(preset: object = None) -> dict[str, object]:
+    normalized = normalize_quality_preset(preset)
+    if normalized == "speed":
+        return {
+            "word_timestamps": False,
+            "resegment_subtitles": False,
+            "asr_retry_mode": "off",
+        }
+    if normalized == "balanced":
+        return {
+            "word_timestamps": True,
+            "resegment_subtitles": True,
+            "asr_retry_mode": "dry_run",
+        }
+    if normalized == "quality":
+        return {
+            "model": "large-v3",
+            "word_timestamps": True,
+            "resegment_subtitles": True,
+            "asr_retry_mode": "apply",
+        }
+    return {}
+
+
+def _bool_option(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def resolve_quality_loop_config(
+    *,
+    explicit: dict[str, object] | None = None,
+    preset: object = None,
+    profile_asr: dict | None = None,
+) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+    """Resolve v0.7 ASR quality-loop options and explain each source."""
+    explicit = explicit or {}
+    profile_asr = profile_asr or {}
+    preset_name = normalize_quality_preset(preset)
+    preset_map = quality_preset_values(preset_name)
+
+    fields = {
+        "quality_preset": "",
+        "word_timestamps": False,
+        "resegment_subtitles": False,
+        "asr_retry_mode": "off",
+        "asr_hotword_prompt": "",
+    }
+    if "model" in preset_map:
+        fields["model"] = ""
+
+    resolved: dict[str, object] = {"quality_preset": preset_name}
+    sources: dict[str, dict[str, object]] = {
+        "quality_preset": {"value": preset_name, "source": "explicit_request" if preset_name else "default"}
+    }
+    for field, default in fields.items():
+        if field == "quality_preset":
+            continue
+        if field in explicit and explicit[field] is not None:
+            value = explicit[field]
+            source = "explicit_request"
+        elif field in preset_map:
+            value = preset_map[field]
+            source = "quality_preset"
+        elif field in profile_asr:
+            value = profile_asr[field]
+            source = "language_profile"
+        else:
+            value = default
+            source = "default"
+        if field in {"word_timestamps", "resegment_subtitles"}:
+            value = _bool_option(value)
+        if field == "asr_retry_mode":
+            value = normalize_asr_retry_mode(value)
+        if field == "asr_hotword_prompt":
+            value = str(value or "").strip()
+        resolved[field] = value
+        sources[field] = {"value": value, "source": source}
+    return resolved, sources
+
+
+def uncovered_speech_intervals(
+    speech_intervals: Iterable[tuple[float, float]],
+    cues: Iterable[TranscriptionCue],
+    *,
+    cue_padding_seconds: float = 0.35,
+    minimum_uncovered_seconds: float = 1.0,
+    merge_gap_seconds: float = 0.5,
+) -> list[dict[str, float]]:
+    """Return VAD speech regions not covered by final cues.
+
+    This is diagnostic-only: callers must not use it to rerun or replace ASR
+    output automatically.
+    """
+    padded_cues = _merge_intervals(
+        (
+            max(0.0, cue.start - cue_padding_seconds),
+            max(cue.start, cue.end + cue_padding_seconds),
+        )
+        for cue in cues
+    )
+    uncovered: list[tuple[float, float]] = []
+    for speech_start, speech_end in _merge_intervals(speech_intervals):
+        fragments = [(speech_start, speech_end)]
+        for cue_start, cue_end in padded_cues:
+            if cue_end <= speech_start:
+                continue
+            if cue_start >= speech_end:
+                break
+            next_fragments: list[tuple[float, float]] = []
+            for start, end in fragments:
+                if cue_end <= start or cue_start >= end:
+                    next_fragments.append((start, end))
+                    continue
+                if cue_start > start:
+                    next_fragments.append((start, min(cue_start, end)))
+                if cue_end < end:
+                    next_fragments.append((max(cue_end, start), end))
+            fragments = next_fragments
+            if not fragments:
+                break
+        uncovered.extend(
+            (start, end)
+            for start, end in fragments
+            if end - start >= minimum_uncovered_seconds
+        )
+
+    merged = _merge_intervals(uncovered, max_gap=merge_gap_seconds)
+    return [
+        {
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": round(end - start, 3),
+        }
+        for start, end in merged
+        if end - start >= minimum_uncovered_seconds
+    ]
+
+
+def _merge_intervals(
+    intervals: Iterable[tuple[float, float]],
+    *,
+    max_gap: float = 0.0,
+) -> list[tuple[float, float]]:
+    ordered = sorted(
+        (max(0.0, float(start)), max(0.0, float(end)))
+        for start, end in intervals
+        if float(end) > float(start)
+    )
+    merged: list[tuple[float, float]] = []
+    for start, end in ordered:
+        if merged and start <= merged[-1][1] + max_gap:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def deduplicate_boundary_cues(
     cues: Iterable[TranscriptionCue],
     *,
@@ -225,6 +415,7 @@ def deduplicate_boundary_cues(
                 start=min(previous.start, cue.start),
                 end=max(previous.end, cue.end),
                 text=preferred.text,
+                words=preferred.words,
                 avg_logprob=preferred.avg_logprob,
                 compression_ratio=preferred.compression_ratio,
                 no_speech_prob=preferred.no_speech_prob,

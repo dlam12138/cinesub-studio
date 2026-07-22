@@ -2,6 +2,23 @@
 
 本文件面向 agent 和源码维护者。普通用户说明只写在 `README.md`。
 
+## Agent 连续工作记录
+
+为避免长任务、跨轮对话或上下文压缩后失焦，所有在本仓库工作的 agent 必须遵守：
+
+1. 每个任务轮次开始执行、分析或修改前，先递归读取 `agents/thinking/` 下的全部文件。
+2. 读取后先确认当前目标、已完成事项、未解决问题和明确约束，再继续工作；不得仅凭对话记忆重复已完成操作。
+3. 每个任务轮次结束前，在 `agents/thinking/` 新增一份按时间排序的 Markdown 记录。记录至少包含：
+   - 用户目标；
+   - 已知事实与证据；
+   - 本轮决策摘要；
+   - 实际执行的操作；
+   - 验证结果；
+   - 未解决问题与下一步。
+4. 记录只写可审计的简明决策依据和工作摘要，不记录隐藏思维链、逐 token 推理、密钥、token、用户媒体内容或其他敏感信息。
+5. 若本轮仅回答问题或读取资料，也要记录读取范围、结论以及是否修改文件。
+6. 若 `agents/thinking/` 不存在，先创建该目录和说明文件，再执行其他任务。
+
 ## 当前交付边界
 
 仓库只维护 GitHub 已上传的源码；正式二进制交付物只有：
@@ -11,7 +28,7 @@ CineSubStudio-0.6.2-windows-x64-portable.zip
 CineSubStudio-0.6.2-windows-x64-portable.zip.sha256
 ```
 
-不要在源码或文档中恢复已退役的 NSIS、BAT/PowerShell 便携启动包、FunASR、WhisperX、ASR candidate、`mixed-route-v1` 或 segment routing 产品链路。
+不要在源码或文档中恢复已退役的 NSIS、BAT/PowerShell 便携启动包、FunASR、WhisperX、通用 ASR candidate 竞争、`mixed-route-v1` 或多后端 segment routing 产品链路。v0.7 只允许固定配方 `local-retry-selective-v2` 在同一 faster-whisper 会话内执行受控局部重试，不得向用户暴露候选 registry 或 candidate ID。
 
 0.6.2 的 Electron 目录布局和构建接口是冻结基线。改变 EXE 启动契约、资源目录、数据目录或发布文件名时必须升级版本并同步测试。
 
@@ -84,7 +101,7 @@ config/language_profiles.local.json
 - 都未传时使用 `auto`。
 - `auto` 和 `multilingual` 不接受具体语言。
 
-多语言模式复用单个模型实例和一次 FFmpeg 抽取；无有效语音必须明确失败。诊断信息不得触发候选竞争、自动改写、换模型、局部重跑或输出替换。
+多语言模式复用单个模型实例和一次 FFmpeg 抽取；无有效语音必须明确失败。诊断信息不得触发候选竞争、自动改写、换模型或通用 segment routing。v0.7 固定 ASR retry 只能在预算、硬拒绝、事务校验和审计报告均通过时局部替换 suspicious cue；VAD uncovered window 默认只 dry-run。
 
 ## 配置与安全
 

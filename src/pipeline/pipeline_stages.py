@@ -145,6 +145,13 @@ def transcribe_stage(
         language_profile_name=profile.get("profile_name", config.language_profile_name),
         condition_on_previous_text=baseline_options.condition_on_previous_text,
         decode_options=baseline_options,
+        quality_preset=getattr(config, "quality_preset", ""),
+        word_timestamps=getattr(config, "word_timestamps", False),
+        resegment_subtitles=getattr(config, "resegment_subtitles", False),
+        asr_retry_mode=getattr(config, "asr_retry_mode", "off"),
+        asr_hotword_prompt=getattr(config, "asr_hotword_prompt", ""),
+        profile_glossary=profile.get("glossary", []),
+        effective_asr_config=getattr(config, "effective_asr_config", {}),
     )
     if not _valid(srt_path):
         raise StageError("transcribing", "Transcription completed without a non-empty SRT output.")

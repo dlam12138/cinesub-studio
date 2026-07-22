@@ -16,6 +16,7 @@ from typing import Any
 from ffmpeg_locator import find_ffmpeg_info
 from runtime_paths import resolve_runtime_paths
 from venv_config import inspect_venv_config
+from asr_model_locator import installed_models
 
 PATHS = resolve_runtime_paths()
 PROJECT_ROOT = PATHS.project_root
@@ -919,12 +920,11 @@ def _nvidia_driver_info() -> dict[str, Any]:
 
 
 def _known_models() -> list[str]:
-    known: list[str] = []
-    if MODEL_DIR.exists():
-        for path in sorted(MODEL_DIR.glob("models--*--*")):
-            if path.is_dir():
-                known.append(path.name.replace("models--", "").replace("--", "/"))
-    return known
+    return sorted({
+        str(row.get("repo_id") or row.get("requested") or "")
+        for row in installed_models(MODEL_DIR, CACHE_DIR / "huggingface" / "hub")
+        if row.get("available")
+    })
 
 
 def _asr_backend_status(*, recommended_device: str = "cpu") -> dict[str, dict[str, Any]]:

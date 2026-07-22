@@ -32,6 +32,7 @@ ARTIFACT_TYPES = {
     "quality_report",
     "review_needed",
     "semantic_review_report",
+    "asr_review_report",
 }
 
 PIPELINE_TASK: dict[str, Any] = {
@@ -133,6 +134,7 @@ def pipeline_progress() -> dict:
             "language": raw.get("language", ""),
             "asr_config_signature": raw.get("asr_config_signature", ""),
             "language_detection": _language_detection_summary(raw.get("language_detection")),
+            "asr_review_summary": raw.get("asr_review_summary") or {},
             "target_language": _target_language_from_state(raw),
             "quality_summary": _quality_summary(raw),
             "artifacts": pipeline_artifacts_for_state(raw),
@@ -215,6 +217,11 @@ def start_pipeline_background(
     language: str = "",
     hf_endpoint: str = "",
     local_files_only: bool = False,
+    quality_preset: str = "",
+    word_timestamps: object = None,
+    resegment_subtitles: object = None,
+    asr_retry_mode: object = None,
+    asr_hotword_prompt: str = "",
     translation_reliability_mode: str | None = None,
     translation_max_extra_requests: int | None = None,
     translation_strategy_mode: str | None = None,
@@ -250,6 +257,11 @@ def start_pipeline_background(
             "language": language,
             "hf_endpoint": hf_endpoint,
             "local_files_only": local_files_only,
+            "quality_preset": quality_preset,
+            "word_timestamps": word_timestamps,
+            "resegment_subtitles": resegment_subtitles,
+            "asr_retry_mode": asr_retry_mode,
+            "asr_hotword_prompt": asr_hotword_prompt,
             "translation_reliability_mode": translation_reliability_mode,
             "translation_max_extra_requests": translation_max_extra_requests,
             "translation_strategy_mode": translation_strategy_mode,
@@ -277,6 +289,11 @@ def run_pipeline_background(
     language: str = "",
     hf_endpoint: str = "",
     local_files_only: bool = False,
+    quality_preset: str = "",
+    word_timestamps: object = None,
+    resegment_subtitles: object = None,
+    asr_retry_mode: object = None,
+    asr_hotword_prompt: str = "",
     translation_reliability_mode: str | None = None,
     translation_max_extra_requests: int | None = None,
     translation_strategy_mode: str | None = None,
@@ -299,6 +316,11 @@ def run_pipeline_background(
         asr_mode=asr_mode,
         language=language,
         local_files_only=local_files_only,
+        quality_preset=quality_preset,
+        word_timestamps=word_timestamps,
+        resegment_subtitles=resegment_subtitles,
+        asr_retry_mode=asr_retry_mode,
+        asr_hotword_prompt=asr_hotword_prompt,
         translation_reliability_mode=translation_reliability_mode,
         translation_max_extra_requests=translation_max_extra_requests,
         translation_strategy_mode=translation_strategy_mode,
@@ -437,6 +459,7 @@ def _artifact_paths(raw: dict) -> dict[str, str]:
         "quality_report": str(raw.get("quality_report") or ""),
         "review_needed": "",
         "semantic_review_report": str(raw.get("semantic_review_report") or ""),
+        "asr_review_report": str(raw.get("asr_review_report") or ""),
     }
     quality_report = paths["quality_report"]
     if quality_report:
@@ -489,6 +512,7 @@ def _artifact_label(kind: str) -> str:
         "quality_report": "Quality report",
         "review_needed": "Review SRT",
         "semantic_review_report": "Semantic review report",
+        "asr_review_report": "ASR review report",
     }
     return labels.get(kind, kind)
 
@@ -528,6 +552,7 @@ def _language_detection_summary(value: Any) -> dict:
         "distinct_languages": value.get("distinct_languages", []),
         "block_count": value.get("block_count", 0),
         "manual_review_count": value.get("manual_review_count", 0),
+        "asr_review_summary": value.get("asr_review_summary", {}),
         "blocks": value.get("blocks", []),
         "model": value.get("model", ""),
         "device": value.get("device", ""),
@@ -617,15 +642,22 @@ def _build_background_command(
     compute_type: str,
     translate_enabled: bool,
     asr_mode: str = "",
-    language: str,
-    local_files_only: bool,
-    subtitle_formats: list[str],
-    ass_style_id: str,
+    language: str = "",
+    local_files_only: bool = False,
+    quality_preset: str = "",
+    word_timestamps: object = None,
+    resegment_subtitles: object = None,
+    asr_retry_mode: object = None,
+    asr_hotword_prompt: str = "",
+    subtitle_formats: list[str] | None = None,
+    ass_style_id: str = "",
     translation_reliability_mode: str | None = None,
     translation_max_extra_requests: int | None = None,
     translation_strategy_mode: str | None = None,
     translation_scene_gap_seconds: float | None = None,
 ) -> list[str]:
+    subtitle_formats = normalize_subtitle_formats(subtitle_formats)
+    ass_style_id = ass_style_id or DEFAULT_ASS_STYLE_ID
     if action == "run":
         command = [
             sys.executable,
@@ -662,6 +694,20 @@ def _build_background_command(
         command += ["--language", language]
     if local_files_only:
         command += ["--local-files-only"]
+    if quality_preset:
+        command += ["--quality-preset", quality_preset]
+    if word_timestamps is True:
+        command += ["--word-timestamps"]
+    elif word_timestamps is False:
+        command += ["--no-word-timestamps"]
+    if resegment_subtitles is True:
+        command += ["--resegment-subtitles"]
+    elif resegment_subtitles is False:
+        command += ["--no-resegment-subtitles"]
+    if asr_retry_mode:
+        command += ["--asr-retry-mode", str(asr_retry_mode)]
+    if asr_hotword_prompt:
+        command += ["--asr-hotword-prompt", asr_hotword_prompt]
     if translation_reliability_mode is not None:
         command += ["--translation-reliability-mode", translation_reliability_mode]
     if translation_max_extra_requests is not None:

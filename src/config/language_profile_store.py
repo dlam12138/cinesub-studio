@@ -66,9 +66,9 @@ BUILTIN_PROFILES: list[dict] = [
         "source_language": "auto",
         "target_language": "zh-CN",
         "asr": {
-            "whisper_model": "large-v3",
-            "whisper_device": "cuda",
-            "compute_type": "float16",
+            "whisper_model": "small",
+            "whisper_device": "cpu",
+            "compute_type": "int8",
             "language": None,
             "task": "transcribe",
             "vad_filter": True,
@@ -100,9 +100,9 @@ BUILTIN_PROFILES: list[dict] = [
         "source_language": "fr",
         "target_language": "zh-CN",
         "asr": {
-            "whisper_model": "large-v3",
-            "whisper_device": "cuda",
-            "compute_type": "float16",
+            "whisper_model": "small",
+            "whisper_device": "cpu",
+            "compute_type": "int8",
             "language": "fr",
             "task": "transcribe",
             "vad_filter": True,
@@ -154,9 +154,9 @@ BUILTIN_PROFILES: list[dict] = [
         "source_language": "auto",
         "target_language": "zh-CN",
         "asr": {
-            "whisper_model": "large-v3",
-            "whisper_device": "cuda",
-            "compute_type": "float16",
+            "whisper_model": "small",
+            "whisper_device": "cpu",
+            "compute_type": "int8",
             "language": None,
             "task": "transcribe",
             "vad_filter": True,
@@ -286,7 +286,18 @@ def normalize_glossary(raw) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        result.append({"source": source, "target": target, "note": note})
+        normalized = {"source": source, "target": target, "note": note}
+        for key in ("aliases", "asr_variants"):
+            values = entry.get(key)
+            if isinstance(values, list):
+                normalized[key] = [
+                    str(item).strip() for item in values if str(item).strip()
+                ][:32]
+        for key in ("type", "gender", "role"):
+            value = str(entry.get(key) or "").strip()
+            if value:
+                normalized[key] = value
+        result.append(normalized)
     return result
 
 
@@ -359,6 +370,16 @@ def _normalize_asr_config(value: object) -> dict:
     data = deepcopy(value) if isinstance(value, dict) else {}
     data.pop("recognizer", None)
     data.pop("aligner", None)
+    from asr_runtime import normalize_asr_retry_mode
+
+    if "word_timestamps" in data:
+        data["word_timestamps"] = data.get("word_timestamps") is True
+    if "resegment_subtitles" in data:
+        data["resegment_subtitles"] = data.get("resegment_subtitles") is True
+    if "asr_retry_mode" in data:
+        data["asr_retry_mode"] = normalize_asr_retry_mode(data.get("asr_retry_mode"))
+    if "asr_hotword_prompt" in data:
+        data["asr_hotword_prompt"] = str(data.get("asr_hotword_prompt") or "").strip()[:512]
     return data
 
 
@@ -442,7 +463,7 @@ def upsert_language_profile(profile_data: dict) -> dict:
         "source_language": profile_data.get("source_language", "auto"),
         "target_language": profile_data.get("target_language", "zh-CN"),
         "asr": {
-            "whisper_model": profile_data.get("asr", {}).get("whisper_model", "large-v3"),
+            "whisper_model": profile_data.get("asr", {}).get("whisper_model", "small"),
             "whisper_device": profile_data.get("asr", {}).get("whisper_device", "cpu"),
             "compute_type": profile_data.get("asr", {}).get("compute_type", "int8"),
             "language": profile_data.get("asr", {}).get("language"),
@@ -472,6 +493,9 @@ def upsert_language_profile(profile_data: dict) -> dict:
         "subtitle_style": _with_subtitle_style({"subtitle_style": profile_data.get("subtitle_style", {})})["subtitle_style"],
         "glossary": normalize_glossary(profile_data.get("glossary", [])),
     }
+    for key in ("word_timestamps", "resegment_subtitles", "asr_retry_mode", "asr_hotword_prompt"):
+        if key in profile_data.get("asr", {}):
+            new_p["asr"][key] = _normalize_asr_config(profile_data.get("asr", {})).get(key)
 
     from asr_runtime import normalize_asr_request
 

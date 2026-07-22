@@ -73,6 +73,49 @@ def create_job(form: dict) -> dict:
     beam_size = get_text(form, "beam_size", "5")
     vad = get_text(form, "vad", "on") == "on"
     condition_on_previous_text = get_text(form, "condition_on_previous_text", "on") == "on"
+    quality_preset = get_text(form, "quality_preset", "").strip()
+    word_timestamps_value = form.get("word_timestamps")
+    resegment_value = form.get("resegment_subtitles")
+    retry_mode_value = form.get("asr_retry_mode")
+    asr_hotword_prompt = get_text(form, "asr_hotword_prompt", "").strip()
+    profile_asr_for_loop = {}
+    if language_profile:
+        try:
+            from language_profile_store import resolve_language_profile_config
+
+            profile_asr_for_loop = resolve_language_profile_config(language_profile).get("asr", {})
+        except Exception:
+            profile_asr_for_loop = {}
+    from asr_runtime import ASR_RETRY_RECIPE_VERSION, resolve_quality_loop_config
+
+    explicit_loop = {}
+    if word_timestamps_value is not None:
+        explicit_loop["word_timestamps"] = get_text(form, "word_timestamps", "") == "on"
+    if resegment_value is not None:
+        explicit_loop["resegment_subtitles"] = get_text(form, "resegment_subtitles", "") == "on"
+    if retry_mode_value is not None:
+        explicit_loop["asr_retry_mode"] = retry_mode_value
+    if asr_hotword_prompt:
+        explicit_loop["asr_hotword_prompt"] = asr_hotword_prompt
+    loop, loop_sources = resolve_quality_loop_config(
+        explicit=explicit_loop,
+        preset=quality_preset,
+        profile_asr=profile_asr_for_loop,
+    )
+    explicit_model = bool(form.get("model")) and not form.get("_model_from_preflight")
+    if not explicit_model and loop_sources.get("model", {}).get("source") == "quality_preset":
+        model = str(loop.get("model") or model)
+    effective_asr_config = {
+        **loop_sources,
+        "model": {
+            "value": model,
+            "source": "explicit_request" if explicit_model else (
+                "quality_preset"
+                if loop_sources.get("model", {}).get("source") == "quality_preset"
+                else ("language_profile" if profile_asr_for_loop.get("whisper_model") else "default")
+            ),
+        },
+    }
 
     if device not in {"cpu", "cuda", "auto"}:
         raise ValueError("Invalid device.")
@@ -179,7 +222,7 @@ def create_job(form: dict) -> dict:
 
     job_id = uuid.uuid4().hex[:12]
     asr_signature_payload = {
-        "schema": 1,
+        "schema": 2,
         "mode": asr_mode,
         "language": language,
         "model": model,
@@ -187,6 +230,12 @@ def create_job(form: dict) -> dict:
         "compute_type": compute_type,
         "beam_size": beam_size_int,
         "vad": vad,
+        "quality_preset": loop.get("quality_preset", ""),
+        "word_timestamps": loop.get("word_timestamps", False),
+        "resegment_subtitles": loop.get("resegment_subtitles", False),
+        "asr_retry_mode": loop.get("asr_retry_mode", "off"),
+        "asr_retry_recipe_version": ASR_RETRY_RECIPE_VERSION,
+        "asr_hotword_prompt": loop.get("asr_hotword_prompt", ""),
     }
     asr_signature = hashlib.sha256(
         json.dumps(asr_signature_payload, sort_keys=True).encode("utf-8")
@@ -206,6 +255,8 @@ def create_job(form: dict) -> dict:
         "returncode": None,
         "error_summary": "",
         "semantic_review_report": "",
+        "asr_review_report": "",
+        "asr_review_summary": {},
         "asr_mode": asr_mode,
         "language": language or "",
         "language_detection": {},
@@ -216,6 +267,12 @@ def create_job(form: dict) -> dict:
             "asr_mode": asr_mode,
             "language": language,
             "asr_config_signature": asr_signature,
+            "quality_preset": loop.get("quality_preset", ""),
+            "word_timestamps": loop.get("word_timestamps", False),
+            "resegment_subtitles": loop.get("resegment_subtitles", False),
+            "asr_retry_mode": loop.get("asr_retry_mode", "off"),
+            "asr_hotword_prompt": loop.get("asr_hotword_prompt", ""),
+            "effective_asr_config": effective_asr_config,
             "hf_endpoint": hf_endpoint,
             "local_files_only": local_files_only,
             "beam_size": beam_size_int,
@@ -335,6 +392,20 @@ def _run_job_impl(job_id: str) -> None:
         command += ["--no-vad"]
     if not options.get("condition_on_previous_text", True):
         command += ["--no-condition-on-previous-text"]
+    if options.get("quality_preset"):
+        command += ["--quality-preset", str(options.get("quality_preset"))]
+    if options.get("word_timestamps") is True:
+        command += ["--word-timestamps"]
+    elif options.get("word_timestamps") is False and options.get("quality_preset"):
+        command += ["--no-word-timestamps"]
+    if options.get("resegment_subtitles") is True:
+        command += ["--resegment-subtitles"]
+    elif options.get("resegment_subtitles") is False and options.get("quality_preset"):
+        command += ["--no-resegment-subtitles"]
+    if options.get("asr_retry_mode"):
+        command += ["--asr-retry-mode", str(options.get("asr_retry_mode"))]
+    if options.get("asr_hotword_prompt"):
+        command += ["--asr-hotword-prompt", str(options.get("asr_hotword_prompt"))]
     command += ["--subtitle-formats", ",".join(options.get("subtitle_formats", ["srt"]))]
     command += ["--ass-style-id", str(options.get("ass_style_id", "clean-cn"))]
 
@@ -408,6 +479,8 @@ def _run_job_impl(job_id: str) -> None:
     review_needed = ""
     semantic_review_report = ""
     language_detection: dict = {}
+    asr_review_report = ""
+    asr_review_summary: dict = {}
     if returncode == 0:
         try:
             from language_profile_store import get_active_language_profile, get_language_profile
@@ -423,6 +496,10 @@ def _run_job_impl(job_id: str) -> None:
                     loaded = json.loads(language_report.read_text(encoding="utf-8"))
                     if isinstance(loaded, dict):
                         language_detection = loaded
+                        asr_review_report = str(loaded.get("asr_review_report") or "")
+                        summary = loaded.get("asr_review_summary")
+                        if isinstance(summary, dict):
+                            asr_review_summary = summary
                 profile_id = options.get("language_profile", "")
                 if not profile_id:
                     active = get_active_language_profile()
@@ -483,6 +560,8 @@ def _run_job_impl(job_id: str) -> None:
             quality_report=quality_report,
             review_needed=review_needed,
             semantic_review_report=semantic_review_report,
+            asr_review_report=asr_review_report,
+            asr_review_summary=asr_review_summary,
             language_detection=language_detection,
             completed_at=time.time(),
             logs=logs + ["Finished."],
@@ -636,6 +715,11 @@ def _options_to_form(options: dict, input_path: str) -> dict:
         "translation_prompt": "translation_prompt",
         "translation_strategy_mode": "translation_strategy_mode",
         "translation_scene_gap_seconds": "translation_scene_gap_seconds",
+        "quality_preset": "quality_preset",
+        "word_timestamps": "word_timestamps",
+        "resegment_subtitles": "resegment_subtitles",
+        "asr_retry_mode": "asr_retry_mode",
+        "asr_hotword_prompt": "asr_hotword_prompt",
         "subtitle_formats": "subtitle_formats",
         "ass_style_id": "ass_style_id",
     }
@@ -752,6 +836,11 @@ def list_jobs() -> list[dict]:
         return [_normalize_job_for_ui(job) for job in jobs]
 
 
+def has_active_jobs() -> bool:
+    with JOBS_LOCK:
+        return any(job.get("status") in {"queued", "running"} for job in JOBS.values())
+
+
 def _normalize_job_for_ui(job: dict) -> dict:
     """Return a UI-friendly job dict with safe fields and computed properties."""
     status = job.get("status", "queued")
@@ -812,6 +901,8 @@ def _normalize_job_for_ui(job: dict) -> dict:
         "quality_report": job.get("quality_report", ""),
         "review_needed": job.get("review_needed", ""),
         "semantic_review_report": job.get("semantic_review_report", ""),
+        "asr_review_report": job.get("asr_review_report", ""),
+        "asr_review_summary": job.get("asr_review_summary", {}),
         "returncode": job.get("returncode"),
         "error_summary": job.get("error_summary", ""),
         "options": options,

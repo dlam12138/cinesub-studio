@@ -196,6 +196,28 @@ def test_no_unfinished_or_external_project_ui_was_introduced():
         assert needle not in lower
 
 
+def test_batch_workspace_matches_the_approved_superdesign_structure():
+    html = _read_index_html()
+    section = _section(html, 'id="tab-pipeline"', 'id="tab-runtime"')
+    timeline_index = section.find('class="stage6-stage-ribbon"')
+    layout_index = section.find('class="stage6-pipeline-layout"')
+    assert timeline_index != -1
+    assert layout_index > timeline_index
+    assert "workspace-header" not in section
+    assert "/ Batch Queue" in section
+    assert "刷新队列" in section
+    assert "队列目前为空" in section
+    assert "grid-template-columns: minmax(0, 1fr) 360px;" in html
+
+
+def test_settings_tables_scroll_inside_their_cards_on_narrow_screens():
+    html = _read_index_html()
+    assert "#providerList,\n    #lpList" in html
+    assert "overflow-x: auto;" in html
+    assert "#providerList .provider-table { min-width: 800px; }" in html
+    assert "#lpList .provider-table { min-width: 620px; }" in html
+
+
 def test_api_keys_are_not_rendered_as_raw_values():
     html = _read_index_html()
     assert "sk-m12-secret-should-not-leak" not in html

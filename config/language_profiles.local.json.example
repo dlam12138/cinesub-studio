@@ -10,9 +10,9 @@
       "source_language": "fr",
       "target_language": "zh-CN",
       "asr": {
-        "whisper_model": "large-v3",
-        "whisper_device": "cuda",
-        "compute_type": "float16",
+        "whisper_model": "small",
+        "whisper_device": "cpu",
+        "compute_type": "int8",
         "language": "fr",
         "task": "transcribe",
         "vad_filter": true,
