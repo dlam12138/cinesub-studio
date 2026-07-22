@@ -1,4 +1,5 @@
 from argparse import Namespace
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,10 +7,16 @@ import pytest
 
 from real_media_acceptance import (
     BASE_SHA,
+    build_campaign_contract,
     build_run_command,
     build_videocr_command,
+    compare_quality_control,
+    deterministic_review_indexes,
     environment_fingerprint,
+    resolve_acceptance_profile,
+    run_campaign,
     run_videocr,
+    validate_campaign_reports,
 )
 
 
@@ -35,6 +42,215 @@ def test_acceptance_runner_builds_isolated_local_only_quality_control(tmp_path: 
     assert command[command.index("--quality-preset") + 1] == "quality"
     assert command[command.index("--asr-retry-mode") + 1] == "off"
     assert command[command.index("--device") + 1] == "cuda"
+
+
+def test_campaign_contract_fixes_six_primary_modes_and_exactly_28_runs() -> None:
+    contract = build_campaign_contract("evaluated-sha")
+
+    assert contract["run_count"] == 28
+    assert contract["local_files_only"] is True
+    assert all(
+        run["expected_profile_config"]["asr_retry_mode"] != "apply"
+        for run in contract["runs"]
+    )
+    assert len({run["run_id"] for run in contract["runs"]}) == 28
+    primary = {
+        run["sample_id"]: (run["asr_mode"], run["language"])
+        for run in contract["runs"]
+        if run["role"] == "primary" and run["profile"] == "speed"
+    }
+    assert primary == {
+        "sample-01": ("fixed", "fr"),
+        "sample-02": ("auto", None),
+        "sample-03": ("fixed", "fr"),
+        "sample-04": ("auto", None),
+        "sample-05": ("fixed", "zh"),
+        "sample-06": ("multilingual", None),
+    }
+    control = [
+        run for run in contract["runs"]
+        if run["role"] == "single-language-multilingual-control"
+    ]
+    assert len(control) == 4
+    assert {run["profile"] for run in control} == {
+        "speed", "balanced", "large-control", "quality"
+    }
+    assert {(run["sample_id"], run["asr_mode"], run["language"]) for run in control} == {
+        ("sample-01", "multilingual", None)
+    }
+
+
+def test_quality_control_resolves_quality_then_only_overrides_retry() -> None:
+    quality = resolve_acceptance_profile("quality")
+    control = resolve_acceptance_profile("large-control")
+
+    assert quality["asr_retry_mode"] == "dry_run"
+    assert control["asr_retry_mode"] == "off"
+    assert sorted(key for key in quality if quality[key] != control[key]) == [
+        "asr_retry_mode"
+    ]
+
+
+@pytest.mark.parametrize("mode", ["auto", "multilingual"])
+def test_acceptance_command_supports_unforced_language_modes(
+    tmp_path: Path, mode: str
+) -> None:
+    args = Namespace(
+        profile="quality",
+        input=str(tmp_path / "sample.mp4"),
+        model_dir=str(tmp_path / "models"),
+        output_dir=str(tmp_path / "output"),
+        work_dir=str(tmp_path / "work"),
+        device="cuda",
+        compute_type="float16",
+        asr_mode=mode,
+        language="",
+        hotword_prompt="",
+    )
+
+    command = build_run_command(args)
+
+    assert command[command.index("--asr-mode") + 1] == mode
+    assert "--language" not in command
+    assert "--local-files-only" in command
+
+
+def _campaign_report(planned: dict) -> dict:
+    profile = planned["expected_profile_config"]
+    config = {
+        "model": profile["model"],
+        "quality_preset": profile["quality_preset"],
+        "asr_mode": planned["asr_mode"],
+        "language": planned["language"],
+        "beam_size": 5,
+        "vad_filter": True,
+        "word_timestamps": profile["word_timestamps"],
+        "resegment_subtitles": profile["resegment_subtitles"],
+        "asr_retry_mode": profile["asr_retry_mode"],
+        "asr_hotword_prompt_sha256": "empty-hotword-hash",
+        "device": "cuda",
+        "compute_type": "float16",
+        "local_files_only": True,
+        "input_sha256": f'{planned["sample_id"]}-input-hash',
+    }
+    return {
+        "run_id": planned["run_id"],
+        "sample_id": planned["sample_id"],
+        "scenario_id": planned["scenario_id"],
+        "profile": planned["profile"],
+        "input_sha256": config["input_sha256"],
+        "effective_config": config,
+        "decode_config_sha256": f'{planned["scenario_id"]}-decode-hash',
+        "runtime_config_sha256": "runtime-hash",
+        "output_srt_sha256": f'{planned["scenario_id"]}-srt-hash',
+    }
+
+
+def test_campaign_validation_asserts_all_seven_quality_control_pairs() -> None:
+    contract = build_campaign_contract("evaluated-sha")
+    reports = [_campaign_report(planned) for planned in contract["runs"]]
+
+    summary = validate_campaign_reports(contract, reports)
+
+    assert summary["status"] == "pass"
+    assert summary["run_count"] == 28
+    assert summary["comparison_count"] == 7
+    assert all(
+        row["effective_config_diff"] == ["asr_retry_mode"]
+        and row["decode_config_hash_match"]
+        and row["runtime_config_hash_match"]
+        and row["input_hash_match"]
+        and row["output_srt_hash_match"]
+        for row in summary["comparisons"]
+    )
+
+
+def test_quality_control_comparison_rejects_decode_drift() -> None:
+    contract = build_campaign_contract("evaluated-sha")
+    planned = [
+        row for row in contract["runs"]
+        if row["scenario_id"] == "sample-01-primary"
+        and row["profile"] in {"large-control", "quality"}
+    ]
+    reports = {row["profile"]: _campaign_report(row) for row in planned}
+    reports["quality"]["effective_config"]["beam_size"] = 6
+
+    with pytest.raises(RuntimeError, match="contracts differ"):
+        compare_quality_control(reports["large-control"], reports["quality"])
+
+
+def test_review_sampling_is_deterministic_and_remediation_reuses_indexes() -> None:
+    first = deterministic_review_indexes(
+        sample_id="sample-04",
+        evaluated_sha="sha-a",
+        cue_count=80,
+        suspicious_indexes=[1, 3, 5],
+    )
+    repeated = deterministic_review_indexes(
+        sample_id="sample-04",
+        evaluated_sha="sha-a",
+        cue_count=80,
+        suspicious_indexes=[1, 3, 5],
+    )
+    remediation = deterministic_review_indexes(
+        sample_id="sample-04",
+        evaluated_sha="sha-b",
+        cue_count=80,
+        suspicious_indexes=[1, 3, 5, first["ordinary_cue_indexes"][0]],
+        reuse_from=first,
+    )
+
+    assert len(first["ordinary_cue_indexes"]) == 20
+    assert first["ordinary_cue_indexes"] == repeated["ordinary_cue_indexes"]
+    assert remediation["ordinary_cue_indexes"] == first["ordinary_cue_indexes"]
+    assert remediation["reused_from_evaluated_sha"] == "sha-a"
+    assert remediation["seed_integer"] == first["seed_integer"]
+    assert not set(first["ordinary_cue_indexes"]) & {1, 3, 5}
+
+
+def test_campaign_runner_dispatches_exact_plan_without_media_processing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    private_root = tmp_path / "acceptance" / "v0.7.1-real-media-private"
+    samples = {}
+    for number in range(1, 7):
+        sample_id = f"sample-{number:02d}"
+        media = private_root / "media" / f"{sample_id}.mp4"
+        media.parent.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(b"private-fixture")
+        samples[sample_id] = {"input": str(media), "duration_seconds": 240}
+    manifest = private_root / "campaign.local.json"
+    manifest.write_text(json.dumps({"samples": samples}), encoding="utf-8")
+    calls = []
+
+    monkeypatch.setattr(
+        "real_media_acceptance.resolve_runtime_paths",
+        lambda: Namespace(project_root=tmp_path),
+    )
+    monkeypatch.setattr("real_media_acceptance._git_sha", lambda _root: "evaluated-sha")
+
+    def fake_run_profile(args):
+        calls.append(args)
+        planned = next(
+            row for row in build_campaign_contract("evaluated-sha")["runs"]
+            if row["run_id"] == args.run_id
+        )
+        return _campaign_report(planned)
+
+    monkeypatch.setattr("real_media_acceptance.run_profile", fake_run_profile)
+    summary = run_campaign(Namespace(
+        manifest=str(manifest),
+        evaluated_sha="evaluated-sha",
+        model_dir=str(tmp_path / "models"),
+        private_dir=str(private_root / "campaign"),
+        device="cuda",
+        compute_type="float16",
+    ))
+
+    assert summary["run_count"] == 28
+    assert len(calls) == 28
+    assert all(call.hotword_prompt == "" for call in calls)
+    assert all("v0.7.1-real-media-private" in call.private_dir for call in calls)
 
 
 def test_videocr_command_is_local_scoped_and_explicit(tmp_path: Path, monkeypatch) -> None:
