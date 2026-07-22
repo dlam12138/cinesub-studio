@@ -29,7 +29,11 @@ def test_pipeline_progress_reports_recovery_fields(monkeypatch, tmp_path):
     reusable_audio = output / "reuse.wav"
     reusable_audio.write_bytes(b"audio")
 
-    _write_state(states_dir, "failed", {"status": "failed", "stage": "translating"})
+    _write_state(states_dir, "failed", {
+        "status": "failed",
+        "stage": "translating",
+        "error": f"api_key=secret {tmp_path.resolve()}\\private.srt",
+    })
     _write_state(
         states_dir,
         "completed",
@@ -65,3 +69,28 @@ def test_pipeline_progress_reports_recovery_fields(monkeypatch, tmp_path):
     assert actions["completed.mp4"] == "skip_completed"
     assert actions["running.mp4"] == "stale_running_warning"
     assert actions["pending.mp4"] == "reuse_outputs"
+    failed = next(task for task in progress["tasks"] if task["file"] == "failed.mp4")
+    assert failed["task_id"] == ""
+    assert "input_path" not in failed
+    assert "error" not in failed
+    assert "secret" not in failed["error_summary"]
+    assert str(tmp_path.resolve()) not in json.dumps(progress, ensure_ascii=False)
+
+
+def test_pipeline_progress_does_not_return_language_block_details(monkeypatch, tmp_path):
+    states_dir = tmp_path / "states"
+    states_dir.mkdir()
+    _write_state(states_dir, "private", {
+        "task_id": "private-123456789abc",
+        "language_detection": {
+            "source_language": "fr",
+            "block_count": 1,
+            "blocks": [{"text": "private transcript", "start": 0, "end": 1}],
+        },
+    })
+    monkeypatch.setattr(pipeline_api, "PIPELINE_STATES_DIR", states_dir)
+    monkeypatch.setattr(pipeline_api, "get_pipeline_task", lambda: {"running": False})
+
+    serialized = json.dumps(pipeline_api.pipeline_progress(), ensure_ascii=False)
+
+    assert "private transcript" not in serialized

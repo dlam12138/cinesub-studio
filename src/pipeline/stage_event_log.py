@@ -8,13 +8,24 @@ from pathlib import Path
 
 
 _LOCK = threading.Lock()
-_SECRET = re.compile(r"(?i)(api[_-]?key|authorization|bearer|token|secret|password)(\s*[:=]\s*)(\S+)")
-_ABSOLUTE = re.compile(r"(?i)(?:[a-z]:[\\/]|/home/|/Users/)[^\s\"']+")
+_SECRET = re.compile(
+    r"(?i)(api[_-]?key|authorization|bearer|token|secret|password)"
+    r"(\s*(?::|=|\s)\s*)(\S+)"
+)
+_SENSITIVE_TEXT = re.compile(
+    r"(?i)(prompt|transcript|command|stderr)(\s*(?::|=)\s*)([^\r\n]+)"
+)
+_ABSOLUTE = re.compile(
+    r"(?i)(?:\\\\\?\\[a-z]:\\|\\\\[^\\\s]+\\[^\\\s]+|"
+    r"//[^/\s]+/[^/\s]+|[a-z]:[\\/]|/(?:home|Users|tmp|var|opt)/)"
+    r"[^\s\"']*"
+)
 
 
 def sanitize_event_text(value: object) -> str:
     text = str(value or "")[:1000]
     text = _SECRET.sub(r"\1\2[redacted]", text)
+    text = _SENSITIVE_TEXT.sub(r"\1\2[redacted]", text)
     return _ABSOLUTE.sub("[project-path]", text)
 
 
@@ -29,9 +40,11 @@ def write_stage_event(
     returncode: int | None = None,
     error_category: str = "",
     summary: str = "",
+    run_id: str = "",
 ) -> None:
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "run_id": sanitize_event_text(run_id),
         "task_id": sanitize_event_text(task_id),
         "stage": stage,
         "event": event,

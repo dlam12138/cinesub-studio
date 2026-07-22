@@ -5,6 +5,7 @@ from pathlib import Path
 import batch_worker
 from task_state import (
     TaskState,
+    apply_retry_failed_plan,
     prepare_retry_failed_tasks,
     recovery_state,
     set_state_root_provider,
@@ -22,6 +23,9 @@ def test_shared_retry_selects_only_failed_and_preserves_stale_running(tmp_path: 
     plan = prepare_retry_failed_tasks(sorted(states.glob("*.state.json")))
     assert plan.selected_task_ids == ["失败 电影.mkv"]
     assert plan.untouched_count == 2
+    assert TaskState.load(failed.state_path()).status == "failed"
+    apply_retry_failed_plan(plan, run_id="retry-run")
+    assert TaskState.load(failed.state_path()).status == "pending"
     assert TaskState.load(running.state_path()).status == "running"
     assert TaskState.load(completed.state_path()).status == "completed"
     set_state_root_provider(lambda: batch_worker.DIR_WORK_STATES)

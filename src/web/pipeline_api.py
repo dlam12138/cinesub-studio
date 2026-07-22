@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -13,7 +15,23 @@ from urllib.parse import quote
 from process_env import build_child_process_env, redact_project_path
 from runtime_paths import resolve_runtime_paths
 from subtitle_model import ASS_RESERVED_MESSAGE, DEFAULT_ASS_STYLE_ID, normalize_subtitle_formats
-from task_state import is_valid_output_file, recovery_state as shared_recovery_state
+from task_state import (
+    is_valid_output_file,
+    plan_retry_failed_tasks,
+    recovery_state as shared_recovery_state,
+)
+from pipeline_reliability import (
+    PipelineRunLock,
+    build_pipeline_plan as build_read_only_pipeline_plan,
+    canonical_hash,
+    local_provider_preflight,
+    process_identity_matches,
+    read_run_record,
+    sanitize_stem,
+    windows_process_creation_filetime,
+    write_run_record,
+)
+from stage_event_log import sanitize_event_text
 
 
 PATHS = resolve_runtime_paths()
@@ -24,6 +42,8 @@ WORK_DIR = PROJECT_ROOT / "work"
 PIPELINE_STATES_DIR = WORK_DIR / "states"
 PIPELINE_LOG = PROJECT_ROOT / "logs" / "pipeline.log"
 OUTPUT_DIR = PROJECT_ROOT / "output"
+PIPELINE_RUN_RECORD = WORK_DIR / "pipeline_run.json"
+PIPELINE_RUN_LOCK = WORK_DIR / "pipeline_run.lock"
 
 ARTIFACT_TYPES = {
     "source",
@@ -43,6 +63,7 @@ PIPELINE_TASK: dict[str, Any] = {
     "finished_at": 0,
     "returncode": None,
     "error": "",
+    "run_id": "",
 }
 PIPELINE_TASK_LOCK = threading.Lock()
 
@@ -77,7 +98,54 @@ STATUS_LABELS = {
 
 def get_pipeline_task() -> dict:
     with PIPELINE_TASK_LOCK:
-        return dict(PIPELINE_TASK)
+        memory = dict(PIPELINE_TASK)
+    record = read_run_record(PIPELINE_RUN_RECORD)
+    if record and record.get("status") in {"preparing", "running"}:
+        if record.get("status") == "preparing" and memory.get("running"):
+            return {
+                **memory,
+                "action": record.get("action", memory.get("action", "")),
+                "started_at": record.get("started_at", memory.get("started_at", 0)),
+                "run_id": record.get("run_id", memory.get("run_id", "")),
+            }
+        alive = process_identity_matches(
+            int(record.get("worker_pid") or 0),
+            int(record.get("worker_creation_filetime") or 0),
+        )
+        if alive:
+            return {
+                **memory,
+                "running": True,
+                "pid": record.get("worker_pid"),
+                "action": record.get("action", ""),
+                "started_at": record.get("started_at", 0),
+                "run_id": record.get("run_id", ""),
+            }
+        if record.get("status") != "stale":
+            record["status"] = "stale"
+            record["finished_at"] = time.time()
+            write_run_record(PIPELINE_RUN_RECORD, record)
+    return memory
+
+
+def _safe_artifacts(raw: dict) -> dict:
+    artifacts = pipeline_artifacts_for_state(raw)
+    return {
+        kind: {key: value for key, value in metadata.items() if key != "path"}
+        for kind, metadata in artifacts.items()
+    }
+
+
+def _error_category(raw: dict) -> str:
+    value = str(raw.get("error_category") or "").strip()
+    if value:
+        return sanitize_stem(value)[:80]
+    error = str(raw.get("error") or "")
+    return "pipeline_stage_error" if error else ""
+
+
+def _error_summary(raw: dict) -> str:
+    return sanitize_event_text(raw.get("error") or "")[:300]
 
 
 def pipeline_progress() -> dict:
@@ -113,8 +181,12 @@ def pipeline_progress() -> dict:
 
         items.append({
             "task_id": _task_id_for_state(raw),
-            "file": raw.get("file", ""),
-            "input_path": raw.get("input_path", ""),
+            "file": Path(str(raw.get("file") or "")).name,
+            "display_name": Path(str(raw.get("file") or "")).name,
+            "relative_input_path": str(
+                raw.get("original_relative_path") or Path(str(raw.get("file") or "")).name
+            ).replace("\\", "/"),
+            "input_location": raw.get("input_location", "active"),
             "stage": stage,
             "stage_label": STAGE_LABELS.get(stage, stage),
             "status": effective_status,
@@ -123,7 +195,8 @@ def pipeline_progress() -> dict:
             "progress": percent,
             "retry_count": raw.get("retry_count", 0),
             "max_retries": raw.get("max_retries", 0),
-            "error": raw.get("error", ""),
+            "error_category": _error_category(raw),
+            "error_summary": _error_summary(raw),
             "error_stage": raw.get("error_stage", ""),
             "updated_at": raw.get("updated_at", 0),
             "warning": warning,
@@ -132,12 +205,11 @@ def pipeline_progress() -> dict:
             "recovery_label": recovery["recovery_label"],
             "asr_mode": raw.get("asr_mode", ""),
             "language": raw.get("language", ""),
-            "asr_config_signature": raw.get("asr_config_signature", ""),
             "language_detection": _language_detection_summary(raw.get("language_detection")),
             "asr_review_summary": raw.get("asr_review_summary") or {},
             "target_language": _target_language_from_state(raw),
             "quality_summary": _quality_summary(raw),
-            "artifacts": pipeline_artifacts_for_state(raw),
+            "artifacts": _safe_artifacts(raw),
         })
 
     total = len(items)
@@ -153,7 +225,18 @@ def pipeline_progress() -> dict:
         "counts": counts,
         "current": current,
         "tasks": items,
-        "task": task_info,
+        "task": {
+            key: value for key, value in task_info.items()
+            if key not in {"error"}
+        } | ({"error_summary": sanitize_event_text(task_info.get("error", ""))[:300]} if task_info.get("error") else {}),
+        "run": {
+            key: value for key, value in read_run_record(PIPELINE_RUN_RECORD).items()
+            if key in {
+                "schema_version", "run_id", "action", "status", "task_ids",
+                "current_task_id", "current_stage", "started_at", "updated_at",
+                "finished_at", "counts", "failure_stage_counts",
+            }
+        },
         "stale_running": stale_running,
         "stale_running_count": stale_running_count,
         "recoverable_failed_count": recoverable_failed_count,
@@ -186,8 +269,8 @@ def run_pipeline_command(action: str, timeout: int = 30, input_dir: str = "") ->
         payload = {
             "ok": result.returncode == 0,
             "command": action,
-            "output": result.stdout,
-            "error": result.stderr,
+            "output": _sanitize_process_summary(result.stdout),
+            "error": _sanitize_process_summary(result.stderr),
             "returncode": result.returncode,
         }
         if action == "review":
@@ -198,9 +281,95 @@ def run_pipeline_command(action: str, timeout: int = 30, input_dir: str = "") ->
     except subprocess.TimeoutExpired:
         return {"ok": False, "command": action, "error": f"命令超时（{timeout}s）"}
     except FileNotFoundError:
-        return {"ok": False, "command": action, "error": f"Python 解释器未找到: {sys.executable}"}
+        return {"ok": False, "command": action, "error": "Python 解释器未找到。"}
     except Exception as exc:
-        return {"ok": False, "command": action, "error": str(exc)}
+        return {"ok": False, "command": action, "error": _sanitize_process_summary(exc)}
+
+
+def _sanitize_process_summary(value: object, *, max_lines: int = 80) -> str:
+    lines = str(value or "").splitlines()[-max_lines:]
+    return "\n".join(sanitize_event_text(line) for line in lines)[:8000]
+
+
+def _batch_config_from_command(command: list[str]):
+    from batch_worker import BatchConfig
+    from pipeline_cli import build_pipeline_parser
+    from pipeline_config import resolve_cli_config
+
+    argv = command[3:]
+    args = build_pipeline_parser().parse_args(argv)
+    raw_argv = [value.split("=", 1)[0] for value in argv]
+    effective, _messages = resolve_cli_config(args, raw_argv)
+    return BatchConfig(
+        input_dir=Path(args.input).resolve(),
+        output_dir=Path(args.output_dir).resolve(),
+        model_dir=Path(args.model_dir).resolve(),
+        work_dir=Path(args.work_dir).resolve(),
+        model=effective["model"],
+        device=effective["device"],
+        compute_type=effective["compute_type"],
+        asr_mode=effective["asr_mode"],
+        language=effective["language"],
+        beam_size=effective["beam_size"],
+        vad_filter=effective["vad_filter"],
+        local_files_only=args.local_files_only,
+        quality_preset=effective["quality_preset"],
+        word_timestamps=bool(effective["word_timestamps"]),
+        resegment_subtitles=bool(effective["resegment_subtitles"]),
+        asr_retry_mode=effective["asr_retry_mode"],
+        asr_hotword_prompt=effective["asr_hotword_prompt"],
+        effective_asr_config=effective["effective_asr_config"],
+        translate=not args.no_translate,
+        provider_id=effective["provider_id"],
+        api_provider=effective["api_provider"],
+        api_base=effective["api_base"],
+        api_key=effective["api_key"],
+        llm_model=effective["llm_model"],
+        translation_quality_model=effective["translation_quality_model"],
+        target_language=effective["target_language"],
+        translation_prompt=effective["translation_prompt"],
+        translation_batch_size=args.translation_batch_size,
+        translation_temperature=args.translation_temperature,
+        translation_mode=args.translation_mode,
+        context_window=args.context_window,
+        translation_reliability_mode=effective["translation_reliability"]["mode"],
+        translation_max_extra_requests=effective["translation_reliability"]["max_extra_requests"],
+        translation_strategy_mode=effective["translation_strategy"]["mode"],
+        translation_scene_gap_seconds=effective["translation_strategy"]["scene_gap_seconds"],
+        subtitle_formats=effective["subtitle_formats"],
+        ass_style_id=effective["ass_style_id"],
+        subtitle_style=effective["subtitle_style"],
+        language_profile_id=effective["profile_info"].get("profile_id", ""),
+        language_profile_name=effective["profile_info"].get("profile_name", ""),
+        lang_profile_config=effective["profile_info"],
+        max_retries=args.max_retries,
+        skip_completed=not args.no_skip_completed,
+        move_completed=not args.no_move_completed,
+    )
+
+
+def scan_pipeline(input_dir: str = "") -> dict:
+    command = _build_background_command(
+        action="run",
+        provider_id="",
+        language_profile_id="",
+        input_dir=input_dir,
+        model="small",
+        device="auto",
+        compute_type="",
+        translate_enabled=True,
+        asr_mode="auto",
+    )
+    config = _batch_config_from_command(command)
+    plan = build_read_only_pipeline_plan(
+        config,
+        state_dir=PIPELINE_STATES_DIR,
+        video_extensions={
+            ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v",
+            ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
+        },
+    )
+    return plan.to_dict()
 
 
 def start_pipeline_background(
@@ -229,17 +398,101 @@ def start_pipeline_background(
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
 ) -> tuple[dict, int]:
+    subtitle_formats_list = normalize_subtitle_formats(subtitle_formats)
+    command = _build_background_command(
+        action=action,
+        provider_id=provider_id,
+        language_profile_id=language_profile_id,
+        input_dir=input_dir,
+        model=model,
+        device=device,
+        compute_type=compute_type,
+        translate_enabled=translate_enabled,
+        asr_mode=asr_mode,
+        language=language,
+        local_files_only=local_files_only,
+        quality_preset=quality_preset,
+        word_timestamps=word_timestamps,
+        resegment_subtitles=resegment_subtitles,
+        asr_retry_mode=asr_retry_mode,
+        asr_hotword_prompt=asr_hotword_prompt,
+        translation_reliability_mode=translation_reliability_mode,
+        translation_max_extra_requests=translation_max_extra_requests,
+        translation_strategy_mode=translation_strategy_mode,
+        translation_scene_gap_seconds=translation_scene_gap_seconds,
+        subtitle_formats=subtitle_formats_list,
+        ass_style_id=ass_style_id,
+    )
+    config = _batch_config_from_command(command)
+    run_lock = PipelineRunLock(PIPELINE_RUN_LOCK)
+    if not run_lock.acquire():
+        return {"ok": False, "error": "已有流水线进程持有运行锁。", "code": "pipeline_busy"}, 409
+    worker_lease = PipelineRunLock(PIPELINE_RUN_LOCK, offset=1)
+    if not worker_lease.acquire():
+        run_lock.release()
+        return {"ok": False, "error": "已有 worker 持有运行锁。", "code": "pipeline_busy"}, 409
+    if action == "run":
+        plan = build_read_only_pipeline_plan(
+            config,
+            state_dir=PIPELINE_STATES_DIR,
+            video_extensions={
+                ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v",
+                ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
+            },
+        )
+        blockers = plan.blockers
+        task_ids = [item.task_id for item in plan.tasks]
+        plan_fingerprint = plan.plan_fingerprint
+        config_hash = plan.effective_config_hash
+    else:
+        blockers = local_provider_preflight(config)
+        retry_plan = plan_retry_failed_tasks(sorted(PIPELINE_STATES_DIR.glob("*.state.json")))
+        task_ids = retry_plan.selected_task_ids
+        plan_fingerprint = canonical_hash(task_ids)
+        config_hash = canonical_hash(config.asr_signature_payload())
+    if blockers:
+        worker_lease.release()
+        run_lock.release()
+        return {
+            "ok": False,
+            "error": "Pipeline preflight failed.",
+            "blockers": [blocker.__dict__ for blocker in blockers],
+        }, 409
+
+    run_id = uuid.uuid4().hex
+    started_at = time.time()
+    write_run_record(PIPELINE_RUN_RECORD, {
+        "schema_version": 1,
+        "run_id": run_id,
+        "action": action,
+        "status": "preparing",
+        "server_pid": os.getpid(),
+        "worker_pid": 0,
+        "worker_creation_filetime": 0,
+        "plan_fingerprint": plan_fingerprint,
+        "effective_config_hash": config_hash,
+        "task_ids": task_ids,
+        "current_task_id": "",
+        "current_stage": "",
+        "started_at": started_at,
+        "finished_at": 0,
+        "counts": {},
+        "failure_stage_counts": {},
+    })
     with PIPELINE_TASK_LOCK:
         if PIPELINE_TASK["running"]:
+            worker_lease.release()
+            run_lock.release()
             return {"ok": False, "error": "已有流水线任务正在运行，请等待完成。"}, 409
         PIPELINE_TASK.update({
             "running": True,
             "pid": None,
             "action": action,
-            "started_at": time.time(),
+            "started_at": started_at,
             "finished_at": 0,
             "returncode": None,
             "error": "",
+            "run_id": run_id,
         })
 
     thread = threading.Thread(
@@ -268,12 +521,17 @@ def start_pipeline_background(
             "translation_scene_gap_seconds": translation_scene_gap_seconds,
             "subtitle_formats": subtitle_formats,
             "ass_style_id": ass_style_id,
+            "_command": command,
+            "_run_lock": run_lock,
+            "_worker_lease": worker_lease,
+            "_run_id": run_id,
+            "_plan_fingerprint": plan_fingerprint,
         },
         daemon=True,
     )
     thread.start()
     label = "input 目录处理" if action == "run" else "retry-failed"
-    return {"ok": True, "message": f"{label} 已启动。"}, 202
+    return {"ok": True, "message": f"{label} 已启动。", "run_id": run_id}, 202
 
 
 def run_pipeline_background(
@@ -300,11 +558,16 @@ def run_pipeline_background(
     translation_scene_gap_seconds: float | None = None,
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
+    _command: list[str] | None = None,
+    _run_lock: PipelineRunLock | None = None,
+    _worker_lease: PipelineRunLock | None = None,
+    _run_id: str = "",
+    _plan_fingerprint: str = "",
 ) -> None:
     subtitle_formats_list = normalize_subtitle_formats(subtitle_formats)
     ass_style_id = ass_style_id or DEFAULT_ASS_STYLE_ID
     PIPELINE_LOG.parent.mkdir(parents=True, exist_ok=True)
-    command = _build_background_command(
+    command = _command or _build_background_command(
         action=action,
         provider_id=provider_id,
         language_profile_id=language_profile_id,
@@ -329,6 +592,13 @@ def run_pipeline_background(
         ass_style_id=ass_style_id,
     )
     env = _pipeline_env()
+    env["CINESUB_PIPELINE_RUN_ID"] = _run_id
+    env["CINESUB_PIPELINE_SERVER_PID"] = str(os.getpid())
+    env["CINESUB_PIPELINE_EXPECTED_PLAN"] = _plan_fingerprint
+    handoff_ack = WORK_DIR / f".pipeline-lock-handoff-{_run_id}.ack"
+    if _run_lock is not None:
+        env["CINESUB_PIPELINE_LOCK_PATH"] = str(PIPELINE_RUN_LOCK)
+        env["CINESUB_PIPELINE_LOCK_ACK"] = str(handoff_ack)
     if hf_endpoint:
         env["HF_ENDPOINT"] = hf_endpoint
 
@@ -356,6 +626,25 @@ def run_pipeline_background(
             errors="replace",
             bufsize=1,
         )
+        record = read_run_record(PIPELINE_RUN_RECORD)
+        write_run_record(PIPELINE_RUN_RECORD, {
+            **record,
+            "worker_pid": process.pid,
+            "worker_creation_filetime": windows_process_creation_filetime(process.pid),
+        })
+        if _worker_lease is not None:
+            _worker_lease.release()
+            _worker_lease = None
+        deadline = time.monotonic() + 10.0
+        while not handoff_ack.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not handoff_ack.exists():
+            process.terminate()
+            process.wait(timeout=5)
+            raise RuntimeError("worker did not acquire the pipeline lease")
+        if _run_lock is not None:
+            _run_lock.release()
+            _run_lock = None
         with PIPELINE_TASK_LOCK:
             PIPELINE_TASK["pid"] = process.pid
 
@@ -371,7 +660,7 @@ def run_pipeline_background(
             log.write(f"\n[{action_label}] 完成于 {finished_at}, returncode={returncode}\n")
     except Exception as exc:
         with PIPELINE_LOG.open("a", encoding="utf-8") as log:
-            log.write(f"\n[{action_label}] 异常: {exc}\n")
+            log.write(f"\n[{action_label}] 异常: {_sanitize_process_summary(exc)}\n")
         with PIPELINE_TASK_LOCK:
             PIPELINE_TASK["error"] = str(exc)
     finally:
@@ -380,6 +669,14 @@ def run_pipeline_background(
             PIPELINE_TASK["pid"] = None
             PIPELINE_TASK["finished_at"] = time.time()
             PIPELINE_TASK["returncode"] = returncode
+        if _run_lock is not None:
+            _run_lock.release()
+        if _worker_lease is not None:
+            _worker_lease.release()
+        try:
+            handoff_ack.unlink()
+        except OSError:
+            pass
 
 
 def read_pipeline_log() -> dict:
@@ -389,7 +686,7 @@ def read_pipeline_log() -> dict:
         text = PIPELINE_LOG.read_text(encoding="utf-8")
     except OSError as exc:
         return {"ok": False, "error": str(exc), "lines": [], "text": ""}
-    lines = text.splitlines()[-200:]
+    lines = [_clean_log_line(line) for line in text.splitlines()[-200:]]
     return {"ok": True, "lines": lines, "text": "\n".join(lines)}
 
 
@@ -522,12 +819,7 @@ def _artifact_download_url(task_id: str, kind: str) -> str:
 
 
 def _task_id_for_state(raw: dict) -> str:
-    state_path = str(raw.get("_state_path") or "")
-    if state_path:
-        name = Path(state_path).name
-        if name.endswith(".state.json"):
-            return name[:-len(".state.json")]
-    return Path(str(raw.get("file") or "")).stem
+    return _clean_task_id(str(raw.get("task_id") or ""))
 
 
 def _clean_task_id(task_id: str) -> str:
@@ -553,7 +845,6 @@ def _language_detection_summary(value: Any) -> dict:
         "block_count": value.get("block_count", 0),
         "manual_review_count": value.get("manual_review_count", 0),
         "asr_review_summary": value.get("asr_review_summary", {}),
-        "blocks": value.get("blocks", []),
         "model": value.get("model", ""),
         "device": value.get("device", ""),
         "compute_type": value.get("compute_type", ""),
@@ -743,7 +1034,7 @@ def _append_pipeline_log_header(
     with PIPELINE_LOG.open("a", encoding="utf-8") as log:
         log.write(f"\n{'=' * 60}\n")
         log.write(f"  [{action_label}] 开始于 {started_at}\n")
-        log.write(f"  命令: {' '.join(command)}\n")
+        log.write(f"  Action: {action_label}\n")
         if provider_id:
             log.write(f"  Provider: {provider_id}\n")
         if language_profile_id:
@@ -779,4 +1070,6 @@ def _active_language_profile_id() -> str:
 
 
 def _clean_log_line(line: str) -> str:
-    return redact_project_path(line, PROJECT_ROOT)
+    had_newline = str(line).endswith(("\n", "\r"))
+    cleaned = sanitize_event_text(redact_project_path(line, PROJECT_ROOT)).rstrip("\r\n")
+    return cleaned + ("\n" if had_newline else "")

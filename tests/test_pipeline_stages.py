@@ -25,7 +25,7 @@ def _context(tmp_path: Path, name: str = "电影 样本.wav") -> TaskContext:
 
 def test_extract_stage_reuses_non_empty_audio(tmp_path: Path) -> None:
     context = _context(tmp_path)
-    audio = context.work_dir / f"{context.input_path.stem}.16k.wav"
+    audio = context.work_dir / f"{context.task_id}.16k.wav"
     audio.write_bytes(b"wav")
     result = pipeline_stages.extract_audio_stage(context, project_root=tmp_path)
     assert result.reused is True

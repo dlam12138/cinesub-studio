@@ -83,10 +83,16 @@ def _terminology_consistency(
     }
 
 
-def extract_audio_stage(context: TaskContext, *, project_root: Path, ffmpeg_path: str | None = None) -> StageResult:
+def extract_audio_stage(
+    context: TaskContext,
+    *,
+    project_root: Path,
+    ffmpeg_path: str | None = None,
+    reuse_existing: bool = True,
+) -> StageResult:
     started = time.perf_counter()
-    output = context.work_dir / f"{context.input_path.stem}.16k.wav"
-    if _valid(output):
+    output = context.work_dir / f"{context.task_id}.16k.wav"
+    if reuse_existing and _valid(output):
         return StageResult("extracting_audio", "completed", (output,), reused=True)
     ffmpeg = ffmpeg_path or find_ffmpeg(project_root)
     if not ffmpeg:
@@ -277,9 +283,11 @@ def archive_stage(context: TaskContext, *, archive_dir: Path) -> StageResult:
     archive_dir.mkdir(parents=True, exist_ok=True)
     destination = archive_dir / context.input_path.name
     if destination.exists():
-        destination = archive_dir / (
-            f"{context.input_path.stem}_{int(time.time())}{context.input_path.suffix}"
-        )
+        destination = archive_dir / f"{context.task_id}{context.input_path.suffix}"
+        counter = 2
+        while destination.exists():
+            destination = archive_dir / f"{context.task_id}-{counter}{context.input_path.suffix}"
+            counter += 1
     shutil.move(str(context.input_path), str(destination))
     if not _valid(destination):
         raise StageError("archiving", "Archive move completed without a valid destination file.")

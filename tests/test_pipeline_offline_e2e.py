@@ -7,7 +7,13 @@ import batch_worker
 import pytest
 import subtitle_translate
 from pipeline_stages import StageResult
-from task_state import TaskState, prepare_retry_failed_tasks, set_state_root_provider
+from task_state import (
+    TaskState,
+    apply_retry_failed_plan,
+    prepare_retry_failed_tasks,
+    set_state_root_provider,
+)
+from pipeline_reliability import task_identity
 from translation_reliability import TranslationReliabilityError
 
 
@@ -54,7 +60,7 @@ def offline_pipeline(tmp_path: Path, monkeypatch):
 
     def fake_extract(context, **kwargs):
         calls["extract"] += 1
-        audio = context.work_dir / f"{context.input_path.stem}.16k.wav"
+        audio = context.work_dir / f"{context.task_id}.16k.wav"
         audio.parent.mkdir(parents=True, exist_ok=True)
         audio.write_bytes(b"offline wav fixture")
         return StageResult("extracting_audio", "completed", (audio,))
@@ -137,7 +143,8 @@ def test_offline_pipeline_generates_complete_artifact_sets(
     source = roots["output"] / "source" / f"{media.stem}.offline-stub.srt"
     translated = next((roots["output"] / artifact_dir).glob(f"{media.stem}*{artifact_marker}"))
     report = roots["output"] / "reports" / f"{media.stem}.offline-stub.quality_report.json"
-    state = TaskState.load(roots["states"] / f"{media.stem}.state.json")
+    task_id = task_identity(media, roots["input"])[0]
+    state = TaskState.load(roots["states"] / f"{task_id}.state.json")
     events = [
         json.loads(line)
         for line in roots["events"].read_text(encoding="utf-8").splitlines()
@@ -178,8 +185,10 @@ def test_offline_pipeline_failure_reuses_intermediate_outputs_on_retry(
     )
     completed.save()
     retry_plan = prepare_retry_failed_tasks(sorted(roots["states"].glob("*.state.json")))
-    assert retry_plan.selected_task_ids == [media.name]
+    assert retry_plan.selected_task_ids == [task_identity(media, roots["input"])[0]]
     assert retry_plan.untouched_count == 1
+    assert TaskState.load(retry_plan.selected_tasks[0].state_path()).status == "failed"
+    apply_retry_failed_plan(retry_plan, run_id="retry-run")
 
     monkeypatch.setattr(
         subtitle_translate,
@@ -187,9 +196,52 @@ def test_offline_pipeline_failure_reuses_intermediate_outputs_on_retry(
         lambda **kwargs: _openai_response(kwargs["body"]),
     )
     second = make_pipeline().run()
-    recovered = TaskState.load(roots["states"] / f"{media.stem}.state.json")
+    recovered = TaskState.load(
+        roots["states"] / f"{task_identity(media, roots['input'])[0]}.state.json"
+    )
 
     assert second["completed"] == 1
     assert recovered is not None and recovered.status == "completed"
     assert calls == {"extract": 1, "transcribe": 1}
     assert (roots["output"] / "reports" / f"{media.stem}.offline-stub.quality_report.json").is_file()
+
+
+def test_offline_pipeline_second_run_skips_with_stage_signatures(offline_pipeline) -> None:
+    roots, calls, make_pipeline = offline_pipeline
+    media = roots["input"] / "stable.mp4"
+    media.write_bytes(b"offline media fixture")
+
+    first = make_pipeline().run()
+    second = make_pipeline().run()
+
+    assert first["completed"] == 1
+    assert second == {"total": 1, "completed": 0, "failed": 0, "skipped": 1}
+    assert calls == {"extract": 1, "transcribe": 1}
+    state = TaskState.load(
+        roots["states"] / f"{task_identity(media, roots['input'])[0]}.state.json"
+    )
+    assert state is not None
+    assert state.stage_build_signatures.get("input")
+    assert state.stage_build_signatures.get("final_output")
+    assert state.artifact_fingerprints.get("final_output", {}).get("sha256")
+
+
+def test_missing_final_output_fingerprint_rebuilds_only_finalization(offline_pipeline) -> None:
+    roots, calls, make_pipeline = offline_pipeline
+    media = roots["input"] / "final-contract.mp4"
+    media.write_bytes(b"offline media fixture")
+    pipeline = make_pipeline()
+    assert pipeline.run()["completed"] == 1
+    state_path = roots["states"] / f"{task_identity(media, roots['input'])[0]}.state.json"
+    state = TaskState.load(state_path)
+    assert state is not None
+    state.artifact_fingerprints.pop("final_output")
+    state.stage_build_signatures.pop("final_output")
+    state.save()
+
+    plan = batch_worker.build_pipeline_plan(pipeline.config)
+
+    assert plan.tasks[0].category == "rebuild"
+    assert plan.tasks[0].rebuild_from == "final_output"
+    assert make_pipeline().run()["completed"] == 1
+    assert calls == {"extract": 1, "transcribe": 1}

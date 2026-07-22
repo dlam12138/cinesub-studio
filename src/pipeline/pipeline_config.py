@@ -131,6 +131,7 @@ def resolve_cli_config(args, raw_argv: list[str]) -> tuple[dict, list[str]]:
         "translation_strategy": translation_strategy,
     }
     values = {
+        "provider_id": str(args.provider or ""),
         "api_provider": _first(args.api_provider, provider.get("api_provider"), "openai-compatible"),
         "api_base": _first(args.api_base, provider.get("api_base"), ""),
         "api_key": _first(args.api_key, provider.get("api_key"), ""),

@@ -6,8 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from encoding_utils import read_json, write_json
+from encoding_utils import read_json
 from output_paths import plan_pipeline_outputs
+from pipeline_reliability import atomic_write_json
 
 
 class TaskStage:
@@ -39,6 +40,15 @@ def is_valid_output_file(path: Path) -> bool:
 class TaskState:
     file: str
     input_path: str
+    task_id: str = ""
+    original_relative_path: str = ""
+    output_stem: str = ""
+    input_location: str = "active"
+    current_input_path: str = ""
+    archived_at: float = 0.0
+    archive_warning: str = ""
+    run_id: str = ""
+    schema_version: int = 2
     stage: str = TaskStage.PENDING
     status: str = "pending"
     created_at: float = 0.0
@@ -47,6 +57,9 @@ class TaskState:
     asr_mode: str = "auto"
     language: str = ""
     asr_config_signature: str = ""
+    input_fingerprint: dict = field(default_factory=dict)
+    stage_build_signatures: dict = field(default_factory=dict)
+    artifact_fingerprints: dict = field(default_factory=dict)
     language_detection: dict | None = None
     source_srt: str = ""
     translated_srt: str = ""
@@ -56,6 +69,7 @@ class TaskState:
     asr_review_summary: dict | None = None
     semantic_review_report: str = ""
     error: str = ""
+    error_category: str = ""
     error_stage: str = ""
     retry_count: int = 0
     max_retries: int = 3
@@ -70,13 +84,14 @@ class TaskState:
         return cls(**{key: data[key] for key in fields if key in data})
 
     def state_path(self) -> Path:
-        return _state_root_provider() / f"{Path(self.file).stem}.state.json"
+        identity = self.task_id or Path(self.file).stem
+        return _state_root_provider() / f"{identity}.state.json"
 
     def save(self) -> None:
         self.updated_at = time.time()
         path = self.state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_json(path, self.to_dict())
+        atomic_write_json(path, self.to_dict())
 
     @classmethod
     def load(cls, state_path: Path) -> Optional["TaskState"]:
@@ -91,13 +106,18 @@ class TaskState:
 
 @dataclass
 class RetryPlan:
-    reset_tasks: list[TaskState] = field(default_factory=list)
+    selected_tasks: list[TaskState] = field(default_factory=list)
     untouched_count: int = 0
     selected_task_ids: list[str] = field(default_factory=list)
 
     @property
     def reset_count(self) -> int:
-        return len(self.reset_tasks)
+        return len(self.selected_tasks)
+
+    @property
+    def reset_tasks(self) -> list[TaskState]:
+        """Compatibility alias; planning no longer mutates these tasks."""
+        return self.selected_tasks
 
     def to_dict(self) -> dict:
         return {
@@ -107,7 +127,8 @@ class RetryPlan:
         }
 
 
-def prepare_retry_failed_tasks(state_files: list[Path]) -> RetryPlan:
+def plan_retry_failed_tasks(state_files: list[Path]) -> RetryPlan:
+    """Read and select failed tasks without changing state files."""
     plan = RetryPlan()
     for state_file in state_files:
         task = TaskState.load(state_file)
@@ -116,22 +137,37 @@ def prepare_retry_failed_tasks(state_files: list[Path]) -> RetryPlan:
         if task.status != "failed":
             plan.untouched_count += 1
             continue
+        plan.selected_tasks.append(task)
+        plan.selected_task_ids.append(task.task_id or task.file)
+    return plan
+
+
+def apply_retry_failed_plan(plan: RetryPlan, *, run_id: str = "") -> RetryPlan:
+    """Reset exactly the failed tasks selected by a previously validated plan."""
+    for task in plan.selected_tasks:
+        if task.status != "failed":
+            raise ValueError(f"Task is no longer failed: {task.task_id or task.file}")
         task.status = "pending"
         task.stage = TaskStage.PENDING
         task.error = ""
+        task.error_category = ""
         task.error_stage = ""
         task.retry_count = 0
+        task.run_id = run_id or task.run_id
         task.save()
-        plan.reset_tasks.append(task)
-        plan.selected_task_ids.append(task.file)
     return plan
+
+
+def prepare_retry_failed_tasks(state_files: list[Path]) -> RetryPlan:
+    """Compatibility alias for the now strictly side-effect-free retry planner."""
+    return plan_retry_failed_tasks(state_files)
 
 
 def required_final_outputs(task: TaskState, config) -> list[Path]:
     input_path = Path(task.input_path or task.file)
     outputs = plan_pipeline_outputs(
         output_root=config.output_dir,
-        stem=input_path.stem,
+        stem=task.output_stem or input_path.stem,
         model=config.model,
         target_language=config.target_language,
         translation_mode=config.translation_mode,
@@ -149,6 +185,8 @@ def completed_outputs_valid(task: TaskState, config) -> bool:
 
 
 def recovery_state(raw: dict, effective_status: str) -> dict:
+    if raw.get("input_location") == "archive":
+        return _recovery("restore_input_from_archive", False)
     if effective_status == "failed":
         return _recovery("retry_failed", True)
     if effective_status == "stale":
@@ -170,6 +208,7 @@ def _recovery(action: str, recoverable: bool) -> dict:
         "reuse_outputs": "可复用已有中间产物",
         "stale_running_warning": "可能中断，需人工确认",
         "not_recoverable": "状态与产物不一致",
+        "restore_input_from_archive": "输入已归档；恢复后才能按新配置重建",
     }
     return {"recovery_action": action, "recoverable": recoverable, "recovery_label": labels[action]}
 

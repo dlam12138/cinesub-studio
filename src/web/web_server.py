@@ -17,6 +17,7 @@ from pipeline_api import (
     read_pipeline_log,
     resolve_pipeline_artifact,
     run_pipeline_command,
+    scan_pipeline,
     start_pipeline_background,
 )
 from provider_profile_api import (
@@ -299,7 +300,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/pipeline/scan":
             query = parse_qs(parsed.query)
             input_dir = (query.get("input_dir") or [""])[0].strip()
-            self.send_json(run_pipeline_command("scan", input_dir=input_dir))
+            self.send_json(scan_pipeline(input_dir=input_dir))
             return
 
         if parsed.path == "/api/pipeline/status":
