@@ -38,7 +38,7 @@ RUN_PROFILES = {
     "speed": ("small", "speed", None),
     "balanced": ("small", "balanced", None),
     "large-control": ("large-v3", "quality", "off"),
-    "quality": ("large-v3", "quality", "apply"),
+    "quality": ("large-v3", "quality", None),
 }
 
 

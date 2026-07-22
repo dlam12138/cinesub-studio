@@ -32,7 +32,7 @@ def test_quality_preset_priority_and_explicit_override() -> None:
     assert sources["word_timestamps"]["source"] == "quality_preset"
     assert loop["resegment_subtitles"] is False
     assert sources["resegment_subtitles"]["source"] == "explicit_request"
-    assert loop["asr_retry_mode"] == "apply"
+    assert loop["asr_retry_mode"] == "dry_run"
 
 
 def test_pipeline_quality_preset_keeps_explicit_model() -> None:
@@ -75,7 +75,7 @@ def test_pipeline_quality_preset_keeps_explicit_model() -> None:
     assert values["model"] == "small"
     assert values["word_timestamps"] is True
     assert values["resegment_subtitles"] is True
-    assert values["asr_retry_mode"] == "apply"
+    assert values["asr_retry_mode"] == "dry_run"
     assert values["effective_asr_config"]["model"] == {
         "value": "small",
         "source": "explicit_request",

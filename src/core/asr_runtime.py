@@ -246,7 +246,7 @@ def quality_preset_values(preset: object = None) -> dict[str, object]:
             "model": "large-v3",
             "word_timestamps": True,
             "resegment_subtitles": True,
-            "asr_retry_mode": "apply",
+            "asr_retry_mode": "dry_run",
         }
     return {}
 

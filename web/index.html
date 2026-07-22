@@ -2732,7 +2732,7 @@
           <option value="balanced" selected>平衡模式</option>
           <option value="quality">质量优先</option>
         </select>
-        <span class="help-text">平衡模式启用词级时间戳、字幕重切分和 dry-run 局部复核；质量优先会请求 large-v3 并启用受控 apply。</span>
+        <span class="help-text">平衡模式启用词级时间戳、字幕重切分和 dry-run 局部复核；质量优先会请求 large-v3，但验收完成前同样只执行 dry-run。</span>
       </div>
       <div class="field option-card">
         <label for="pipelineModel">语音识别模型<span class="recommend-badge">small 稳妥</span></label>
@@ -2964,7 +2964,7 @@
                   <option value="balanced" selected>平衡模式</option>
                   <option value="quality">质量优先</option>
                 </select>
-                <span class="help-text">速度优先接近旧行为；平衡模式只 dry-run 局部复核；质量优先会请求 large-v3 并只在门槛通过时局部替换。</span>
+                <span class="help-text">速度优先接近旧行为；平衡模式只 dry-run 局部复核；质量优先会请求 large-v3，但验收完成前不自动替换。</span>
               </div>
               <div class="option-card">
                 <label for="model">语音识别模型<span class="recommend-badge">small 默认</span></label>
