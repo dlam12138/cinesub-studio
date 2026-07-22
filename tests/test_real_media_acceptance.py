@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from real_media_acceptance import BASE_SHA, build_run_command, build_videocr_command
+from real_media_acceptance import (
+    BASE_SHA,
+    build_run_command,
+    build_videocr_command,
+    environment_fingerprint,
+)
 
 
 def test_acceptance_runner_builds_isolated_local_only_quality_control(tmp_path: Path) -> None:
@@ -135,3 +140,32 @@ def test_videocr_executable_may_be_user_supplied_but_output_stays_private(
     args.output = str(tmp_path / "public.srt")
     with pytest.raises(ValueError, match="Private acceptance artifact"):
         build_videocr_command(args)
+
+
+def test_environment_fingerprint_embeds_ocr_and_model_preflights(
+    tmp_path: Path, monkeypatch
+) -> None:
+    ocr_path = tmp_path / "ocr.json"
+    model_path = tmp_path / "models.json"
+    ocr_path.write_text('{"tool":"VideOCR CLI"}', encoding="utf-8")
+    model_path.write_text('{"models":[{"model":"small"}]}', encoding="utf-8")
+    monkeypatch.setattr(
+        "real_media_acceptance.resolve_runtime_paths",
+        lambda: Namespace(project_root=tmp_path),
+    )
+    monkeypatch.setattr("real_media_acceptance.find_ffmpeg", lambda _root: None)
+    monkeypatch.setattr("real_media_acceptance._git_sha", lambda _root: "evaluated")
+    monkeypatch.setattr("real_media_acceptance._command_line", lambda _command: "unavailable")
+    monkeypatch.setattr("real_media_acceptance._cuda_runtime_version", lambda: "12.9")
+    args = Namespace(
+        implementation_sha="implementation",
+        acceptance_runner_sha="runner",
+        ocr_preflight=str(ocr_path),
+        model_preflight=str(model_path),
+        output=str(tmp_path / "fingerprint.json"),
+    )
+
+    payload = environment_fingerprint(args)
+
+    assert payload["ocr"]["tool"] == "VideOCR CLI"
+    assert payload["models"]["models"][0]["model"] == "small"

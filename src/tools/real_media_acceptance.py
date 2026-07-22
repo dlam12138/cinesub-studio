@@ -158,6 +158,7 @@ def environment_fingerprint(args: argparse.Namespace) -> dict:
         ]),
         "cuda_runtime": _cuda_runtime_version(),
         "ocr": json.loads(Path(args.ocr_preflight).read_text(encoding="utf-8")),
+        "models": json.loads(Path(args.model_preflight).read_text(encoding="utf-8")),
     }
     _write_json(Path(args.output), payload)
     return payload
@@ -455,6 +456,7 @@ def main() -> int:
     fingerprint_parser.add_argument("--implementation-sha", required=True)
     fingerprint_parser.add_argument("--acceptance-runner-sha", required=True)
     fingerprint_parser.add_argument("--ocr-preflight", required=True)
+    fingerprint_parser.add_argument("--model-preflight", required=True)
     fingerprint_parser.add_argument("--output", required=True)
 
     ocr_preflight_parser = subparsers.add_parser("ocr-preflight")
