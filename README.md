@@ -145,6 +145,10 @@ GitHub 源码面向开发和本地调试，不包含模型、Python 运行时、
 
 开发要求、目录边界、API 约束、测试命令和发布规则见 [`AGENTS.md`](AGENTS.md)。Electron 子项目说明见 [`desktop/README.md`](desktop/README.md)。
 
+开发者资料：
+
+- [模型参数与调优参考](docs/model_tuning_reference.md)
+
 0.6.2 唯一发布构建入口：
 
 ```powershell
