@@ -23,10 +23,9 @@ from task_state import (
 from pipeline_reliability import (
     PipelineRunLock,
     build_pipeline_plan as build_read_only_pipeline_plan,
-    canonical_hash,
-    local_provider_preflight,
     process_identity_matches,
     read_run_record,
+    retry_fingerprint,
     sanitize_stem,
     windows_process_creation_filetime,
     write_run_record,
@@ -96,6 +95,51 @@ STATUS_LABELS = {
 }
 
 
+_ABORT_REASON_MESSAGES = {
+    "plan_fingerprint_mismatch": "预检后流水线计划发生变化，已中止。",
+    "configuration_unavailable_after_preflight": "预检后配置无法解析，已中止。",
+    "model_unavailable_after_preflight": "预检后 ASR 模型不可用，已中止。",
+    "new_blocker_after_preflight": "预检后出现新的阻塞项，已中止。",
+    "retry_state_changed": "重试任务状态在执行前发生变化，已中止。",
+}
+
+
+def _aborted_run_extras(record: dict) -> dict:
+    """Sanitized abort fields for the API surface (D8).
+
+    Only ``abort_reason`` + an 8-char fingerprint prefix + a human message are
+    surfaced. Full expected/observed fingerprints and ``changed_task_id`` stay
+    private to the on-disk run record.
+    """
+    observed = str(
+        record.get("observed_plan_fingerprint")
+        or record.get("plan_fingerprint")
+        or ""
+    )
+    reason = str(record.get("abort_reason") or "")
+    return {
+        "abort_reason": reason,
+        "plan_fingerprint_prefix": observed[:8],
+        "message": _ABORT_REASON_MESSAGES.get(reason, "流水线已中止。"),
+    }
+
+
+def _run_record_view() -> dict:
+    """Whitelisted, sanitized run-record view for API responses."""
+    record = read_run_record(PIPELINE_RUN_RECORD) or {}
+    view = {
+        key: value for key, value in record.items()
+        if key in {
+            "schema_version", "run_id", "action", "status", "task_ids",
+            "current_task_id", "current_stage", "started_at", "updated_at",
+            "finished_at", "counts", "failure_stage_counts",
+        }
+    }
+    if record.get("status") == "aborted_plan_changed":
+        view.update(_aborted_run_extras(record))
+    return view
+
+
 def get_pipeline_task() -> dict:
     with PIPELINE_TASK_LOCK:
         memory = dict(PIPELINE_TASK)
@@ -125,6 +169,14 @@ def get_pipeline_task() -> dict:
             record["status"] = "stale"
             record["finished_at"] = time.time()
             write_run_record(PIPELINE_RUN_RECORD, record)
+    if record and record.get("status") == "aborted_plan_changed":
+        memory = {
+            **memory,
+            "running": False,
+            "status": "aborted_plan_changed",
+            "returncode": memory.get("returncode") if memory.get("returncode") is not None else 1,
+            **_aborted_run_extras(record),
+        }
     return memory
 
 
@@ -229,14 +281,7 @@ def pipeline_progress() -> dict:
             key: value for key, value in task_info.items()
             if key not in {"error"}
         } | ({"error_summary": sanitize_event_text(task_info.get("error", ""))[:300]} if task_info.get("error") else {}),
-        "run": {
-            key: value for key, value in read_run_record(PIPELINE_RUN_RECORD).items()
-            if key in {
-                "schema_version", "run_id", "action", "status", "task_ids",
-                "current_task_id", "current_stage", "started_at", "updated_at",
-                "finished_at", "counts", "failure_stage_counts",
-            }
-        },
+        "run": _run_record_view(),
         "stale_running": stale_running,
         "stale_running_count": stale_running_count,
         "recoverable_failed_count": recoverable_failed_count,
@@ -369,6 +414,30 @@ def scan_pipeline(input_dir: str = "") -> dict:
             ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
         },
     )
+    result = plan.to_dict()
+    result["preview_scope"] = "default_config"
+    return result
+
+
+def plan_pipeline(**parsed) -> dict:
+    """Read-only full-config preview sharing run's resolution path.
+
+    Resolves the same ``BatchConfig`` that ``/api/pipeline/run`` would execute
+    (via ``resolve_pipeline_request_config``) and builds the shared
+    ``PipelinePlan`` without a lease, run record, worker, or any state mutation.
+    Returns ``plan.to_dict()``; the Web handler merges ``preview_scope`` and the
+    preflight findings. Model-availability/download checks are intentionally NOT
+    performed here — the caller runs ``pipeline_request_preflight``.
+    """
+    config, _command = resolve_pipeline_request_config(action="run", **parsed)
+    plan = build_read_only_pipeline_plan(
+        config,
+        state_dir=PIPELINE_STATES_DIR,
+        video_extensions={
+            ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v",
+            ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
+        },
+    )
     return plan.to_dict()
 
 
@@ -398,8 +467,7 @@ def start_pipeline_background(
     subtitle_formats: list[str] | str | None = None,
     ass_style_id: str = "",
 ) -> tuple[dict, int]:
-    subtitle_formats_list = normalize_subtitle_formats(subtitle_formats)
-    command = _build_background_command(
+    config, command = resolve_pipeline_request_config(
         action=action,
         provider_id=provider_id,
         language_profile_id=language_profile_id,
@@ -420,10 +488,9 @@ def start_pipeline_background(
         translation_max_extra_requests=translation_max_extra_requests,
         translation_strategy_mode=translation_strategy_mode,
         translation_scene_gap_seconds=translation_scene_gap_seconds,
-        subtitle_formats=subtitle_formats_list,
+        subtitle_formats=subtitle_formats,
         ass_style_id=ass_style_id,
     )
-    config = _batch_config_from_command(command)
     run_lock = PipelineRunLock(PIPELINE_RUN_LOCK)
     if not run_lock.acquire():
         return {"ok": False, "error": "已有流水线进程持有运行锁。", "code": "pipeline_busy"}, 409
@@ -431,25 +498,28 @@ def start_pipeline_background(
     if not worker_lease.acquire():
         run_lock.release()
         return {"ok": False, "error": "已有 worker 持有运行锁。", "code": "pipeline_busy"}, 409
+    plan = build_read_only_pipeline_plan(
+        config,
+        state_dir=PIPELINE_STATES_DIR,
+        video_extensions={
+            ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v",
+            ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
+        },
+    )
+    retry_plan = None
+    blockers = plan.blockers
     if action == "run":
-        plan = build_read_only_pipeline_plan(
-            config,
-            state_dir=PIPELINE_STATES_DIR,
-            video_extensions={
-                ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v",
-                ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
-            },
-        )
-        blockers = plan.blockers
         task_ids = [item.task_id for item in plan.tasks]
         plan_fingerprint = plan.plan_fingerprint
-        config_hash = plan.effective_config_hash
     else:
-        blockers = local_provider_preflight(config)
-        retry_plan = plan_retry_failed_tasks(sorted(PIPELINE_STATES_DIR.glob("*.state.json")))
+        active_task_ids = {item.task_id for item in plan.tasks}
+        retry_plan = plan_retry_failed_tasks(
+            sorted(PIPELINE_STATES_DIR.glob("*.state.json")),
+            allowed_task_ids=active_task_ids,
+        )
         task_ids = retry_plan.selected_task_ids
-        plan_fingerprint = canonical_hash(task_ids)
-        config_hash = canonical_hash(config.asr_signature_payload())
+        plan_fingerprint = retry_fingerprint(plan, task_ids)
+    config_hash = plan.effective_config_hash
     if blockers:
         worker_lease.release()
         run_lock.release()
@@ -458,6 +528,17 @@ def start_pipeline_background(
             "error": "Pipeline preflight failed.",
             "blockers": [blocker.__dict__ for blocker in blockers],
         }, 409
+    if action != "run" and not task_ids:
+        worker_lease.release()
+        run_lock.release()
+        if retry_plan is not None and retry_plan.excluded_tasks:
+            return {
+                "ok": False,
+                "error": "没有属于当前输入的可重试失败任务。",
+                "code": "no_retryable_failed_tasks",
+                "excluded_tasks": [dict(item) for item in retry_plan.excluded_tasks],
+            }, 409
+        return {"ok": True, "message": "没有失败任务。"}, 200
 
     run_id = uuid.uuid4().hex
     started_at = time.time()
@@ -949,21 +1030,17 @@ def _build_background_command(
 ) -> list[str]:
     subtitle_formats = normalize_subtitle_formats(subtitle_formats)
     ass_style_id = ass_style_id or DEFAULT_ASS_STYLE_ID
-    if action == "run":
-        command = [
-            sys.executable,
-            "-B",
-            str(SRC_ROOT / "pipeline" / "batch_worker.py"),
-            "--input",
-            input_dir if input_dir else str(PROJECT_ROOT / "input"),
-        ]
-    else:
-        command = [
-            sys.executable,
-            "-B",
-            str(SRC_ROOT / "pipeline" / "batch_worker.py"),
-            f"--{action}",
-        ]
+    command = [
+        sys.executable,
+        "-B",
+        str(SRC_ROOT / "pipeline" / "batch_worker.py"),
+    ]
+    if action != "run":
+        command.append(f"--{action}")
+    command += [
+        "--input",
+        input_dir if input_dir else str(PROJECT_ROOT / "input"),
+    ]
 
     if not provider_id:
         provider_id = _active_provider_id()
@@ -1014,6 +1091,69 @@ def _build_background_command(
     command += ["--subtitle-formats", ",".join(subtitle_formats)]
     command += ["--ass-style-id", ass_style_id]
     return command
+
+
+def resolve_pipeline_request_config(
+    *,
+    action: str,
+    provider_id: str = "",
+    language_profile_id: str = "",
+    input_dir: str = "",
+    model: str = "small",
+    device: str = "auto",
+    compute_type: str = "",
+    translate_enabled: bool = True,
+    asr_mode: str = "",
+    language: str = "",
+    local_files_only: bool = False,
+    quality_preset: str = "",
+    word_timestamps: object = None,
+    resegment_subtitles: object = None,
+    asr_retry_mode: object = None,
+    asr_hotword_prompt: str = "",
+    subtitle_formats: list[str] | None = None,
+    ass_style_id: str = "",
+    translation_reliability_mode: str | None = None,
+    translation_max_extra_requests: int | None = None,
+    translation_strategy_mode: str | None = None,
+    translation_scene_gap_seconds: float | None = None,
+    **_extra,  # swallow Web-only fields (e.g. hf_endpoint) not used by the worker command
+) -> tuple[BatchConfig, list[str]]:
+    """Single entry that turns a normalized Web payload into (BatchConfig, command).
+
+    Wraps the existing ``_build_background_command`` -> ``_batch_config_from_command``
+    round-trip so plan/run/retry-failed share one config-resolution path (and thus one
+    ``effective_config_hash``). The returned ``command`` launches the worker subprocess;
+    the worker re-resolves via ``resolve_cli_config`` over the same argv, so Web preview
+    and execution agree. ``action`` only selects the ``--run``/``--retry-failed`` flag and
+    never affects the resolved config (``--input`` is always present).
+    """
+    command = _build_background_command(
+        action=action,
+        provider_id=provider_id,
+        language_profile_id=language_profile_id,
+        input_dir=input_dir,
+        model=model,
+        device=device,
+        compute_type=compute_type,
+        translate_enabled=translate_enabled,
+        asr_mode=asr_mode,
+        language=language,
+        local_files_only=local_files_only,
+        quality_preset=quality_preset,
+        word_timestamps=word_timestamps,
+        resegment_subtitles=resegment_subtitles,
+        asr_retry_mode=asr_retry_mode,
+        asr_hotword_prompt=asr_hotword_prompt,
+        subtitle_formats=subtitle_formats,
+        ass_style_id=ass_style_id,
+        translation_reliability_mode=translation_reliability_mode,
+        translation_max_extra_requests=translation_max_extra_requests,
+        translation_strategy_mode=translation_strategy_mode,
+        translation_scene_gap_seconds=translation_scene_gap_seconds,
+    )
+    config = _batch_config_from_command(command)
+    return config, command
 
 
 def _pipeline_env() -> dict[str, str]:

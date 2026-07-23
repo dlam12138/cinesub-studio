@@ -29,6 +29,20 @@ def canonical_hash(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def retry_fingerprint(plan: PipelinePlan, task_ids: list[str]) -> str:
+    """Composite fingerprint binding a retry run to its plan + selected set.
+
+    Binds both the pipeline config/inputs (via ``plan.plan_fingerprint``) and the
+    selected failed-task ids, so a changed failed-task set (or plan drift)
+    between Web preflight and worker apply aborts before
+    ``apply_retry_failed_plan`` can partial-write task state. See D3.
+    """
+    return canonical_hash({
+        "plan": plan.plan_fingerprint,
+        "retry_task_ids": sorted(task_ids),
+    })
+
+
 def normalize_relative_input_path(path: Path, input_root: Path) -> str:
     relative = path.resolve().relative_to(input_root.resolve()).as_posix()
     return unicodedata.normalize("NFC", relative).casefold()
@@ -305,6 +319,31 @@ def local_provider_preflight(config: Any) -> list[PipelineBlocker]:
     if not str(getattr(config, "api_key", "") or os.environ.get("SUBTITLE_LLM_API_KEY", "")).strip():
         blockers.append(PipelineBlocker("missing_api_key", "翻译已启用但未配置 API Key。"))
     return blockers
+
+
+def collect_local_pipeline_preflight(config: Any, plan: "PipelinePlan | None" = None) -> dict:
+    """Re-check local resources a worker needs before touching task state.
+
+    Shared by Web preflight (via ``pipeline_request_preflight``) and the worker's
+    二次核验. Returns ``{model_missing, model_payload, blockers}``. Model
+    availability reuses ``missing_model_payload`` so Web preview matches
+    execution; these findings are NOT part of the permanent plan_fingerprint
+    (a model can be installed and become available).
+    """
+    from asr_model_api import missing_model_payload  # lazy: pipeline -> web
+
+    model_name = str(getattr(config, "model", "") or "")
+    try:
+        model_payload = missing_model_payload(model_name, "official")
+    except ValueError:
+        # Unknown model names are a configuration error, not a model-missing
+        # condition; callers surface them as configuration_unavailable.
+        model_payload = None
+    return {
+        "model_missing": model_payload is not None,
+        "model_payload": model_payload,
+        "blockers": list(plan.blockers) if plan is not None else [],
+    }
 
 
 def build_pipeline_plan(
