@@ -53,6 +53,7 @@ from runtime_paths import resolve_runtime_paths
 from stage_event_log import write_stage_event
 from task_state import (
     RetryPlan,
+    RetryPlanChanged,
     TaskStage,
     TaskState,
     completed_outputs_valid as validate_completed_outputs,
@@ -71,10 +72,11 @@ from pipeline_reliability import (
     artifact_set_matches,
     build_pipeline_plan as build_read_only_pipeline_plan,
     canonical_hash,
+    collect_local_pipeline_preflight,
     expected_stage_signatures,
-    local_provider_preflight,
     windows_process_creation_filetime,
     read_run_record,
+    retry_fingerprint,
     write_run_record,
 )
 from subtitle_model import (
@@ -940,52 +942,148 @@ def main() -> int:
         if not lock.acquire():
             print("Another pipeline process is already running.")
             return 1
-    try:
-        if args.retry_failed:
-            blockers = local_provider_preflight(config)
-            if blockers:
-                for blocker in blockers:
-                    print(f"  [blocker:{blocker.code}] {blocker.message}")
-                return 1
-            task_ids = plan_retry_failed_tasks(
-                sorted(DIR_WORK_STATES.glob("*.state.json"))
-            ).selected_task_ids
-            plan = None
-            action = "retry-failed"
-        else:
-            plan = build_pipeline_plan(config, read_only=True)
-            if plan.blockers:
-                for blocker in plan.blockers:
-                    print(f"  [blocker:{blocker.code}] {blocker.message}")
-                return 1
-            task_ids = [item.task_id for item in plan.tasks]
-            action = "run"
-        expected_plan = os.environ.get("CINESUB_PIPELINE_EXPECTED_PLAN", "")
-        observed_plan = plan.plan_fingerprint if plan else canonical_hash(task_ids)
-        if expected_plan and expected_plan != observed_plan:
-            print("Pipeline plan changed after preflight; no task state was modified.")
-            return 1
-        record = write_run_record(run_record_path, {
+    action = "retry-failed" if args.retry_failed else "run"
+    server_pid = int(os.environ.get("CINESUB_PIPELINE_SERVER_PID", "0") or 0)
+    expected_plan = os.environ.get("CINESUB_PIPELINE_EXPECTED_PLAN", "")
+
+    def _abort_plan_changed(
+        abort_reason: str,
+        *,
+        expected_plan: str = "",
+        observed_plan: str = "",
+        changed_task_id: str = "",
+    ) -> None:
+        """Write an aborted_plan_changed terminal record without touching task state.
+
+        Merges over the Web's ``preparing`` record (or the prior ``running``
+        record) so ``get_pipeline_task`` never marks the run stale. Full
+        fingerprints live only in the private run record; the API surface
+        (Task #9) returns ``status`` + ``abort_reason`` + a short prefix only.
+        """
+        base = read_run_record(run_record_path) or {}
+        base.update({
             "schema_version": 1,
             "run_id": run_id,
             "action": action,
-            "status": "running",
-            "server_pid": int(os.environ.get("CINESUB_PIPELINE_SERVER_PID", "0") or 0),
+            "status": "aborted_plan_changed",
+            "abort_reason": abort_reason,
+            "server_pid": server_pid,
             "worker_pid": os.getpid(),
             "worker_creation_filetime": windows_process_creation_filetime(os.getpid()),
             "plan_fingerprint": observed_plan,
-            "effective_config_hash": plan.effective_config_hash if plan else canonical_hash(config.asr_signature_payload()),
-            "task_ids": task_ids,
+            "expected_plan_fingerprint": expected_plan,
+            "observed_plan_fingerprint": observed_plan,
+            "changed_task_id": changed_task_id,
+            "task_ids": base.get("task_ids", []),
             "current_task_id": "",
             "current_stage": "",
-            "started_at": time.time(),
-            "finished_at": 0,
+            "started_at": base.get("started_at", time.time()),
+            "finished_at": time.time(),
             "counts": {},
             "failure_stage_counts": {},
         })
-        pipeline = BatchPipeline(config, plan=plan, run_id=run_id)
-        if args.retry_failed:
-            returncode = _retry_failed(pipeline, run_id=run_id)
+        write_run_record(run_record_path, base)
+        print(f"Pipeline aborted ({abort_reason}); see run record.")
+
+    try:
+        try:
+            plan = build_pipeline_plan(config, read_only=True)
+            findings = collect_local_pipeline_preflight(config, plan)
+            if findings["model_missing"]:
+                _abort_plan_changed(
+                    "model_unavailable_after_preflight",
+                    expected_plan=expected_plan,
+                )
+                return 1
+            if findings["blockers"]:
+                for blocker in findings["blockers"]:
+                    print(f"  [blocker:{blocker.code}] {blocker.message}")
+                _abort_plan_changed(
+                    "new_blocker_after_preflight",
+                    expected_plan=expected_plan,
+                )
+                return 1
+            if action == "run":
+                task_ids = [item.task_id for item in plan.tasks]
+                observed_plan = plan.plan_fingerprint
+                retry_plan = None
+            else:
+                active_task_ids = {item.task_id for item in plan.tasks}
+                retry_plan = plan_retry_failed_tasks(
+                    sorted(DIR_WORK_STATES.glob("*.state.json")),
+                    allowed_task_ids=active_task_ids,
+                )
+                task_ids = retry_plan.selected_task_ids
+                observed_plan = retry_fingerprint(plan, task_ids)
+            # Fingerprint compare BEFORE empty-set handling: drift (incl. a
+            # changed failed-task set) aborts as plan_fingerprint_mismatch
+            # rather than silently no-op'ing.
+            if expected_plan and observed_plan != expected_plan:
+                _abort_plan_changed(
+                    "plan_fingerprint_mismatch",
+                    expected_plan=expected_plan,
+                    observed_plan=observed_plan,
+                )
+                return 1
+            if not task_ids and not expected_plan:
+                write_run_record(run_record_path, {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "action": action,
+                    "status": "completed",
+                    "server_pid": server_pid,
+                    "worker_pid": os.getpid(),
+                    "worker_creation_filetime": windows_process_creation_filetime(os.getpid()),
+                    "plan_fingerprint": observed_plan,
+                    "effective_config_hash": plan.effective_config_hash,
+                    "task_ids": [],
+                    "current_task_id": "",
+                    "current_stage": "",
+                    "started_at": time.time(),
+                    "finished_at": time.time(),
+                    "counts": {},
+                    "failure_stage_counts": {},
+                })
+                print("No pending files found." if action == "run" else "No failed tasks need retry.")
+                return 0
+            record = write_run_record(run_record_path, {
+                "schema_version": 1,
+                "run_id": run_id,
+                "action": action,
+                "status": "running",
+                "server_pid": server_pid,
+                "worker_pid": os.getpid(),
+                "worker_creation_filetime": windows_process_creation_filetime(os.getpid()),
+                "plan_fingerprint": observed_plan,
+                "effective_config_hash": plan.effective_config_hash,
+                "task_ids": task_ids,
+                "current_task_id": "",
+                "current_stage": "",
+                "started_at": time.time(),
+                "finished_at": 0,
+                "counts": {},
+                "failure_stage_counts": {},
+            })
+            pipeline = BatchPipeline(config, plan=plan, run_id=run_id)
+            if action == "retry-failed":
+                try:
+                    apply_retry_failed_plan(retry_plan, run_id=run_id)
+                except RetryPlanChanged as exc:
+                    _abort_plan_changed(
+                        "retry_state_changed",
+                        expected_plan=expected_plan,
+                        observed_plan=observed_plan,
+                        changed_task_id=exc.task_id,
+                    )
+                    return 1
+        except Exception:
+            _abort_plan_changed(
+                "configuration_unavailable_after_preflight",
+                expected_plan=expected_plan,
+            )
+            return 1
+        if action == "retry-failed":
+            returncode = _retry_failed(pipeline, run_id=run_id, retry_plan=retry_plan)
             counts = {"failed": int(returncode != 0)}
         else:
             result = pipeline.run()
@@ -1017,18 +1115,28 @@ def _show_status() -> int:
     return show_status(DIR_WORK_STATES)
 
 
-def _retry_failed(pipeline: BatchPipeline, *, run_id: str = "") -> int:
-    """Retry only tasks currently marked as failed."""
-    if not DIR_WORK_STATES.exists():
-        print("No task records found.")
-        return 0
+def _retry_failed(
+    pipeline: BatchPipeline,
+    *,
+    run_id: str = "",
+    retry_plan: RetryPlan | None = None,
+) -> int:
+    """Retry only tasks currently marked as failed.
 
-    state_files = sorted(DIR_WORK_STATES.glob("*.state.json"))
-    retry_plan = plan_retry_failed_tasks(state_files)
-    if not retry_plan.selected_tasks:
-        print("No failed tasks need retry.")
-        return 0
-    apply_retry_failed_plan(retry_plan, run_id=run_id)
+    When ``retry_plan`` is supplied (Web-spawned worker), the caller has already
+    built the plan (intersected to active inputs) and applied the two-phase
+    reset; here we only execute. Otherwise (direct CLI) we plan + apply here.
+    """
+    if retry_plan is None:
+        if not DIR_WORK_STATES.exists():
+            print("No task records found.")
+            return 0
+        state_files = sorted(DIR_WORK_STATES.glob("*.state.json"))
+        retry_plan = plan_retry_failed_tasks(state_files)
+        if not retry_plan.selected_tasks:
+            print("No failed tasks need retry.")
+            return 0
+        apply_retry_failed_plan(retry_plan, run_id=run_id)
     pipeline.tasks = list(retry_plan.selected_tasks)
     for task in retry_plan.selected_tasks:
         print(f"  reset: {task.file}")

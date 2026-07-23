@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -104,11 +105,44 @@ class TaskState:
             return None
 
 
+@dataclass(frozen=True)
+class FrozenRetryTask:
+    """Snapshot of a failed task captured at plan time for two-phase apply.
+
+    Internal-only: ``state_path`` and ``state_fingerprint`` must NOT be exposed
+    via the API (see ``RetryPlan.to_dict``).
+    """
+
+    task_id: str
+    state_path: Path
+    state_fingerprint: str
+    expected_status: str = "failed"
+
+
+def state_file_fingerprint(state_path: Path) -> str:
+    """SHA-256 of a task state file's bytes; detects any concurrent change."""
+    try:
+        raw = state_path.read_bytes()
+    except OSError:
+        return ""
+    return hashlib.sha256(raw).hexdigest()
+
+
+class RetryPlanChanged(ValueError):
+    """Raised when a selected failed task changed between plan and apply."""
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__(f"Retry task changed before apply: {task_id}")
+        self.task_id = task_id
+
+
 @dataclass
 class RetryPlan:
     selected_tasks: list[TaskState] = field(default_factory=list)
+    frozen: list[FrozenRetryTask] = field(default_factory=list)
     untouched_count: int = 0
     selected_task_ids: list[str] = field(default_factory=list)
+    excluded_tasks: list[dict] = field(default_factory=list)
 
     @property
     def reset_count(self) -> int:
@@ -120,15 +154,25 @@ class RetryPlan:
         return self.selected_tasks
 
     def to_dict(self) -> dict:
+        # Intentionally omits frozen/state_path/state_fingerprint (internal).
         return {
             "reset_count": self.reset_count,
             "untouched_count": self.untouched_count,
             "selected_task_ids": list(self.selected_task_ids),
+            "excluded_tasks": list(self.excluded_tasks),
         }
 
 
-def plan_retry_failed_tasks(state_files: list[Path]) -> RetryPlan:
-    """Read and select failed tasks without changing state files."""
+def plan_retry_failed_tasks(
+    state_files: list[Path], *, allowed_task_ids: set[str] | None = None
+) -> RetryPlan:
+    """Read and select failed tasks without changing state files.
+
+    When ``allowed_task_ids`` is provided (the active PipelinePlan's task ids),
+    failed tasks whose id is not in that set are recorded in ``excluded_tasks``
+    with reason ``input_not_active`` rather than selected — historical/archived
+    failed tasks are not auto-retried.
+    """
     plan = RetryPlan()
     for state_file in state_files:
         task = TaskState.load(state_file)
@@ -137,16 +181,45 @@ def plan_retry_failed_tasks(state_files: list[Path]) -> RetryPlan:
         if task.status != "failed":
             plan.untouched_count += 1
             continue
+        task_id = task.task_id or task.file
+        if allowed_task_ids is not None and task_id not in allowed_task_ids:
+            plan.excluded_tasks.append({"task_id": task_id, "reason": "input_not_active"})
+            continue
+        state_path = task.state_path()
         plan.selected_tasks.append(task)
-        plan.selected_task_ids.append(task.task_id or task.file)
+        plan.frozen.append(
+            FrozenRetryTask(
+                task_id=task_id,
+                state_path=state_path,
+                state_fingerprint=state_file_fingerprint(state_path),
+            )
+        )
+        plan.selected_task_ids.append(task_id)
     return plan
 
 
 def apply_retry_failed_plan(plan: RetryPlan, *, run_id: str = "") -> RetryPlan:
-    """Reset exactly the failed tasks selected by a previously validated plan."""
+    """Reset exactly the failed tasks selected by a previously validated plan.
+
+    Two phases: (1) reload every selected state from disk and validate status
+    and byte fingerprint — any drift raises ``RetryPlanChanged`` with zero
+    writes; (2) only after all validations pass, reset and save each task. This
+    is not a cross-file ACID transaction (a disk fault in phase 2 can still
+    partial-write), but it guarantees no task is modified when validation fails.
+    """
+    # Phase 1: validate everything, save nothing.
+    for item in plan.frozen:
+        current = TaskState.load(item.state_path)
+        if (
+            current is None
+            or current.status != item.expected_status
+            or state_file_fingerprint(item.state_path) != item.state_fingerprint
+        ):
+            raise RetryPlanChanged(item.task_id)
+    # Phase 2: mutate only after all validations pass.
     for task in plan.selected_tasks:
         if task.status != "failed":
-            raise ValueError(f"Task is no longer failed: {task.task_id or task.file}")
+            raise RetryPlanChanged(task.task_id or task.file)
         task.status = "pending"
         task.stage = TaskStage.PENDING
         task.error = ""

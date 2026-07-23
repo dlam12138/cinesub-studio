@@ -13,6 +13,7 @@ from file_inspection_api import inspect_input_file
 from job_api import get_job, has_active_jobs, list_jobs, retry_job, sanitize_filename, start_job
 from pipeline_api import (
     get_pipeline_task,
+    plan_pipeline,
     pipeline_progress,
     read_pipeline_log,
     resolve_pipeline_artifact,
@@ -556,123 +557,58 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error_json(409, str(exc), code="config_recovery_failed")
             return
 
+        # Pipeline: read-only full-config preview (the UI's real preflight path).
+        if parsed.path == "/api/pipeline/plan":
+            body = self._read_json_body() or {}
+            try:
+                req = parse_pipeline_request_payload(body)
+            except ValueError as exc:
+                self.send_error_json(400, str(exc))
+                return
+            env, runtime = pipeline_request_preflight(req)
+            result = plan_pipeline(**req)
+            result["environmental_blockers"] = env
+            result["runtime_blockers"] = runtime
+            result["preview_scope"] = "full_config"
+            result["ok"] = bool(result.get("ok")) and not env and not runtime
+            self.send_json(result, status=200)
+            return
+
         # Pipeline: run in the background for the input directory.
         if parsed.path == "/api/pipeline/run":
             body = self._read_json_body() or {}
-            provider_id = body.get("provider") or body.get("provider_id", "")
-            language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
-            input_dir = body.get("input_dir", "").strip()
-            body.setdefault("quality_preset", "balanced")
-            model = _effective_web_asr_model(body, str(language_profile_id or ""))
-            hf_endpoint = body.get("hf_endpoint", "").strip()
-            model_source = "mirror" if hf_endpoint == "https://hf-mirror.com" else "official"
-            missing = missing_model_payload(str(model), model_source)
-            if missing:
-                self.send_json(missing, status=409)
-                return
-            if download_is_running():
-                self.send_error_json(409, "模型下载正在进行，请等待完成。", code="asr_model_download_busy")
-                return
-            device = body.get("device", "auto")
-            compute_type = body.get("compute_type", "")
-            translate_enabled = body.get("translate_enabled", True)
             try:
-                asr_request = _parse_asr_request_payload(body)
+                req = parse_pipeline_request_payload(body)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
                 return
-            local_files_only = True
-            try:
-                reliability = _parse_translation_reliability_payload(body)
-                quality_strategy = _parse_quality_strategy_payload(body)
-            except ValueError as exc:
-                self.send_error_json(400, str(exc))
+            env, runtime = pipeline_request_preflight(req)
+            if runtime:
+                self.send_error_json(409, runtime[0]["error"], code=runtime[0]["code"])
                 return
-            subtitle_formats = body.get("subtitle_formats", ["srt"])
-            ass_style_id = body.get("ass_style_id", "")
-            payload, status = start_pipeline_background(
-                action="run",
-                provider_id=provider_id,
-                language_profile_id=language_profile_id,
-                input_dir=input_dir,
-                model=model,
-                device=device,
-                compute_type=compute_type,
-                translate_enabled=translate_enabled,
-                asr_mode=asr_request["asr_mode"],
-                language=asr_request["language"],
-                hf_endpoint=hf_endpoint,
-                local_files_only=local_files_only,
-                quality_preset=str(body.get("quality_preset") or ""),
-                word_timestamps=body.get("word_timestamps"),
-                resegment_subtitles=body.get("resegment_subtitles"),
-                asr_retry_mode=body.get("asr_retry_mode"),
-                asr_hotword_prompt=str(body.get("asr_hotword_prompt") or ""),
-                **quality_strategy,
-                **reliability,
-                subtitle_formats=subtitle_formats,
-                ass_style_id=ass_style_id,
-            )
+            if env:
+                self.send_json(env[0], status=409)
+                return
+            payload, status = start_pipeline_background(action="run", **req)
             self.send_json(payload, status=status)
             return
 
         # Pipeline: retry failed tasks in the background.
         if parsed.path == "/api/pipeline/retry-failed":
             body = self._read_json_body() or {}
-            provider_id = body.get("provider") or body.get("provider_id", "")
-            language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
-            input_dir = body.get("input_dir", "").strip()
-            body.setdefault("quality_preset", "balanced")
-            model = _effective_web_asr_model(body, str(language_profile_id or ""))
-            hf_endpoint = body.get("hf_endpoint", "").strip()
-            model_source = "mirror" if hf_endpoint == "https://hf-mirror.com" else "official"
-            missing = missing_model_payload(str(model), model_source)
-            if missing:
-                self.send_json(missing, status=409)
-                return
-            if download_is_running():
-                self.send_error_json(409, "模型下载正在进行，请等待完成。", code="asr_model_download_busy")
-                return
-            device = body.get("device", "auto")
-            compute_type = body.get("compute_type", "")
-            translate_enabled = body.get("translate_enabled", True)
             try:
-                asr_request = _parse_asr_request_payload(body)
+                req = parse_pipeline_request_payload(body)
             except ValueError as exc:
                 self.send_error_json(400, str(exc))
                 return
-            local_files_only = True
-            try:
-                reliability = _parse_translation_reliability_payload(body)
-                quality_strategy = _parse_quality_strategy_payload(body)
-            except ValueError as exc:
-                self.send_error_json(400, str(exc))
+            env, runtime = pipeline_request_preflight(req)
+            if runtime:
+                self.send_error_json(409, runtime[0]["error"], code=runtime[0]["code"])
                 return
-            subtitle_formats = body.get("subtitle_formats", ["srt"])
-            ass_style_id = body.get("ass_style_id", "")
-            payload, status = start_pipeline_background(
-                action="retry-failed",
-                provider_id=provider_id,
-                language_profile_id=language_profile_id,
-                input_dir=input_dir,
-                model=model,
-                device=device,
-                compute_type=compute_type,
-                translate_enabled=translate_enabled,
-                asr_mode=asr_request["asr_mode"],
-                language=asr_request["language"],
-                hf_endpoint=hf_endpoint,
-                local_files_only=local_files_only,
-                quality_preset=str(body.get("quality_preset") or ""),
-                word_timestamps=body.get("word_timestamps"),
-                resegment_subtitles=body.get("resegment_subtitles"),
-                asr_retry_mode=body.get("asr_retry_mode"),
-                asr_hotword_prompt=str(body.get("asr_hotword_prompt") or ""),
-                **quality_strategy,
-                **reliability,
-                subtitle_formats=subtitle_formats,
-                ass_style_id=ass_style_id,
-            )
+            if env:
+                self.send_json(env[0], status=409)
+                return
+            payload, status = start_pipeline_background(action="retry-failed", **req)
             self.send_json(payload, status=status)
             return
 
@@ -1087,6 +1023,70 @@ def _parse_quality_strategy_payload(body: dict) -> dict:
         result["translation_strategy_mode"] = strategy["mode"]
         result["translation_scene_gap_seconds"] = strategy["scene_gap_seconds"]
     return result
+
+
+def parse_pipeline_request_payload(body: dict, *, default_quality_preset: str = "balanced") -> dict:
+    """Normalize the shared pipeline request body for plan/run/retry-failed.
+
+    Returns kwargs aligned to ``start_pipeline_background`` / ``plan_pipeline``
+    (no ``action`` key). Raises ``ValueError`` on invalid asr/reliability/strategy
+    fields; the caller maps that to HTTP 400. Model-availability and download
+    checks are intentionally NOT performed here — see ``pipeline_request_preflight``.
+    """
+    body.setdefault("quality_preset", default_quality_preset)
+    provider_id = body.get("provider") or body.get("provider_id", "")
+    language_profile_id = body.get("language_profile") or body.get("language_profile_id", "")
+    input_dir = body.get("input_dir", "").strip()
+    model = _effective_web_asr_model(body, str(language_profile_id or ""))
+    asr_request = _parse_asr_request_payload(body)
+    reliability = _parse_translation_reliability_payload(body)
+    quality_strategy = _parse_quality_strategy_payload(body)
+    parsed = {
+        "provider_id": provider_id,
+        "language_profile_id": language_profile_id,
+        "input_dir": input_dir,
+        "model": model,
+        "device": body.get("device", "auto"),
+        "compute_type": body.get("compute_type", ""),
+        "translate_enabled": body.get("translate_enabled", True),
+        "asr_mode": asr_request["asr_mode"],
+        "language": asr_request["language"],
+        "hf_endpoint": body.get("hf_endpoint", "").strip(),
+        "local_files_only": True,
+        "quality_preset": str(body.get("quality_preset") or ""),
+        "word_timestamps": body.get("word_timestamps"),
+        "resegment_subtitles": body.get("resegment_subtitles"),
+        "asr_retry_mode": body.get("asr_retry_mode"),
+        "asr_hotword_prompt": str(body.get("asr_hotword_prompt") or ""),
+        "subtitle_formats": body.get("subtitle_formats", ["srt"]),
+        "ass_style_id": body.get("ass_style_id", ""),
+    }
+    parsed.update(quality_strategy)
+    parsed.update(reliability)
+    return parsed
+
+
+def pipeline_request_preflight(parsed: dict) -> tuple[list[dict], list[dict]]:
+    """Return (environmental_blockers, runtime_blockers) for plan/run/retry.
+
+    Priority is runtime > environmental: callers must surface runtime blockers
+    (e.g. an in-progress download) before environmental ones (missing model) so
+    the 409 is deterministic. Model availability reuses ``missing_model_payload``
+    so Web preview matches execution; these findings are NOT part of the
+    permanent plan_fingerprint (a model can be installed and become available).
+    """
+    runtime: list[dict] = []
+    if download_is_running():
+        runtime.append({
+            "code": "asr_model_download_busy",
+            "error": "模型下载正在进行，请等待完成。",
+        })
+    environmental: list[dict] = []
+    model_source = "mirror" if parsed.get("hf_endpoint") == "https://hf-mirror.com" else "official"
+    missing = missing_model_payload(str(parsed.get("model") or ""), model_source)
+    if missing:
+        environmental.append(missing)
+    return environmental, runtime
 
 
 def _truthy(value: object) -> bool:

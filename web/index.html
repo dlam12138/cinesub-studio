@@ -4090,14 +4090,46 @@ function appendLog(text) {
   if (!autoScroll || autoScroll.checked) el.scrollTop = el.scrollHeight;
 }
 
+function buildPipelineBody() {
+  // Shared by scan (POST /api/pipeline/plan), run, and retry-failed so the
+  // preview and execution share one HTTP payload (PR #8 preflight parity).
+  var inputDirEl = document.getElementById('pipelineInputDir');
+  var input_dir = inputDirEl ? inputDirEl.value.trim() : 'input';
+  var provSel = document.getElementById('pipelineProviderSelect');
+  var lpSel = document.getElementById('pipelineLangProfileSelect');
+  var modelSel = document.getElementById('pipelineModel');
+  var presetSel = document.getElementById('pipelineQualityPreset');
+  var deviceSel = document.getElementById('pipelineDevice');
+  var computeTypeSel = document.getElementById('pipelineComputeType');
+  var translateCb = document.getElementById('pipelineTranslateEnabled');
+  var translationStrategySel = document.getElementById('pipelineTranslationStrategy');
+  var translationSceneGapEl = document.getElementById('pipelineTranslationSceneGap');
+  var body = { input_dir: input_dir };
+  if (provSel && provSel.value) body.provider_id = provSel.value;
+  if (lpSel && lpSel.value) body.language_profile_id = lpSel.value;
+  body.model = modelSel ? modelSel.value : 'small';
+  body.quality_preset = presetSel ? presetSel.value : 'balanced';
+  body.device = deviceSel ? deviceSel.value : 'cpu';
+  var pipelineModelSource = document.getElementById('pipelineModelSource');
+  body.hf_endpoint = pipelineModelSource && pipelineModelSource.value === 'mirror' ? 'https://hf-mirror.com' : '';
+  if (computeTypeSel && computeTypeSel.value) body.compute_type = computeTypeSel.value;
+  body.translate_enabled = translateCb ? translateCb.checked : true;
+  body.asr_mode = selectedAsrMode('pipeline');
+  if (translationStrategySel && translationStrategySel.value) {
+    body.translation_strategy_mode = translationStrategySel.value;
+    body.translation_scene_gap_seconds = translationSceneGapEl ? translationSceneGapEl.value : '30';
+  }
+  return body;
+}
+
 async function pipelineAction(action) {
   if (pipelineLoading[action]) return;
   setLoading(action, true);
 
   // POST actions: run, retry-failed
-  var isPost = (action === 'retry' || action === 'run');
+  var isPost = (action === 'retry' || action === 'run' || action === 'scan');
   var method = isPost ? 'POST' : 'GET';
-  var urlPath = (action === 'retry') ? 'retry-failed' : action;
+  var urlPath = (action === 'retry') ? 'retry-failed' : (action === 'scan' ? 'plan' : action);
   var url = '/api/pipeline/' + urlPath;
 
   /*
@@ -4112,32 +4144,11 @@ async function pipelineAction(action) {
   // Include input_dir, provider & language profile selections in request
   var fetchOpts = { method: method };
   if (isPost) {
-    var provSel = document.getElementById('pipelineProviderSelect');
-    var lpSel = document.getElementById('pipelineLangProfileSelect');
-    var modelSel = document.getElementById('pipelineModel');
-    var presetSel = document.getElementById('pipelineQualityPreset');
-    var deviceSel = document.getElementById('pipelineDevice');
-    var computeTypeSel = document.getElementById('pipelineComputeType');
-    var languageSel = document.getElementById('pipelineLanguage');
-    var translateCb = document.getElementById('pipelineTranslateEnabled');
-    var translationStrategySel = document.getElementById('pipelineTranslationStrategy');
-    var translationSceneGapEl = document.getElementById('pipelineTranslationSceneGap');
-    var body = { input_dir: input_dir };
-    if (provSel && provSel.value) body.provider_id = provSel.value;
-    if (lpSel && lpSel.value) body.language_profile_id = lpSel.value;
-    body.model = modelSel ? modelSel.value : 'small';
-    body.quality_preset = presetSel ? presetSel.value : 'balanced';
-    body.device = deviceSel ? deviceSel.value : 'cpu';
-    var pipelineModelSource = document.getElementById('pipelineModelSource');
-    body.hf_endpoint = pipelineModelSource && pipelineModelSource.value === 'mirror' ? 'https://hf-mirror.com' : '';
-    if (computeTypeSel && computeTypeSel.value) body.compute_type = computeTypeSel.value;
-    body.translate_enabled = translateCb ? translateCb.checked : true;
-    body.asr_mode = selectedAsrMode('pipeline');
-    if (translationStrategySel && translationStrategySel.value) {
-      body.translation_strategy_mode = translationStrategySel.value;
-      body.translation_scene_gap_seconds = translationSceneGapEl ? translationSceneGapEl.value : '30';
-    }
-    if (body.asr_mode === 'fixed') {
+    var body = buildPipelineBody();
+    // Fixed-language validation applies to execution actions only; the scan
+    // preview tolerates a missing language so users can still preview.
+    if ((action === 'run' || action === 'retry') && body.asr_mode === 'fixed') {
+      var languageSel = document.getElementById('pipelineLanguage');
       if (!languageSel || !languageSel.value) {
         setLoading(action, false);
         showToast('请选择整批视频的语言，再开始固定单语言识别。', false);
@@ -4149,7 +4160,7 @@ async function pipelineAction(action) {
     fetchOpts.headers = { 'Content-Type': 'application/json' };
     fetchOpts.body = JSON.stringify(body);
   } else {
-    // GET requests: append input_dir as query param
+    // GET requests (status, review): append input_dir as query param
     var sep = url.indexOf('?') === -1 ? '?' : '&';
     url += sep + 'input_dir=' + encodeURIComponent(input_dir);
   }
@@ -4483,7 +4494,55 @@ function renderTextResult(targetId, data, emptyText) {
 }
 
 function renderScan(data) {
-  renderTextResult('scan-result', data, '没有发现输入文件。请将视频放入目录后重新扫描。');
+  var el = document.getElementById('scan-result');
+  var scope = data.preview_scope || 'full_config';
+  var tasks = data.tasks || [];
+  var envBlockers = data.environmental_blockers || [];
+  var runtimeBlockers = data.runtime_blockers || [];
+  var blockers = data.blockers || [];
+  var html = '';
+
+  // Legacy default-config GET scan is not execution-accurate; only the POST
+  // /api/pipeline/plan preview (full_config) may conclude "可直接运行".
+  if (scope === 'default_config') {
+    html += '<div class="placeholder">此为默认配置预览，请用「扫描」获取与执行一致的真实预览。</div>';
+  }
+
+  function blockerText(list) {
+    return list.map(function(b) { return b.error || b.message || b.code || ''; }).filter(Boolean).join('；');
+  }
+  if (runtimeBlockers.length) {
+    html += '<div class="summary-bar"><span class="s-err">' + escapeHtml(blockerText(runtimeBlockers)) + '</span></div>';
+  }
+  if (envBlockers.length) {
+    html += '<div class="summary-bar"><span class="s-err">' + escapeHtml(blockerText(envBlockers)) + '</span></div>';
+  }
+  if (blockers.length) {
+    html += '<div class="summary-bar"><span class="s-err">阻塞项：' + escapeHtml(blockerText(blockers)) + '</span></div>';
+  }
+
+  if (!tasks.length) {
+    if (!html) html = '<div class="placeholder">没有发现待处理文件。请将视频放入输入目录。</div>';
+    el.innerHTML = html;
+    return;
+  }
+
+  var catLabel = {new: '待处理', reuse: '复用', rebuild: '需重建', skip: '已完成'};
+  var catCls = {new: 'badge-pending', reuse: 'badge-ok', rebuild: 'badge-err', skip: 'badge-ok'};
+  html += '<div class="summary-bar"><span class="s-ok">共 ' + tasks.length + ' 个文件</span></div>';
+  if (scope === 'full_config' && data.ok && !envBlockers.length && !runtimeBlockers.length && !blockers.length) {
+    html += '<div class="summary-bar"><span class="s-ok">配置就绪，可直接运行。</span></div>';
+  }
+  html += '<table class="mini-table"><thead><tr><th>文件</th><th>类别</th></tr></thead><tbody>';
+  for (var i = 0; i < tasks.length; i++) {
+    var t = tasks[i];
+    var cat = t.category || 'new';
+    var cls = catCls[cat] || 'badge-pending';
+    var label = catLabel[cat] || cat;
+    html += '<tr><td>' + escapeHtml(t.display_name || t.task_id || '') + '</td><td><span class="badge ' + cls + '">' + escapeHtml(label) + '</span></td></tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
 }
 
 function statusBadgeClass(status) {
