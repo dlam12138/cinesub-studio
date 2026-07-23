@@ -667,10 +667,10 @@ def test_t12_worker_retry_state_change_aborts_without_writes(
     assert set(retry_plan.selected_task_ids) == {a_id, b_id}
     expected = retry_fingerprint(plan, retry_plan.selected_task_ids)
 
-    # Before the worker apply, change the SECOND task's status to completed.
+    # Before the worker re-plans, change the SECOND task's status to completed.
     # The worker's own re-plan will select only the first task, so the retry
-    # fingerprint changes -> plan_fingerprint_mismatch (retry_state_changed is
-    # also acceptable per spec).
+    # fingerprint changes -> plan_fingerprint_mismatch. (The precise
+    # retry_state_changed path is covered by test_t12b below.)
     b_path = worker_dirs["states"] / f"{b_id}.state.json"
     b_loaded = TaskState.load(b_path)
     b_loaded.status = "completed"
@@ -686,8 +686,82 @@ def test_t12_worker_retry_state_change_aborts_without_writes(
         (worker_dirs["work"] / "pipeline_run.json").read_text(encoding="utf-8")
     )
     assert record["status"] == "aborted_plan_changed"
-    assert record["abort_reason"] in ("plan_fingerprint_mismatch", "retry_state_changed")
+    assert record["abort_reason"] == "plan_fingerprint_mismatch"
 
     # Abort happens before apply_retry_failed_plan -> zero task-state writes.
     for path in worker_dirs["states"].glob("*.state.json"):
         assert path.read_bytes() == snapshot[path.name]
+
+
+def test_t12b_worker_apply_retry_state_changed_aborts_without_resets(
+    monkeypatch, worker_dirs, model_available
+):
+    """Cover the retry_state_changed path precisely.
+
+    test_t12 changes the second task *before* the worker re-plans, so it hits
+    plan_fingerprint_mismatch. Here the worker completes the fingerprint
+    compare (expected == observed) and only THEN the second task drifts during
+    apply_retry_failed_plan's phase-1 reload -> RetryPlanChanged -> the worker
+    must abort as retry_state_changed (exactly) with changed_task_id set, and
+    phase 2 must not run (no task reset to pending).
+    """
+    _neutralize_stores(monkeypatch)
+    input_dir = worker_dirs["input"]
+    media_a = input_dir / "a.mp4"
+    media_b = input_dir / "b.mp4"
+    media_a.write_bytes(b"a")
+    media_b.write_bytes(b"b")
+
+    a_id = _failed_state(media_a, input_dir, worker_dirs["states"])
+    b_id = _failed_state(media_b, input_dir, worker_dirs["states"])
+
+    argv_tail = _worker_argv(
+        input_dir, worker_dirs["work"], worker_dirs["output"],
+        worker_dirs["models"], model="small", no_translate=True, retry=True,
+    )
+    config = _worker_config(argv_tail)
+    plan = _plan_for(config, worker_dirs["states"])
+    active = {item.task_id for item in plan.tasks}
+    retry_plan = plan_retry_failed_tasks(
+        sorted(worker_dirs["states"].glob("*.state.json")),
+        allowed_task_ids=active,
+    )
+    assert set(retry_plan.selected_task_ids) == {a_id, b_id}
+    expected = retry_fingerprint(plan, retry_plan.selected_task_ids)
+
+    a_path = worker_dirs["states"] / f"{a_id}.state.json"
+    b_path = worker_dirs["states"] / f"{b_id}.state.json"
+    a_snapshot = a_path.read_bytes()
+
+    # Inject drift BETWEEN the worker's plan_retry (frozen capture) and
+    # apply's phase-1 reload: wrap apply so it first flips b to completed,
+    # then runs the real two-phase apply. Phase 1 reloads b (now completed)
+    # -> status != "failed" -> RetryPlanChanged(b_id). The worker must catch
+    # it and abort as retry_state_changed; phase 2 never runs.
+    real_apply = batch_worker.apply_retry_failed_plan
+
+    def apply_that_drifts_b(retry_plan_arg, *, run_id=""):
+        b_loaded = TaskState.load(b_path)
+        b_loaded.status = "completed"
+        b_loaded.stage = "completed"
+        b_loaded.save()
+        return real_apply(retry_plan_arg, run_id=run_id)
+
+    monkeypatch.setattr(batch_worker, "apply_retry_failed_plan", apply_that_drifts_b)
+
+    rc = _run_worker(monkeypatch, argv_tail, expected_plan=expected)
+
+    assert rc == 1
+    record = json.loads(
+        (worker_dirs["work"] / "pipeline_run.json").read_text(encoding="utf-8")
+    )
+    assert record["status"] == "aborted_plan_changed"
+    assert record["abort_reason"] == "retry_state_changed"
+    assert record["changed_task_id"] == b_id
+
+    # Phase 2 never ran -> neither task was reset to pending. a is untouched
+    # (byte-identical, still failed); b holds the injected "completed" state
+    # (not reset by apply).
+    assert TaskState.load(a_path).status == "failed"
+    assert a_path.read_bytes() == a_snapshot
+    assert TaskState.load(b_path).status == "completed"
