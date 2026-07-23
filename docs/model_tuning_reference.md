@@ -2,6 +2,12 @@
 
 检索日期：2026-07-23。
 
+Project evidence SHA reviewed: `8682c150f37d00cfd51788c10008ee56be217115`.
+Installed faster-whisper version reviewed: `1.2.1`.
+Installed CTranslate2 version reviewed: `4.8.1`.
+Qwen3-ASR official repository reviewed from the public default branch on 2026-07-23; no product integration exists in this repository.
+DeepSeek API docs retrieved: 2026-07-23.
+
 本文只整理官方资料和 CineSub Studio 当前源码中的配置映射。它不是参数推荐广告，也不证明任何未经验证的识别率或翻译质量提升。
 
 ## 1. Purpose And Evidence Levels
@@ -11,6 +17,7 @@
 | `Official` | 官方文档、官方仓库源码或模型卡明确说明 |
 | `Implemented` | CineSub Studio 当前代码已经使用 |
 | `Verified` | 已通过本项目自动化或真实媒体测试 |
+| `Proposed` | 建议采用的实验或验证规范，尚未完整落地 |
 | `Experimental` | 可以实验，但没有足够项目证据 |
 | `Future` | 后续路线，目前未接入 |
 | `Rejected` | 已有证据不支持，或风险大于收益 |
@@ -25,19 +32,32 @@
 - 正式 ASR 后端仍是 faster-whisper。三种 ASR 模式是 `auto`、`fixed`、`multilingual`。证据：`src/core/asr_runtime.py`、`src/core/transcribe.py`。
 - v0.7 ASR 质量闭环只允许固定配方 `local-retry-selective-v2`，不向用户暴露 candidate registry 或 candidate ID。证据：`AGENTS.md`、`src/core/asr_runtime.py`、`src/core/asr_retry.py`。
 - Qwen3-ASR、Qwen Forced Aligner、Demucs 不属于当前产品链路。本文只作为 future reference。
-- 翻译侧当前走 OpenAI-compatible 或 Anthropic 协议；内置 Provider 模板优先 DeepSeek。Provider 只保存 API Base、API Key 和模型，不保存 ASR 参数。证据：`src/config/provider_store.py`。
+- 翻译侧当前走 OpenAI-compatible 或 Anthropic 协议；内置 Provider 模板优先 DeepSeek。Provider stores translation-endpoint metadata, protocol, API Base, API Key, translation model, optional quality model and administrative fields; it does not own ASR parameters. 证据：`src/config/provider_store.py`。
 
 ## 3. Configuration Precedence
 
 **Evidence:** Implemented
 
-当前有效配置优先级是：
+当前配置优先级按领域拆分：
 
-1. 显式 CLI/Web 参数；
-2. `quality_preset` 展开值；
-3. Language Profile；
-4. Provider；
-5. 内置默认值。
+ASR quality-loop:
+
+1. Explicit ASR fields;
+2. `quality_preset` expanded values;
+3. Language Profile ASR fields;
+4. defaults.
+
+Translation endpoint:
+
+1. explicit translation fields;
+2. selected Provider;
+3. defaults.
+
+Translation style and terminology:
+
+1. explicit prompt;
+2. Language Profile style/glossary;
+3. defaults.
 
 源码位置：`src/pipeline/pipeline_config.py`、`src/core/transcribe.py`、`src/config/language_profile_store.py`、`src/config/provider_store.py`。
 
@@ -55,12 +75,12 @@
 | `patience` | Whisper decode | Optional patience factor for beam search | Not exposed | Not confirmed | Not mapped | Text, speed | May alter beam search termination | Slower, unclear subtitle benefit | Official, Experimental | Isolated decode A/B | faster-whisper `transcribe.py` |
 | `length_penalty` | Whisper decode | Length penalty during beam search | Not exposed | Not confirmed | Not mapped | Text length | Could test truncation/repetition behavior | Biases length rather than correctness | Official, Experimental | Compare cue text length and omissions | faster-whisper `transcribe.py` |
 | `temperature` | Whisper decode | Sampling temperature or fallback schedule | Not exposed for ASR | Not confirmed | Not mapped | Text, stability | Can test hallucination fallback behavior | Randomness, reproducibility loss | Official, Experimental | Cold-process repeated runs and human review | faster-whisper `transcribe.py` |
-| `compression_ratio_threshold` | Whisper decode | Threshold used to treat overly compressed text as failed/hallucinated | Read from segment diagnostics; not user exposed | faster-whisper default, not confirmed in project | Not mapped | Stability, hallucination detection | Flags repetitive text | Too strict can reject valid dense speech | Official, Implemented, Experimental | Review `asr_review.json` suspicious cues | faster-whisper `transcribe.py` |
-| `log_prob_threshold` | Whisper decode | Low average log probability threshold | Read from segment diagnostics; not user exposed | faster-whisper default, not confirmed in project | Not mapped | Stability | Flags low-confidence cues | Language/domain bias can over-warn | Official, Implemented, Experimental | Compare warnings with human review | faster-whisper `transcribe.py` |
-| `no_speech_threshold` | Whisper decode | Probability threshold for no-speech decisions | Read from segment diagnostics; not user exposed | faster-whisper default, not confirmed in project | Not mapped | Silence handling | Helps find speech/silence mismatch | May miss quiet speech | Official, Implemented, Experimental | VAD uncovered plus human listening | faster-whisper `transcribe.py` |
+| `compression_ratio_threshold` | Whisper decode | Threshold used to treat overly compressed text as failed/hallucinated | Not explicitly passed to faster-whisper. Upstream defaults control decode fallback. CineSub Studio separately records `segment.compression_ratio` and applies its own review threshold. | faster-whisper default, not confirmed in project; project review threshold `2.4` | Not mapped | Stability, hallucination detection | Can trigger upstream fallback; project metric can flag repetitive text for review | Too strict can reject valid dense speech; metric review is not the same as decode fallback | Official, Implemented, Experimental | Review `asr_review.json` suspicious cues and upstream fallback behavior separately | faster-whisper `transcribe.py` |
+| `log_prob_threshold` | Whisper decode | Low average log probability threshold | Not explicitly passed to faster-whisper. Upstream defaults control decode fallback. CineSub Studio separately records `segment.avg_logprob` and applies its own review threshold. | faster-whisper default, not confirmed in project; project review threshold `-1.0` | Not mapped | Stability | Can trigger upstream fallback; project metric can flag low-confidence cues | Language/domain bias can over-warn; metric review is not the same as decode fallback | Official, Implemented, Experimental | Compare warnings with human review and keep decode parameter A/B separate | faster-whisper `transcribe.py` |
+| `no_speech_threshold` | Whisper decode | Probability threshold for no-speech decisions | Not explicitly passed to faster-whisper. Upstream defaults control decode fallback. CineSub Studio separately records `segment.no_speech_prob` and applies its own review threshold. | faster-whisper default, not confirmed in project; project review threshold `0.6` with non-empty text | Not mapped | Silence handling | Can trigger upstream no-speech behavior; project metric can flag speech/silence mismatch | May miss quiet speech; metric review is not the same as decode fallback | Official, Implemented, Experimental | VAD uncovered plus human listening, with decode parameter A/B separate | faster-whisper `transcribe.py` |
 | `condition_on_previous_text` | Whisper decode | Condition current decode on previous output | `AsrDecodeOptions`; default true; retry forces false | `True`; retry recipe false | Not mapped | Text continuity, repetition | Context can improve continuity | Can propagate hallucinations/repetition | Official, Implemented, Experimental | Compare duplicate rate and continuity | faster-whisper `transcribe.py` |
 | `prompt_reset_on_temperature` | Whisper decode | Reset prompt when temperature fallback exceeds threshold | Not exposed | Not confirmed | Not mapped | Text, hallucination control | Future experiment for long hallucinations | Hard to attribute effects | Official, Experimental | One-variable long-form campaign | faster-whisper `transcribe.py` |
-| `initial_prompt` | Whisper decode | Optional prompt prepended to decoding context | Built from `asr_hotword_prompt` and bounded glossary terms | Empty | Not mapped | Text, proper names | May bias names/terms | Overprompting can hallucinate or leak terms | Official, Implemented, Experimental | Name-hit review on frozen clips | faster-whisper `transcribe.py` |
+| `initial_prompt` | Whisper decode | Optional prompt prepended to decoding context | Initial ASR uses only the bounded `asr_hotword_prompt`. Controlled local retry additionally injects glossary `source`, `aliases` and `asr_variants` matched in the target window and nearby cues. | Empty | Not mapped | Text, proper names | May bias names/terms | Overprompting can hallucinate or leak terms | Official, Implemented, Experimental | Name-hit review on frozen clips, separating initial prompt from retry glossary prompt | faster-whisper `transcribe.py` |
 | `hotwords` | faster-whisper | Hotword terms for ASR biasing where supported | Not directly exposed; project uses bounded prompt instead | Not used | Not mapped | Text, proper names | Future short-term experiment | No guarantee of stable improvement | Official, Experimental | Hotword A/B with human target list | faster-whisper `transcribe.py` |
 | `repetition_penalty` | faster-whisper / CTranslate2 | Penalty discouraging repeated tokens | `AsrDecodeOptions`; retry uses `1.05` | `1.0`; retry `1.05` | Not mapped | Text, repetition | May reduce repeated loops | Can suppress legitimate repetition | Official, Implemented, Experimental | Duplicate cue and human review metrics | faster-whisper `transcribe.py` |
 | `no_repeat_ngram_size` | faster-whisper / CTranslate2 | Blocks repeated n-grams of configured size | `AsrDecodeOptions`; retry uses `3` | `0`; retry `3` | Not mapped | Text, repetition | May reduce repeated fragments | Can damage repeated dialogue | Official, Implemented, Experimental | Cue-level regression review | faster-whisper `transcribe.py` |
@@ -106,12 +126,12 @@ Important boundary: resegmentation can improve subtitle readability and cue shap
 
 **Evidence:** Official, Implemented, Experimental
 
-The project uses bounded `initial_prompt` text from `asr_hotword_prompt` and relevant glossary terms. It does not expose an unbounded glossary injection mechanism. Hotword/name experiments must use a fixed term list and human-reviewed target names.
+Initial full-file ASR uses bounded `initial_prompt` text from `asr_hotword_prompt` only. Controlled local retry can additionally inject matching glossary `source`, `aliases` and `asr_variants`, but only when those terms match the target retry window and nearby cues. The project does not expose an unbounded glossary injection mechanism. Hotword/name experiments must use a fixed term list and human-reviewed target names.
 
 | 问题 | 优先检查 | 不建议立即做 |
 | --- | --- | --- |
 | 语言识别错误 | 固定 `language` when known | 盲目增大 `beam_size` |
-| 专名错误 | 短 prompt/hotwords and project glossary | 注入完整 glossary |
+| 专名错误 | 首轮短 prompt；局部 retry 动态术语提示 | 注入完整 glossary |
 | 双语切换 | `multilingual` route and true bilingual samples | 对所有电影默认 multilingual |
 
 ## 8. Decode Failure And Hallucination Controls
@@ -119,6 +139,13 @@ The project uses bounded `initial_prompt` text from `asr_hotword_prompt` and rel
 **Evidence:** Official, Implemented, Experimental
 
 The project records `avg_logprob`, `compression_ratio`, and `no_speech_prob` in ASR review reports and marks suspicious cues. These signals guide review and controlled retry planning, but default presets do not automatically replace text.
+
+Important distinction:
+
+- `compression_ratio_threshold` is not `segment.compression_ratio`.
+- `log_prob_threshold` is not `segment.avg_logprob`.
+- `no_speech_threshold` is not `segment.no_speech_prob`.
+- The threshold parameters are upstream decode/fallback controls; the `segment.*` values are output metrics that CineSub Studio records and reviews with separate project thresholds.
 
 Rejected claims:
 
@@ -197,12 +224,12 @@ Official sources: [DeepSeek Chat Completion API](https://api-docs.deepseek.com/a
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `temperature` | DeepSeek/OpenAI-compatible | Sampling randomness | CLI/Web translation temperature; repair/judge stages often use `0.0` | Initial translation `0.2` | Not ASR preset mapped | Style, variability | Conservative first pass | Higher values can reduce consistency | Official, Implemented, Experimental | Fixed subtitle sample and human review | DeepSeek API |
 | `top_p` | DeepSeek/OpenAI-compatible | Nucleus sampling | Not sent by current code | Not used | Not mapped | Style, variability | Future sampling experiment | Do not vary heavily with temperature | Official, Experimental | One variable at a time | DeepSeek API |
-| `max_tokens` | DeepSeek/OpenAI-compatible | Max generated tokens | OpenAI-compatible call uses `4096`; provider probe uses `256` | `4096` translation request | Not mapped | Truncation, cost | Prevent runaway output | Can truncate batches | Official, Implemented | Check `finish_reason`, missing IDs, batch split | DeepSeek API |
+| `max_tokens` | DeepSeek/OpenAI-compatible | Max generated tokens | Anthropic translation requests send `4096`; OpenAI-compatible translation requests currently omit the field; Provider probe sends `256` | Protocol/path dependent | Not mapped | Truncation, cost | Prevent runaway output | Can truncate batches | Official, Implemented | Check `finish_reason`, missing IDs, batch split | DeepSeek API |
 | `stop` | DeepSeek/OpenAI-compatible | Stop generation on sequences | Not sent | Not used | Not mapped | Output boundaries | Possible future guard | Can cut valid JSON | Official, Experimental | JSON validity tests | DeepSeek API |
-| `response_format` | DeepSeek JSON Output | Requests JSON object output where supported | Not currently sent; project validates JSON text itself | Not used | Not mapped | Structure | Future stricter JSON mode | Still requires validation | Official, Experimental | Schema/id/field validation | DeepSeek JSON Output |
-| JSON Output | DeepSeek | Provider-supported JSON output mode | Project prompts strict JSON and parses/repairs common wrappers | Prompt-based, not API-enforced | Not mapped | Structure | Reduces parsing failures if adopted | Invalid or incomplete JSON still possible | Official, Implemented, Experimental | Existing structured output tests | DeepSeek JSON Output |
+| `response_format` | DeepSeek JSON Output | Requests JSON object output where supported | Not currently sent; API-enforced JSON Output is not implemented | Not used | Not mapped | Structure | Future stricter JSON mode | Still requires validation | Official, Experimental | Schema/id/field validation | DeepSeek JSON Output |
+| Prompt-enforced structured JSON | Project/OpenAI-compatible | Project prompt convention requiring JSON-shaped responses | Project prompts strict JSON and parses/repairs common wrappers; this is not DeepSeek API-enforced JSON Output | Prompt-based, not API-enforced | Not mapped | Structure | Helps structure subtitle batches without provider-specific JSON mode | Invalid or incomplete JSON still possible | Implemented, Experimental | Existing structured output tests plus item/id conservation checks | Project code |
 | `finish_reason` | DeepSeek/OpenAI-compatible | Completion ending reason such as stop/length | Current parser does not enforce it | Not checked | Not mapped | Truncation detection | Future stricter reliability | Ignoring it can miss cutoffs | Official, Experimental | Add tests for length/content_filter | DeepSeek API |
-| thinking / non-thinking mode | DeepSeek models | Reasoning models may expose thinking/non-thinking behavior depending on model/API | Provider template separates Flash/Pro-like roles; no product guarantee | Template defaults in `provider_store.py` | Not mapped | Cost, latency, reasoning | Use Pro for difficult review stages | Expensive, may not improve subtitles | Official, Implemented, Experimental | Fixed translation benchmark | DeepSeek guides |
+| thinking / non-thinking mode | DeepSeek models | Reasoning models may expose thinking/non-thinking behavior depending on model/API | The Provider template selects separate Flash and Pro model IDs. The project does not currently expose or explicitly send DeepSeek thinking-mode controls. | Not implemented | Not mapped | Cost, latency, reasoning | Future controlled experiment for difficult review stages | Expensive, may not improve subtitles; model choice is not a thinking-mode switch | Official, Experimental | Fixed translation benchmark only after explicit control is added | DeepSeek guides |
 | system/user messages | Chat Completions | System sets behavior, user carries task data | Project builds system prompt and user batch payloads | Implemented | Not mapped | Instruction control | Stable constraints | Prompt conflicts and overlong context | Official, Implemented | Prompt regression tests | DeepSeek API |
 | batch item count | Project/OpenAI-compatible | Project-side batch size, not a DeepSeek model parameter | `translation_batch_size` | `20` | Not mapped | Cost, truncation, context | Throughput | Missing IDs, truncation, cross-item bleed | Implemented, Experimental | Batch split tests and human review | Project code |
 | retry and rate limits | Provider/API | 429/5xx handling and retry-after behavior | HTTP 429/5xx bounded retries; preview repair budget | Three attempts for selected errors | Not mapped | Reliability, cost | More robust transient handling | Repeated cost, rate pressure | Implemented | Mock HTTP and real provider smoke | DeepSeek API + project code |
@@ -234,12 +261,12 @@ Conservative guidance:
 - 初译通常使用较低 `temperature`。
 - 文艺润色应作为独立实验，不应默认重译整部电影。
 - 不建议同时大幅调整 `temperature` 与 `top_p`。
-- JSON Output 仍必须校验条目数量、ID、字段和 `finish_reason`。
+- Prompt-enforced structured JSON 仍必须校验条目数量、ID、字段和 `finish_reason`；未来即使启用 API-enforced JSON Output，也仍需做这些项目级校验。
 - LLM 不得修改 SRT 时间戳，也不得自由增删字幕条目。
 
 ## 15. Experiment Rules
 
-**Evidence:** Implemented, Verified
+**Evidence:** ASR campaign contract: Implemented, Verified. Translation experiment contract: Proposed, Experimental.
 
 ASR/translation tuning must follow this contract:
 
@@ -260,7 +287,9 @@ OCR 只能作为弱证据；
 失败结果不得删除。
 ```
 
-ASR should reuse the existing real-media campaign contract. Translation should add fixed subtitle samples, name consistency, omission rate, number preservation, item conservation, source-language residue, manual edit count, model calls, and token cost.
+ASR should reuse the existing real-media campaign contract.
+
+Translation experiments are proposed, not yet fully verified as a project benchmark. They should add fixed subtitle samples, name consistency, omission rate, number preservation, item conservation, source-language residue, manual edit count, model calls, and token cost before making stable quality claims.
 
 ## 16. Verified, Unverified And Rejected Claims
 
