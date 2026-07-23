@@ -989,7 +989,13 @@ def main() -> int:
         try:
             plan = build_pipeline_plan(config, read_only=True)
             findings = collect_local_pipeline_preflight(config, plan)
-            if findings["model_missing"]:
+            # Only abort on a missing model when the worker cannot download it
+            # (local_files_only) or was spawned by a Web preflight that already
+            # verified availability (expected_plan). A direct CLI run with
+            # downloads allowed preserves the prior faster-whisper behavior.
+            if findings["model_missing"] and (
+                bool(expected_plan) or bool(getattr(config, "local_files_only", False))
+            ):
                 _abort_plan_changed(
                     "model_unavailable_after_preflight",
                     expected_plan=expected_plan,

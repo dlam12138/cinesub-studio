@@ -185,7 +185,10 @@ def plan_retry_failed_tasks(
         if allowed_task_ids is not None and task_id not in allowed_task_ids:
             plan.excluded_tasks.append({"task_id": task_id, "reason": "input_not_active"})
             continue
-        state_path = task.state_path()
+        # Freeze the actual file we just read (not the task_id-derived path):
+        # for legacy/migrated states the two can differ, and validating one
+        # path while saving to another would silently target the wrong file.
+        state_path = state_file.resolve()
         plan.selected_tasks.append(task)
         plan.frozen.append(
             FrozenRetryTask(
@@ -207,7 +210,11 @@ def apply_retry_failed_plan(plan: RetryPlan, *, run_id: str = "") -> RetryPlan:
     is not a cross-file ACID transaction (a disk fault in phase 2 can still
     partial-write), but it guarantees no task is modified when validation fails.
     """
-    # Phase 1: validate everything, save nothing.
+    # Phase 1: reload every selected state from disk and validate status +
+    # byte fingerprint. We reload (rather than trust the plan-time objects) so
+    # the state we validate is exactly the state we save in phase 2. Any drift
+    # raises RetryPlanChanged with zero writes.
+    validated: list[tuple[FrozenRetryTask, TaskState]] = []
     for item in plan.frozen:
         current = TaskState.load(item.state_path)
         if (
@@ -216,10 +223,13 @@ def apply_retry_failed_plan(plan: RetryPlan, *, run_id: str = "") -> RetryPlan:
             or state_file_fingerprint(item.state_path) != item.state_fingerprint
         ):
             raise RetryPlanChanged(item.task_id)
-    # Phase 2: mutate only after all validations pass.
-    for task in plan.selected_tasks:
+        validated.append((item, current))
+    # Phase 2: mutate only after all validations pass; save the reloaded
+    # (validated) tasks to their actual on-disk paths (item.state_path), not
+    # the task_id-derived path, so we never validate one file and write another.
+    for item, task in validated:
         if task.status != "failed":
-            raise RetryPlanChanged(task.task_id or task.file)
+            raise RetryPlanChanged(item.task_id)
         task.status = "pending"
         task.stage = TaskStage.PENDING
         task.error = ""
@@ -227,7 +237,9 @@ def apply_retry_failed_plan(plan: RetryPlan, *, run_id: str = "") -> RetryPlan:
         task.error_stage = ""
         task.retry_count = 0
         task.run_id = run_id or task.run_id
-        task.save()
+        task.updated_at = time.time()
+        atomic_write_json(item.state_path, task.to_dict())
+    plan.selected_tasks = [task for _, task in validated]
     return plan
 
 
