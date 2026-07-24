@@ -103,6 +103,45 @@ addition to per-test 100x runs.
   synchronous call; a dedicated regression test probes the handoff window
   for launcher-visible gaps.
 
+## P1 review round: handoff-timeout worker tree termination
+
+The first PR iteration was sent back with one blocking finding: the handoff
+timeout path (`process.terminate()` when no ack arrives) kills only the venv
+launcher on Windows, while the `finally` block releases the launch gate — a
+surviving real interpreter could run concurrently with the next pipeline.
+
+Why the production change was necessary (evidence, per "fix must follow test
+results"):
+
+* Instrumented probes showed the real interpreter **survives launcher
+  terminate in 100% of cases** (verified with `GetExitCodeProcess`, not
+  creation filetime — dead process objects stay queryable while inherited
+  handles linger).
+* The first regression test passed anyway because closing the worker's
+  stdout pipe during thread teardown killed the orphan ~80% of the time
+  (4/5 probe runs; 1/5 survived). Production correctness depended on that
+  coin flip — a real race, so a failure-path-only runtime fix was justified:
+  `windows_terminate_process_tree` (snapshot + BFS + TerminateProcess,
+  descendants first) replaces `process.terminate()` on the handoff-timeout
+  path; `_handoff_timeout` (default 10.0 s) lets the test run the real path
+  quickly.
+
+Why this still does not expand Pipeline behavior:
+
+* The tree kill runs only after the handoff has already failed and the
+  worker is being discarded; success path, lock order, run-record schema
+  and preflight are untouched.
+* The regression test now asserts launcher death AND real-interpreter death
+  via exit-code liveness (bounded waits; immune to lingering-handle
+  artifacts), plus offsets free + next launcher succeeds.
+* Post-fix validation restarted from zero per the no-reuse rule: each
+  targeted test 100/100 (orphan test included), full file 20/20, suites and
+  full pytest pass, no leftover processes.
+
+Lesson logged in `.learnings/` (LRN-20260724-002): a green regression test
+can be masked by a non-deterministic incidental cleanup effect; prove the
+pre-fix hazard with instrumented liveness probes before trusting the pass.
+
 ## Environment subtlety worth remembering
 
 The project `.venv` is created with `tools/python/python.exe -m venv`. On
