@@ -113,8 +113,9 @@ exception path. No lock, flow, or preflight semantics changed.
 
 | Run | Result |
 | --- | --- |
-| initial push run | `<filled>` |
-| manual rerun | `<filled>` |
+| initial push run (30064804234) | **success** (1 m 06 s) |
+| initial PR run (30064882656) | **success** |
+| manual rerun of PR run (30064882656) | **success** |
 
 ## Known risks
 
@@ -128,4 +129,9 @@ exception path. No lock, flow, or preflight semantics changed.
 
 ## Issue #10 closure
 
-`<filled after CI — "Closes #10" only if every gate above is green>`
+All gates green: three targeted tests keep their original names and pass for
+real (100/100 each), no skip/xfail/relaxed assertions, full-file 20/20,
+related suites and full pytest pass, no leftover processes, locks and leases
+release on failure paths, child startup failures are diagnosable, and both
+Windows CI runs (initial + manual rerun) passed. **Issue #10 can be closed
+by PR #12.**
