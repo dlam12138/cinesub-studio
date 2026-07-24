@@ -695,6 +695,7 @@ def run_pipeline_background(
     )
 
     returncode = None
+    process = None
     try:
         process = subprocess.Popen(
             command,
@@ -744,6 +745,13 @@ def run_pipeline_background(
             log.write(f"\n[{action_label}] 异常: {_sanitize_process_summary(exc)}\n")
         with PIPELINE_TASK_LOCK:
             PIPELINE_TASK["error"] = str(exc)
+        # A worker that was spawned but failed the handoff already has a known
+        # exit code (terminate()+wait() ran above); record it so the task
+        # reaches a deterministic terminal state instead of returncode=None.
+        if process is not None:
+            observed = process.poll()
+            if observed is not None:
+                returncode = observed
     finally:
         with PIPELINE_TASK_LOCK:
             PIPELINE_TASK["running"] = False
