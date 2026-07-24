@@ -64,6 +64,46 @@ class ProbeError(AssertionError):
     """Diagnostic failure raised when a child probe misbehaves or times out."""
 
 
+STILL_ACTIVE = 259
+
+
+def process_exit_code(pid: int) -> int | None:
+    """Authoritative process state on Windows.
+
+    Returns ``STILL_ACTIVE`` (259) while the process runs, its exit code
+    once it has exited, and ``None`` when the process object is gone.
+    Unlike ``OpenProcess`` + ``GetProcessTimes`` (creation filetime), this
+    is not fooled by lingering inherited handles that keep a dead process
+    object queryable for a short while after termination.
+    """
+    if os.name != "nt" or not pid:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x1000, False, int(pid))
+    if not handle:
+        return None
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return None
+        return int(code.value)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def process_is_alive(pid: int) -> bool:
+    return process_exit_code(pid) == STILL_ACTIVE
+
+
 def _tail(text: str, limit: int = OUTPUT_LIMIT) -> str:
     text = text or ""
     return ("..." + text[-limit:]) if len(text) > limit else text
@@ -318,6 +358,7 @@ def _run_child(argv: list[str]) -> int:
             "abrupt-exit",
             "fail-import",
             "fail-runtime",
+            "hang-before-lease",
         ],
     )
     parser.add_argument("--lock-path", default="")
@@ -326,6 +367,8 @@ def _run_child(argv: list[str]) -> int:
     parser.add_argument("--ack-path", default="")
     parser.add_argument("--exit-code", type=int, default=0)
     parser.add_argument("--hold-seconds", type=float, default=0.0)
+    parser.add_argument("--pid-file", default="")
+    parser.add_argument("--sentinel", default="")
     args = parser.parse_args(argv)
 
     _emit({"event": "started", "mode": args.mode})
@@ -456,6 +499,24 @@ def _run_child(argv: list[str]) -> int:
             return 3
         _emit({"event": "locked", "offset": args.offset})
         os._exit(args.exit_code)  # no cleanup: the OS must release the lock
+
+    if args.mode == "hang-before-lease":
+        # Simulates a worker stuck before it acquires the lease / writes the
+        # ack (e.g. a slow import under Defender). Reports the *real*
+        # interpreter pid — under a Windows venv this differs from the
+        # parent's Popen.pid, which is the forwarding launcher — then hangs
+        # until the test writes the sentinel file or a bounded deadline
+        # expires, so a missed kill self-cleans instead of leaking forever.
+        # Never touches the lock file and never writes the ack.
+        if args.pid_file:
+            Path(args.pid_file).write_text(str(os.getpid()), encoding="ascii")
+        _emit({"event": "hanging", "reported_pid": os.getpid()})
+        deadline = time.monotonic() + 120.0
+        while time.monotonic() < deadline:
+            if args.sentinel and Path(args.sentinel).exists():
+                return 0
+            time.sleep(0.05)
+        return 4
 
     _emit({"event": "error", "stage": "mode", "message": f"unhandled mode {args.mode}"})
     return 1

@@ -13,7 +13,13 @@ import batch_worker
 import pipeline_reliability
 import pipeline_api
 import pytest
-from _pipeline_process_helper import HELPER_PATH, PipelineProbe, ProbeError, build_probe_env
+from _pipeline_process_helper import (
+    HELPER_PATH,
+    PipelineProbe,
+    ProbeError,
+    build_probe_env,
+    process_is_alive,
+)
 from batch_worker import BatchConfig, BatchPipeline
 from pipeline_reliability import (
     PipelineRunLock,
@@ -332,7 +338,7 @@ def wait_for_background_terminal_state(run_id: str, timeout: float = 20.0) -> di
     )
 
 
-def _start_background_run(monkeypatch, tmp_path: Path, run_id: str, command: list[str]):
+def _start_background_run(monkeypatch, tmp_path: Path, run_id: str, command: list[str], **run_kwargs):
     work_dir = tmp_path / "work"
     lock_path = work_dir / "pipeline_run.lock"
     monkeypatch.setattr(pipeline_api, "WORK_DIR", work_dir)
@@ -355,6 +361,7 @@ def _start_background_run(monkeypatch, tmp_path: Path, run_id: str, command: lis
             "_worker_lease": parent_lease,
             "_run_id": run_id,
             "_plan_fingerprint": "plan",
+            **run_kwargs,
         },
         daemon=True,
     )
@@ -681,6 +688,86 @@ def test_background_worker_fast_exit_before_first_poll_is_observable(monkeypatch
         launch_gate.release()
         parent_lease.release()
     assert _offsets_free(lock_path) == (True, True)
+
+
+def test_handoff_timeout_terminates_real_worker_process(monkeypatch, tmp_path: Path):
+    """A worker stuck before the ack must not survive the handoff timeout.
+
+    The project venv's python.exe is a forwarding launcher: if the server
+    only terminates the launcher, the real interpreter can be orphaned,
+    outlive the launch gate that the finally block releases, and let a
+    concurrent pipeline start while the orphan is still alive.
+    """
+    run_id = "hang-run"
+    pid_file = tmp_path / "worker_pid.txt"
+    sentinel = tmp_path / "worker_sentinel"
+    command = [
+        sys.executable, "-u", str(HELPER_PATH),
+        "--mode", "hang-before-lease",
+        "--pid-file", str(pid_file),
+        "--sentinel", str(sentinel),
+    ]
+    thread, launch_gate, parent_lease, lock_path = _start_background_run(
+        monkeypatch, tmp_path, run_id, command, _handoff_timeout=2.0
+    )
+    try:
+        # The real interpreter must report its pid (under a venv this is the
+        # launcher's child, not the Popen pid) before the timeout fires.
+        pid_deadline = time.monotonic() + 8.0
+        while not pid_file.exists() and time.monotonic() < pid_deadline:
+            time.sleep(0.02)
+        assert pid_file.exists(), "worker did not report its interpreter pid"
+        real_pid = int(pid_file.read_text(encoding="ascii"))
+
+        task = wait_for_background_terminal_state(run_id, timeout=25.0)
+        assert task["running"] is False
+        assert task["returncode"] is not None, (
+            f"handoff timeout must reach a deterministic terminal state, got {task}"
+        )
+        assert "did not acquire" in task["error"]
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+        # The recorded worker (the launcher under a venv) must be gone.
+        # Liveness is checked via the process exit code: OpenProcess +
+        # creation filetime can keep resolving a dead process briefly while
+        # another process still holds an inherited handle to it.
+        record = pipeline_api.read_run_record(pipeline_api.PIPELINE_RUN_RECORD)
+        launcher_pid = int(record.get("worker_pid") or 0)
+        assert launcher_pid > 0
+        launcher_deadline = time.monotonic() + 5.0
+        while process_is_alive(launcher_pid) and time.monotonic() < launcher_deadline:
+            time.sleep(0.05)
+        assert not process_is_alive(launcher_pid), (
+            f"launcher process {launcher_pid} survived the handoff timeout"
+        )
+
+        # The real interpreter must be gone too: no orphan may outlive the
+        # timeout, because the finally block releases the launch gate and a
+        # new pipeline could start while the orphan is still alive.
+        orphan_deadline = time.monotonic() + 10.0
+        while process_is_alive(real_pid) and time.monotonic() < orphan_deadline:
+            time.sleep(0.05)
+        assert not process_is_alive(real_pid), (
+            f"real interpreter {real_pid} survived handoff termination — "
+            "terminating only the venv launcher orphaned it"
+        )
+
+        # Both offsets are free again and a new launcher can proceed.
+        assert _offsets_free(lock_path) == (True, True)
+        launcher = PipelineProbe("--mode", "launcher", "--lock-path", lock_path)
+        try:
+            launcher.wait_for_event("acquired")
+            launcher.wait_for_exit()
+        finally:
+            launcher.cleanup()
+    finally:
+        try:
+            sentinel.write_text("release", encoding="ascii")  # mercy exit
+        except OSError:
+            pass
+        launch_gate.release()
+        parent_lease.release()
 
 
 def test_run_record_is_atomic_and_pid_filetime_matches_current_process(tmp_path: Path):
