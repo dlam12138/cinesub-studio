@@ -166,9 +166,9 @@ fixed with exit-code checks). Both loops were restarted after their fixes.
 | Run | Result |
 | --- | --- |
 | initial iteration (push 30064804234, PR 30064882656, manual rerun) | **success** — superseded by the P1 fix |
-| final iteration push run | `<filled after push>` |
-| final iteration PR run | `<filled after push>` |
-| final iteration manual rerun | `<filled after rerun>` |
+| final iteration push run (30067940112) | **success** |
+| final iteration PR run (30067942071) | **success** |
+| final iteration manual rerun (30067942071) | **success** |
 
 ## Known risks
 
@@ -182,10 +182,10 @@ fixed with exit-code checks). Both loops were restarted after their fixes.
 
 ## Issue #10 closure
 
-Local gates green: three targeted tests keep their original names and pass
-for real (100/100 each), the handoff-timeout path kills launcher *and* real
+All gates green: three targeted tests keep their original names and pass for
+real (100/100 each), the handoff-timeout path kills launcher *and* real
 interpreter deterministically (100/100), no skip/xfail/relaxed assertions,
 full-file 20/20, related suites and full pytest pass, no leftover processes,
-locks and leases release on failure paths, and child startup failures are
-diagnosable. Pending the final Windows CI runs (initial + manual rerun) on
-the P1-fixed code; **once those pass, Issue #10 can be closed by PR #12.**
+locks and leases release on failure paths, child startup failures are
+diagnosable, and the final Windows CI runs on the P1-fixed code (initial +
+manual rerun) passed. **Issue #10 is closed by PR #12.**
