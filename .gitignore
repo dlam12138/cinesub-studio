@@ -1,6 +1,8 @@
 .venv/
 .cache/
 .tmp/
+.tmp-lock-diagnostics/
+.learnings/
 dist/
 release/
 desktop/node_modules/
@@ -90,6 +92,7 @@ ffmpeg/bin/
 # Internal planning, acceptance, research, and design-tool artifacts
 acceptance/*
 !acceptance/v0_7_1_real_media_acceptance.md
+!acceptance/windows_pipeline_lock_lease_stability.md
 !acceptance/reports/
 acceptance/reports/*
 !acceptance/reports/v0_7_1_summary.json

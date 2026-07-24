@@ -28,6 +28,7 @@ from pipeline_reliability import (
     retry_fingerprint,
     sanitize_stem,
     windows_process_creation_filetime,
+    windows_terminate_process_tree,
     write_run_record,
 )
 from stage_event_log import sanitize_event_text
@@ -644,6 +645,7 @@ def run_pipeline_background(
     _worker_lease: PipelineRunLock | None = None,
     _run_id: str = "",
     _plan_fingerprint: str = "",
+    _handoff_timeout: float = 10.0,
 ) -> None:
     subtitle_formats_list = normalize_subtitle_formats(subtitle_formats)
     ass_style_id = ass_style_id or DEFAULT_ASS_STYLE_ID
@@ -695,6 +697,7 @@ def run_pipeline_background(
     )
 
     returncode = None
+    process = None
     try:
         process = subprocess.Popen(
             command,
@@ -716,11 +719,19 @@ def run_pipeline_background(
         if _worker_lease is not None:
             _worker_lease.release()
             _worker_lease = None
-        deadline = time.monotonic() + 10.0
+        deadline = time.monotonic() + _handoff_timeout
         while not handoff_ack.exists() and process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.02)
         if not handoff_ack.exists():
-            process.terminate()
+            # Terminate the whole process tree: on Windows a plain
+            # process.terminate() only kills the venv launcher and can leave
+            # the real interpreter alive, while the finally block below
+            # releases the launch gate — a surviving worker could then run
+            # concurrently with the next pipeline.
+            if os.name == "nt":
+                windows_terminate_process_tree(process.pid)
+            else:
+                process.terminate()
             process.wait(timeout=5)
             raise RuntimeError("worker did not acquire the pipeline lease")
         if _run_lock is not None:
@@ -744,6 +755,13 @@ def run_pipeline_background(
             log.write(f"\n[{action_label}] 异常: {_sanitize_process_summary(exc)}\n")
         with PIPELINE_TASK_LOCK:
             PIPELINE_TASK["error"] = str(exc)
+        # A worker that was spawned but failed the handoff already has a known
+        # exit code (terminate()+wait() ran above); record it so the task
+        # reaches a deterministic terminal state instead of returncode=None.
+        if process is not None:
+            observed = process.poll()
+            if observed is not None:
+                returncode = observed
     finally:
         with PIPELINE_TASK_LOCK:
             PIPELINE_TASK["running"] = False

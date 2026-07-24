@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +13,13 @@ import batch_worker
 import pipeline_reliability
 import pipeline_api
 import pytest
+from _pipeline_process_helper import (
+    HELPER_PATH,
+    PipelineProbe,
+    ProbeError,
+    build_probe_env,
+    process_is_alive,
+)
 from batch_worker import BatchConfig, BatchPipeline
 from pipeline_reliability import (
     PipelineRunLock,
@@ -265,38 +272,123 @@ def test_archive_updates_location_metadata(monkeypatch, tmp_path: Path):
     set_state_root_provider(lambda: batch_worker.DIR_WORK_STATES)
 
 
+# --- Cross-process lock/lease handoff helpers ------------------------------
+#
+# The original versions of the next tests spawned ``python -c`` children that
+# depended on the calling terminal's ambient PYTHONPATH: pytest's
+# ``pythonpath`` ini option only patches the pytest process' sys.path, so in
+# shells without that variable the children died with a ModuleNotFoundError on
+# a stderr pipe nobody drained, and bare ``readline() == "locked"`` asserts
+# reported ``'' == 'locked'`` (Issue #10). CI injects PYTHONPATH in the
+# workflow, which is why the same tests looked green there and flaky locally.
+#
+# PipelineProbe children self-bootstrap their import path and speak an
+# explicit JSON event handshake (started/waiting_for_lease/locked/leased/
+# released/error) with monotonic deadlines — no fixed sleeps decide progress.
+
+
+def _reset_pipeline_task() -> None:
+    with pipeline_api.PIPELINE_TASK_LOCK:
+        pipeline_api.PIPELINE_TASK.update({
+            "running": False,
+            "pid": None,
+            "action": "",
+            "started_at": 0,
+            "finished_at": 0,
+            "returncode": None,
+            "error": "",
+            "run_id": "",
+        })
+
+
+def _offsets_free(lock_path: Path) -> tuple[bool, bool]:
+    """Probe whether both lock offsets are currently free (then free them again)."""
+    results = []
+    held = []
+    for offset in (0, 1):
+        lock = PipelineRunLock(lock_path, offset=offset)
+        acquired = lock.acquire()
+        if acquired:
+            held.append(lock)
+        results.append(acquired)
+    for lock in held:
+        lock.release()
+    return results[0], results[1]
+
+
+def wait_for_background_terminal_state(run_id: str, timeout: float = 20.0) -> dict:
+    """Bounded wait until the background pipeline task reports a terminal state."""
+    deadline = time.monotonic() + timeout
+    last_task: dict = {}
+    while time.monotonic() < deadline:
+        task = pipeline_api.get_pipeline_task()
+        last_task = task
+        if task.get("returncode") is not None:
+            return task
+        time.sleep(0.02)
+    record = pipeline_api.read_run_record(pipeline_api.PIPELINE_RUN_RECORD)
+    gate_free, lease_free = _offsets_free(pipeline_api.PIPELINE_RUN_LOCK)
+    raise AssertionError(
+        f"background pipeline {run_id!r} did not reach a terminal state "
+        f"within {timeout:.1f}s\n"
+        f"  last task: {last_task}\n"
+        f"  pid: {last_task.get('pid')}\n"
+        f"  run record: {record}\n"
+        f"  gate_free: {gate_free} lease_free: {lease_free}"
+    )
+
+
+def _start_background_run(monkeypatch, tmp_path: Path, run_id: str, command: list[str], **run_kwargs):
+    work_dir = tmp_path / "work"
+    lock_path = work_dir / "pipeline_run.lock"
+    monkeypatch.setattr(pipeline_api, "WORK_DIR", work_dir)
+    monkeypatch.setattr(pipeline_api, "PIPELINE_RUN_LOCK", lock_path)
+    monkeypatch.setattr(pipeline_api, "PIPELINE_RUN_RECORD", work_dir / "pipeline_run.json")
+    monkeypatch.setattr(pipeline_api, "PIPELINE_LOG", tmp_path / "logs" / "pipeline.log")
+    monkeypatch.setattr(pipeline_api, "_pipeline_env", build_probe_env)
+    _reset_pipeline_task()
+    launch_gate = PipelineRunLock(lock_path)
+    parent_lease = PipelineRunLock(lock_path, offset=1)
+    assert launch_gate.acquire()
+    assert parent_lease.acquire()
+    thread = threading.Thread(
+        target=pipeline_api.run_pipeline_background,
+        kwargs={
+            "action": "run",
+            "asr_mode": "auto",
+            "_command": command,
+            "_run_lock": launch_gate,
+            "_worker_lease": parent_lease,
+            "_run_id": run_id,
+            "_plan_fingerprint": "plan",
+            **run_kwargs,
+        },
+        daemon=True,
+    )
+    thread.start()
+    return thread, launch_gate, parent_lease, lock_path
+
+
 def test_pipeline_lock_contends_across_real_processes(tmp_path: Path):
     lock_path = (tmp_path / "pipeline_run.lock").resolve()
-    code = (
-        "import sys,time; from pathlib import Path; "
-        "from pipeline_reliability import PipelineRunLock; "
-        "lock=PipelineRunLock(Path(sys.argv[1])); ok=lock.acquire(); "
-        "print('locked' if ok else 'blocked', flush=True); "
-        "time.sleep(float(sys.argv[2])) if ok else None"
-    )
-    child = subprocess.Popen(
-        [sys.executable, "-B", "-c", code, str(lock_path), "2"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
+    holder = PipelineProbe(
+        "--mode", "lock", "--lock-path", lock_path, "--offset", "0"
     )
     try:
-        assert child.stdout is not None
-        assert child.stdout.readline().strip() == "locked"
-        contender = subprocess.run(
-            [sys.executable, "-B", "-c", code, str(lock_path), "0"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=10,
-        )
-        assert contender.stdout.strip() == "blocked"
+        holder.wait_for_event("locked", offset=0)
+        contender = PipelineProbe("--mode", "launcher", "--lock-path", lock_path)
+        try:
+            assert contender.wait_for_event("blocked")["offset"] == 0
+            contender.wait_for_exit()
+        finally:
+            contender.cleanup()
+        holder.release_and_wait()
     finally:
-        child.wait(timeout=10)
-    contender = PipelineRunLock(lock_path)
-    assert contender.acquire() is True
-    contender.release()
+        holder.cleanup()
+    assert holder.proc.poll() == 0
+    contender_lock = PipelineRunLock(lock_path)
+    assert contender_lock.acquire() is True
+    contender_lock.release()
 
 
 def test_worker_lease_handoff_blocks_new_launcher(tmp_path: Path):
@@ -305,84 +397,377 @@ def test_worker_lease_handoff_blocks_new_launcher(tmp_path: Path):
     parent_lease = PipelineRunLock(lock_path, offset=1)
     assert launch_gate.acquire()
     assert parent_lease.acquire()
-    code = (
-        "import sys,time; from pathlib import Path; "
-        "from pipeline_reliability import PipelineRunLock; "
-        "lock=PipelineRunLock(Path(sys.argv[1]),offset=1); "
-        "deadline=time.monotonic()+5; "
-        "ok=False; "
-        "\nwhile time.monotonic()<deadline and not ok:\n"
-        " ok=lock.acquire(); time.sleep(0.02) if not ok else None\n"
-        "print('leased' if ok else 'failed',flush=True); time.sleep(2)"
-    )
-    worker = subprocess.Popen(
-        [sys.executable, "-B", "-c", code, str(lock_path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
+    worker = PipelineProbe(
+        "--mode", "lease-worker", "--lock-path", lock_path, "--offset", "1"
     )
     try:
+        # The child must reach the lease-polling state before the parent
+        # hands the lease over — no fixed sleep guesses that it started.
+        worker.wait_for_event("waiting_for_lease", offset=1)
         parent_lease.release()
-        assert worker.stdout is not None
-        assert worker.stdout.readline().strip() == "leased"
+        worker.wait_for_event("leased", offset=1)
+
+        # While the launch gate is held, a new launcher is rejected at offset 0
+        # even though the parent lease has already moved to the worker.
+        gated_contender = PipelineProbe("--mode", "launcher", "--lock-path", lock_path)
+        try:
+            assert gated_contender.wait_for_event("blocked")["offset"] == 0
+            gated_contender.wait_for_exit()
+        finally:
+            gated_contender.cleanup()
+
         launch_gate.release()
-        contender_gate = PipelineRunLock(lock_path)
-        contender_lease = PipelineRunLock(lock_path, offset=1)
-        assert contender_gate.acquire() is True
-        assert contender_lease.acquire() is False
-        contender_gate.release()
+
+        # With the gate free, a launcher takes offset 0 but must still be
+        # blocked by the worker lease at offset 1 — the two offsets are not
+        # conflated.
+        lease_contender = PipelineProbe("--mode", "launcher", "--lock-path", lock_path)
+        try:
+            assert lease_contender.wait_for_event("blocked")["offset"] == 1
+            lease_contender.wait_for_exit()
+        finally:
+            lease_contender.cleanup()
+
+        worker.release_and_wait()
     finally:
-        worker.wait(timeout=10)
+        worker.cleanup()
         launch_gate.release()
         parent_lease.release()
-    contender = PipelineRunLock(lock_path)
-    assert contender.acquire()
-    contender.release()
+    gate_after = PipelineRunLock(lock_path)
+    lease_after = PipelineRunLock(lock_path, offset=1)
+    assert gate_after.acquire() is True
+    assert lease_after.acquire() is True
+    gate_after.release()
+    lease_after.release()
 
 
 def test_background_runner_completes_explicit_worker_lease_handoff(monkeypatch, tmp_path: Path):
-    work_dir = tmp_path / "work"
-    lock_path = work_dir / "pipeline_run.lock"
-    record_path = work_dir / "pipeline_run.json"
-    log_path = tmp_path / "logs" / "pipeline.log"
-    monkeypatch.setattr(pipeline_api, "WORK_DIR", work_dir)
-    monkeypatch.setattr(pipeline_api, "PIPELINE_RUN_LOCK", lock_path)
-    monkeypatch.setattr(pipeline_api, "PIPELINE_RUN_RECORD", record_path)
-    monkeypatch.setattr(pipeline_api, "PIPELINE_LOG", log_path)
-    monkeypatch.setattr(pipeline_api, "_pipeline_env", lambda: dict(os.environ))
-    launch_gate = PipelineRunLock(lock_path)
-    parent_lease = PipelineRunLock(lock_path, offset=1)
-    assert launch_gate.acquire()
-    assert parent_lease.acquire()
-    code = (
-        "import os,time; from pathlib import Path; "
-        "from pipeline_reliability import PipelineRunLock; "
-        "lease=PipelineRunLock(Path(os.environ['CINESUB_PIPELINE_LOCK_PATH']),offset=1); "
-        "deadline=time.monotonic()+5; ok=False; "
-        "\nwhile time.monotonic()<deadline and not ok:\n"
-        " ok=lease.acquire(); time.sleep(0.02) if not ok else None\n"
-        "assert ok; Path(os.environ['CINESUB_PIPELINE_LOCK_ACK']).write_text('ok'); "
-        "time.sleep(0.2)"
+    run_id = "handoff-run"
+    command = [
+        sys.executable, "-u", str(HELPER_PATH),
+        "--mode", "fake-worker",
+        "--offset", "1",
+        "--hold-seconds", "0.3",
+    ]
+    thread, launch_gate, parent_lease, lock_path = _start_background_run(
+        monkeypatch, tmp_path, run_id, command
     )
-
-    pipeline_api.run_pipeline_background(
-        action="run",
-        asr_mode="auto",
-        _command=[sys.executable, "-B", "-c", code],
-        _run_lock=launch_gate,
-        _worker_lease=parent_lease,
-        _run_id="handoff-run",
-        _plan_fingerprint="plan",
-    )
-
-    assert pipeline_api.get_pipeline_task()["returncode"] == 0
+    try:
+        task = wait_for_background_terminal_state(run_id, timeout=20.0)
+        assert task["returncode"] == 0
+        assert task["running"] is False
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    finally:
+        launch_gate.release()
+        parent_lease.release()
     gate_after = PipelineRunLock(lock_path)
     lease_after = PipelineRunLock(lock_path, offset=1)
     assert gate_after.acquire()
     assert lease_after.acquire()
     gate_after.release()
     lease_after.release()
+
+
+def test_child_startup_failure_is_diagnosable(tmp_path: Path):
+    """A child that dies at import/runtime must surface rc + stderr, not ''."""
+    lock_path = (tmp_path / "pipeline_run.lock").resolve()
+    probe = PipelineProbe("--mode", "fail-import", "--lock-path", lock_path)
+    with pytest.raises(ProbeError) as excinfo:
+        probe.wait_for_event("locked", offset=0, timeout=15.0)
+    message = str(excinfo.value)
+    assert "returncode:" in message  # exit code is surfaced, never hidden
+    assert "ModuleNotFoundError" in message
+    assert "no_such_probe_module_xyz" in message
+    assert "stderr tail:" in message  # child stderr is captured for diagnosis
+    assert probe.proc.poll() not in (None, 0)  # reaped with a failure code
+
+    crash = PipelineProbe("--mode", "fail-runtime", "--lock-path", lock_path)
+    with pytest.raises(ProbeError) as crash_info:
+        crash.wait_for_event("locked", offset=0, timeout=15.0)
+    crash_message = str(crash_info.value)
+    assert "returncode:" in crash_message
+    assert "intentional runtime failure" in crash_message
+    assert crash.proc.poll() not in (None, 0)
+
+
+def test_abrupt_child_exit_releases_lock(tmp_path: Path):
+    """If a lock holder dies without releasing, the OS frees the lock."""
+    lock_path = (tmp_path / "pipeline_run.lock").resolve()
+    probe = PipelineProbe(
+        "--mode", "abrupt-exit",
+        "--lock-path", lock_path, "--offset", "0", "--exit-code", "3",
+    )
+    try:
+        probe.wait_for_event("locked", offset=0)
+        assert probe.wait_for_exit(expected=3) == 3
+        deadline = time.monotonic() + 5.0
+        recheck = PipelineRunLock(lock_path)
+        while not recheck.acquire():
+            if time.monotonic() > deadline:
+                raise AssertionError("lock was not released after abrupt child exit")
+            time.sleep(0.02)
+        recheck.release()
+    finally:
+        probe.cleanup()
+    assert lock_path.exists()  # releasing the lock never deletes the file
+
+
+def test_lease_handoff_has_no_observable_gap(monkeypatch, tmp_path: Path):
+    """No launcher may acquire both offsets at any point during the handoff.
+
+    Phase 1 (spawn -> ack): the parent launch gate (offset 0) must stay held.
+    Phase 2 (ack -> worker hold end): the worker lease (offset 1) must be
+    held. Any successful in-process launcher probe is a regression.
+    """
+    run_id = "gap-run"
+    hold_seconds = 1.5
+    command = [
+        sys.executable, "-u", str(HELPER_PATH),
+        "--mode", "fake-worker",
+        "--offset", "1",
+        "--hold-seconds", str(hold_seconds),
+    ]
+    thread, launch_gate, parent_lease, lock_path = _start_background_run(
+        monkeypatch, tmp_path, run_id, command
+    )
+    work_dir = lock_path.parent
+    ack_path = work_dir / f".pipeline-lock-handoff-{run_id}.ack"
+    launcher_probes = 0
+    failure = None
+    try:
+        # A real subprocess launcher started during the handoff must end up
+        # blocked (at the gate or the lease depending on exact timing).
+        subprocess_launcher = PipelineProbe("--mode", "launcher", "--lock-path", lock_path)
+        start = time.monotonic()
+        acked_at = None
+        deadline = start + 25.0
+        while time.monotonic() < deadline:
+            # Probe exactly like a real launcher: gate first, then lease,
+            # all-or-nothing. The run is safe while every such probe is
+            # blocked by at least one offset — by the parent's launch gate
+            # before the ack, then by the worker's lease. (Probing the gate
+            # alone is NOT a valid invariant: the server may release the gate
+            # a few ms after the ack file appears, while the test has not
+            # observed the ack yet — the worker lease already covers that
+            # instant.)
+            held = []
+            launcher_would_start = True
+            for offset in (0, 1):
+                candidate = PipelineRunLock(lock_path, offset=offset)
+                if candidate.acquire():
+                    held.append(candidate)
+                else:
+                    launcher_would_start = False
+                    break
+            for candidate in held:
+                candidate.release()
+            if launcher_would_start:
+                failure = (
+                    "a launcher acquired both the launch gate (offset 0) and "
+                    "the worker lease (offset 1) during the run — a "
+                    "concurrent pipeline could have started"
+                )
+                break
+            launcher_probes += 1
+            if ack_path.exists():
+                if acked_at is None:
+                    acked_at = time.monotonic()
+                elif time.monotonic() > acked_at + hold_seconds * 0.6:
+                    break
+            time.sleep(0.005)
+        try:
+            assert subprocess_launcher.wait_for_event("blocked")["offset"] in (0, 1)
+            subprocess_launcher.wait_for_exit()
+        finally:
+            subprocess_launcher.cleanup()
+        assert failure is None, failure
+        assert launcher_probes >= 20, (
+            f"too few launcher probes to be meaningful: {launcher_probes}"
+        )
+        task = wait_for_background_terminal_state(run_id, timeout=20.0)
+        assert task["returncode"] == 0
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+        # After completion a new launcher may legitimately proceed.
+        after_completion = PipelineProbe("--mode", "launcher", "--lock-path", lock_path)
+        try:
+            after_completion.wait_for_event("acquired")
+            after_completion.wait_for_exit()
+        finally:
+            after_completion.cleanup()
+    finally:
+        launch_gate.release()
+        parent_lease.release()
+
+
+def test_background_worker_exit_zero_is_observable(monkeypatch, tmp_path: Path):
+    run_id = "exit0-run"
+    command = [
+        sys.executable, "-u", str(HELPER_PATH),
+        "--mode", "fake-worker", "--offset", "1", "--hold-seconds", "0.2",
+    ]
+    thread, launch_gate, parent_lease, lock_path = _start_background_run(
+        monkeypatch, tmp_path, run_id, command
+    )
+    try:
+        task = wait_for_background_terminal_state(run_id, timeout=20.0)
+        assert task["returncode"] == 0
+        assert task["running"] is False
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    finally:
+        launch_gate.release()
+        parent_lease.release()
+    assert _offsets_free(lock_path) == (True, True)
+
+
+def test_background_worker_nonzero_exit_is_observable(monkeypatch, tmp_path: Path):
+    run_id = "exit7-run"
+    command = [
+        sys.executable, "-u", str(HELPER_PATH),
+        "--mode", "fake-worker", "--offset", "1",
+        "--hold-seconds", "0.2", "--exit-code", "7",
+    ]
+    thread, launch_gate, parent_lease, lock_path = _start_background_run(
+        monkeypatch, tmp_path, run_id, command
+    )
+    try:
+        task = wait_for_background_terminal_state(run_id, timeout=20.0)
+        assert task["returncode"] == 7
+        assert task["running"] is False
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    finally:
+        launch_gate.release()
+        parent_lease.release()
+    assert _offsets_free(lock_path) == (True, True)
+
+
+def test_background_worker_startup_failure_is_observable(monkeypatch, tmp_path: Path):
+    run_id = "failstart-run"
+    command = [sys.executable, "-u", str(HELPER_PATH), "--mode", "fail-import"]
+    thread, launch_gate, parent_lease, lock_path = _start_background_run(
+        monkeypatch, tmp_path, run_id, command
+    )
+    try:
+        task = wait_for_background_terminal_state(run_id, timeout=20.0)
+        assert task["running"] is False
+        assert task["returncode"] == 2, (
+            "startup failure must record the observed worker exit code, "
+            f"got task={task}"
+        )
+        assert "did not acquire" in task["error"]
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    finally:
+        launch_gate.release()
+        parent_lease.release()
+    assert _offsets_free(lock_path) == (True, True)
+
+
+def test_background_worker_fast_exit_before_first_poll_is_observable(monkeypatch, tmp_path: Path):
+    run_id = "fastexit-run"
+    command = [
+        sys.executable, "-u", str(HELPER_PATH),
+        "--mode", "fake-worker", "--offset", "1", "--hold-seconds", "0",
+    ]
+    thread, launch_gate, parent_lease, lock_path = _start_background_run(
+        monkeypatch, tmp_path, run_id, command
+    )
+    try:
+        # Deliberately poll late: the worker must already be in a terminal
+        # state, not stuck at returncode=None because the exit was missed.
+        time.sleep(0.8)
+        task = wait_for_background_terminal_state(run_id, timeout=20.0)
+        assert task["returncode"] == 0
+        assert task["running"] is False
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    finally:
+        launch_gate.release()
+        parent_lease.release()
+    assert _offsets_free(lock_path) == (True, True)
+
+
+def test_handoff_timeout_terminates_real_worker_process(monkeypatch, tmp_path: Path):
+    """A worker stuck before the ack must not survive the handoff timeout.
+
+    The project venv's python.exe is a forwarding launcher: if the server
+    only terminates the launcher, the real interpreter can be orphaned,
+    outlive the launch gate that the finally block releases, and let a
+    concurrent pipeline start while the orphan is still alive.
+    """
+    run_id = "hang-run"
+    pid_file = tmp_path / "worker_pid.txt"
+    sentinel = tmp_path / "worker_sentinel"
+    command = [
+        sys.executable, "-u", str(HELPER_PATH),
+        "--mode", "hang-before-lease",
+        "--pid-file", str(pid_file),
+        "--sentinel", str(sentinel),
+    ]
+    thread, launch_gate, parent_lease, lock_path = _start_background_run(
+        monkeypatch, tmp_path, run_id, command, _handoff_timeout=2.0
+    )
+    try:
+        # The real interpreter must report its pid (under a venv this is the
+        # launcher's child, not the Popen pid) before the timeout fires.
+        pid_deadline = time.monotonic() + 8.0
+        while not pid_file.exists() and time.monotonic() < pid_deadline:
+            time.sleep(0.02)
+        assert pid_file.exists(), "worker did not report its interpreter pid"
+        real_pid = int(pid_file.read_text(encoding="ascii"))
+
+        task = wait_for_background_terminal_state(run_id, timeout=25.0)
+        assert task["running"] is False
+        assert task["returncode"] is not None, (
+            f"handoff timeout must reach a deterministic terminal state, got {task}"
+        )
+        assert "did not acquire" in task["error"]
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+        # The recorded worker (the launcher under a venv) must be gone.
+        # Liveness is checked via the process exit code: OpenProcess +
+        # creation filetime can keep resolving a dead process briefly while
+        # another process still holds an inherited handle to it.
+        record = pipeline_api.read_run_record(pipeline_api.PIPELINE_RUN_RECORD)
+        launcher_pid = int(record.get("worker_pid") or 0)
+        assert launcher_pid > 0
+        launcher_deadline = time.monotonic() + 5.0
+        while process_is_alive(launcher_pid) and time.monotonic() < launcher_deadline:
+            time.sleep(0.05)
+        assert not process_is_alive(launcher_pid), (
+            f"launcher process {launcher_pid} survived the handoff timeout"
+        )
+
+        # The real interpreter must be gone too: no orphan may outlive the
+        # timeout, because the finally block releases the launch gate and a
+        # new pipeline could start while the orphan is still alive.
+        orphan_deadline = time.monotonic() + 10.0
+        while process_is_alive(real_pid) and time.monotonic() < orphan_deadline:
+            time.sleep(0.05)
+        assert not process_is_alive(real_pid), (
+            f"real interpreter {real_pid} survived handoff termination — "
+            "terminating only the venv launcher orphaned it"
+        )
+
+        # Both offsets are free again and a new launcher can proceed.
+        assert _offsets_free(lock_path) == (True, True)
+        launcher = PipelineProbe("--mode", "launcher", "--lock-path", lock_path)
+        try:
+            launcher.wait_for_event("acquired")
+            launcher.wait_for_exit()
+        finally:
+            launcher.cleanup()
+    finally:
+        try:
+            sentinel.write_text("release", encoding="ascii")  # mercy exit
+        except OSError:
+            pass
+        launch_gate.release()
+        parent_lease.release()
 
 
 def test_run_record_is_atomic_and_pid_filetime_matches_current_process(tmp_path: Path):

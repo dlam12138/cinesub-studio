@@ -740,3 +740,85 @@ def process_identity_matches(pid: int, creation_filetime: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def windows_terminate_process_tree(pid: int) -> None:
+    """Best-effort kill of a process and all of its descendants (Windows).
+
+    The project venv's ``python.exe`` is a forwarding launcher: terminating
+    only the launcher (``Popen.terminate``) leaves the real interpreter
+    alive. After a handoff timeout the server releases the launch gate, so a
+    surviving worker could run concurrently with the next pipeline. Killing
+    the whole tree closes that window deterministically instead of relying
+    on incidental side effects (e.g. pipe teardown) reaching the child.
+    """
+    if os.name != "nt" or not pid:
+        return
+    from ctypes import wintypes
+
+    class PROCESSENTRY32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_char * 260),
+        ]
+
+    TH32CS_SNAPPROCESS = 0x00000002
+    PROCESS_TERMINATE = 0x0001
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
+    kernel32.Process32First.restype = wintypes.BOOL
+    kernel32.Process32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
+    kernel32.Process32Next.restype = wintypes.BOOL
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, ctypes.c_uint]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    try:
+        snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snapshot or snapshot == INVALID_HANDLE_VALUE:
+            return
+        parents: dict[int, int] = {}
+        try:
+            entry = PROCESSENTRY32()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+            if not kernel32.Process32First(snapshot, ctypes.byref(entry)):
+                return
+            while True:
+                parents[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+                if not kernel32.Process32Next(snapshot, ctypes.byref(entry)):
+                    break
+        finally:
+            kernel32.CloseHandle(snapshot)
+
+        targets = [int(pid)]
+        index = 0
+        while index < len(targets):
+            current = targets[index]
+            index += 1
+            for child, parent in parents.items():
+                if parent == current and child not in targets:
+                    targets.append(child)
+        # Kill descendants before the root so grandchildren cannot be
+        # reparented away before the walk reaches them.
+        for target in reversed(targets):
+            handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, target)
+            if handle:
+                kernel32.TerminateProcess(handle, 1)
+                kernel32.CloseHandle(handle)
+    except OSError:
+        pass
