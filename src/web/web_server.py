@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -63,6 +64,7 @@ from asr_model_api import (
     missing_model_payload,
     start_model_download,
 )
+from stage_event_log import sanitize_event_text
 
 
 PATHS = resolve_runtime_paths()
@@ -811,7 +813,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(job, status=201)
 
     def _log_request(self) -> None:
-        print(f"[web] {self.command} {self.path}", flush=True)
+        # The request line may carry absolute paths in the query string
+        # (e.g. /api/pipeline/scan?input_dir=D:\...\movies); decode and redact
+        # before printing so no absolute path reaches the console/log sink.
+        print(
+            f"[web] {self.command} {sanitize_event_text(unquote(self.path))}",
+            flush=True,
+        )
 
     def _authorize_request(self) -> bool:
         failure = validate_request(self)
@@ -836,9 +844,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error_json(400, str(exc), code="invalid_json")
             return
 
-        traceback.print_exc()
+        # Redact absolute paths and secret-shaped text from the server-side
+        # traceback so a message echoing user input or filesystem paths never
+        # reaches the log, and return a generic message to the client instead
+        # of echoing str(exc).
+        print(sanitize_event_text(traceback.format_exc()), file=sys.stderr, flush=True)
         try:
-            self.send_error_json(500, f"Server error: {exc}")
+            self.send_error_json(500, "Internal server error.", code="server_error")
         except Exception:
             pass
 
@@ -854,6 +866,10 @@ class Handler(BaseHTTPRequestHandler):
             return redacted
         if isinstance(obj, list):
             return [self._redact_payload(item) for item in obj]
+        if isinstance(obj, str):
+            # Absolute paths in non-secret values (e.g. input_dir, media paths)
+            # would otherwise reach the console payload log verbatim.
+            return sanitize_event_text(obj)
         return obj
 
     def _read_json_body(self) -> dict | None:
