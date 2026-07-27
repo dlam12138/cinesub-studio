@@ -1,13 +1,13 @@
-scenario_id,scenario,evidence,result
-S1,"Real cold run large-v3 CUDA float16 no translation","completed in 49.01s; source_srt_sha256=c7a21bb5b61402264e75a0ceef9832d8c106eff26b542b221636c7353a231602; language_report_sha256=99b75aedec83811a40a26517b02e4fb154a708764d07c2dd2af08495997a210a",pass
-S2,"Same config rerun skips completed task","completed=0 skipped=1 elapsed=0.43s",pass
-S3,"Same-stem collision single run two tasks","output stems movie-c50ccea6b556 and movie-cf82e425ac4e; both completed",pass
-S4,"Stage reuse and signature matrix","tests/test_pipeline_offline_e2e.py: 13 passed",pass
-S5,"Translation failure retry variants","offline retry plus full reliability suite passed",pass
-S6,"Unowned output collision and legacy state safety","tests/test_pipeline_longform_reliability.py: 31 passed",pass
-S7,"Service restart live worker recognition","longform reliability suite passed service restart coverage",pass
-S8,"Stale run record after crash","longform reliability suite passed stale record coverage",pass
-S9,"Global run lock and worker lease contention","longform reliability suite passed cross-process lock coverage",pass
-S10,"Retry failed scope and zero-write validation","tests/test_pipeline_preflight_consistency.py: 14 passed",pass
-S11,"Archive identity preservation","longform reliability suite passed archive metadata coverage",pass
-S12,"Completed archive output contract","automated coverage passed; no real translated archive run in this pass",conditional
+scenario_id,evidence_type,result,summary
+S1,real_media_live,pass,"Two read-only plans returned 200; stable classification; metadata snapshots unchanged; no persistent side effects"
+S2,real_media_live,fail,"ASR and local translation completed; quality checking failed with OSError 22; no finalization or archive; run record not completed"
+S3,real_media_live,not_run,"Strict stop after S7 release-blocker failure"
+S4,permanent_automated,pass,"Stage reuse and signature coverage passed in the 61-test targeted suite"
+S5,permanent_automated,pass,"Translation failure and retry coverage passed"
+S6,permanent_automated,pass,"Collision and legacy-state safety coverage passed"
+S7,real_media_live,fail,"Worker survived Web restart and retained identity and lease, then invalid inherited stdio caused quality-stage failure and a non-terminal run record"
+S8,permanent_automated,pass,"Stale/dead worker automated coverage passed; live run exposed a remaining exited-process recognition gap"
+S9,permanent_automated,pass,"Global run lock and worker lease coverage passed"
+S10,permanent_automated,pass,"Retry-failed scope and preflight consistency coverage passed"
+S11,permanent_automated,pass,"Archive identity automated coverage passed"
+S12,permanent_automated,pass,"Completed archive/output automated coverage passed; live S2 did not reach this stage"
