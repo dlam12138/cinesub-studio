@@ -73,3 +73,19 @@ campaign, bump the version, build release archives, or create tags.
 - After fixes, rerun S1, S2, S3, and S7 with a fresh isolated private input.
 - Do not begin Stage 3, Release Prep, versioning, packaging, or tagging before
   that rerun passes.
+
+## Evidence Cleanup
+
+- Review confirmed that this branch records a failed acceptance result rather
+  than a Stage 2 pass.
+- Removed the superseded pre-rerun `Conditional Pass` progress note and two
+  push-only operation notes.
+- Revalidated that the Markdown, JSON, and CSV reports agree on S1 pass,
+  S2 fail, S3 not run, S7 fail, and a release blocker.
+- JSON and CSV parsing, `git diff --check`, allowlist inspection, and the
+  public privacy scan passed with no forbidden-data hits.
+- Created the cleanup commit and attempted to push it twice; both attempts
+  failed at the GitHub network boundary (connection reset, then port 443
+  timeout). No repeated push loop was started.
+- No production code, release artifact, version, tag, Stage 3 work, or Release
+  Prep work was changed by this cleanup.
