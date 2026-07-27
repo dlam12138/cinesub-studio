@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "acceptance": "v0.7.1-stage2-pipeline-longform",
+  "date": "2026-07-27",
+  "branch": "codex/pipeline-longform-acceptance",
+  "baseline_sha": "252f75c7bea15070fd8a644694c0dd74ce3ade66",
+  "result": "conditional_pass",
+  "pre_freeze_prs": [
+    {"number": 13, "title": "security: redact pipeline web paths"},
+    {"number": 14, "title": "fix: bind pipeline signatures to effective output knobs"},
+    {"number": 15, "title": "security: expose only public pipeline plan fingerprints"}
+  ],
+  "runtime": {
+    "device": "cuda",
+    "compute_type": "float16",
+    "model": "Systran/faster-whisper-large-v3",
+    "model_local_files_only": true,
+    "web_home_status": 200,
+    "web_runtime_diagnostics_status": 200
+  },
+  "real_media": {
+    "scenario_count": 3,
+    "sample_label": "private-sample-02",
+    "s1_elapsed_seconds": 49.01,
+    "s2_elapsed_seconds": 0.43,
+    "s3_elapsed_seconds": 84.26,
+    "source_srt_sha256": "c7a21bb5b61402264e75a0ceef9832d8c106eff26b542b221636c7353a231602",
+    "language_report_sha256": "99b75aedec83811a40a26517b02e4fb154a708764d07c2dd2af08495997a210a"
+  },
+  "tests": {
+    "full_pytest": "pass",
+    "pipeline_longform_reliability": "31 passed",
+    "pipeline_preflight_consistency": "14 passed",
+    "pipeline_offline_e2e_and_privacy_canary": "16 passed",
+    "subtitle_translate_self_test": "pass",
+    "quality_checker_self_test": "pass",
+    "web_smoke": "pass",
+    "node_checks": "pass",
+    "git_diff_check": "pass"
+  },
+  "deepseek_smoke": {
+    "result": "pass",
+    "model": "deepseek-v4-flash",
+    "has_content": true,
+    "choice_count": 1
+  },
+  "privacy": {
+    "public_report_contains_private_paths": false,
+    "public_report_contains_transcript": false,
+    "public_report_contains_secret": false
+  }
+}

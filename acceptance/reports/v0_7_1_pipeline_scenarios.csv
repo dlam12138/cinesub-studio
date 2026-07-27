@@ -1,0 +1,13 @@
+scenario_id,scenario,evidence,result
+S1,"Real cold run large-v3 CUDA float16 no translation","completed in 49.01s; source_srt_sha256=c7a21bb5b61402264e75a0ceef9832d8c106eff26b542b221636c7353a231602; language_report_sha256=99b75aedec83811a40a26517b02e4fb154a708764d07c2dd2af08495997a210a",pass
+S2,"Same config rerun skips completed task","completed=0 skipped=1 elapsed=0.43s",pass
+S3,"Same-stem collision single run two tasks","output stems movie-c50ccea6b556 and movie-cf82e425ac4e; both completed",pass
+S4,"Stage reuse and signature matrix","tests/test_pipeline_offline_e2e.py: 13 passed",pass
+S5,"Translation failure retry variants","offline retry plus full reliability suite passed",pass
+S6,"Unowned output collision and legacy state safety","tests/test_pipeline_longform_reliability.py: 31 passed",pass
+S7,"Service restart live worker recognition","longform reliability suite passed service restart coverage",pass
+S8,"Stale run record after crash","longform reliability suite passed stale record coverage",pass
+S9,"Global run lock and worker lease contention","longform reliability suite passed cross-process lock coverage",pass
+S10,"Retry failed scope and zero-write validation","tests/test_pipeline_preflight_consistency.py: 14 passed",pass
+S11,"Archive identity preservation","longform reliability suite passed archive metadata coverage",pass
+S12,"Completed archive output contract","automated coverage passed; no real translated archive run in this pass",conditional
