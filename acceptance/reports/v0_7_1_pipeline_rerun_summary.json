@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "acceptance": "v0.7.1-stage2-pipeline-longform-post-fix",
+  "date": "2026-07-27",
+  "branch": "codex/stage2-worker-lifecycle-fix",
+  "runtime_commit": "adbf687",
+  "final_fix_commit": "b090b8a",
+  "initial_stage_2_result": "fail_release_blocker",
+  "post_fix_real_media_result": "pass",
+  "stage_2_result": "fail_quality_gate_blocker",
+  "release_blocker": true,
+  "allows_stage_3": false,
+  "allows_release_prep": false,
+  "sample": {
+    "sample_id": "sample-long-02",
+    "duration_minutes": 45.1,
+    "container": "mkv",
+    "source_hash_prefix": "f296414a2968"
+  },
+  "runtime": {
+    "model": "large-v3",
+    "device": "cuda",
+    "compute_type": "float16",
+    "local_files_only": true,
+    "provider": "current_configured_provider"
+  },
+  "real_media_live": {
+    "S1": {
+      "result": "pass",
+      "plan_http_status": 200,
+      "blocker_count": 0,
+      "state_and_output_unchanged": true,
+      "worker_started": false
+    },
+    "S2": {
+      "result": "pass",
+      "independent_longform_run": true,
+      "asr_completed": true,
+      "translation_completed": true,
+      "quality_completed": true,
+      "final_outputs_valid": true,
+      "input_archived": true,
+      "task_completed": true,
+      "run_record_status": "completed",
+      "finished_at_present": true,
+      "worker_returncode": 0,
+      "invalid_handle_error_observed": false
+    },
+    "S3": {
+      "result": "pass",
+      "input_count": 2,
+      "duration_seconds_each": 45,
+      "unique_task_id_count": 2,
+      "unique_output_stem_count": 2,
+      "cross_task_output_collision": false,
+      "tasks_completed": true,
+      "run_record_status": "completed"
+    },
+    "S7": {
+      "result": "pass",
+      "independent_longform_run": true,
+      "web_killed_during_asr": true,
+      "worker_survived": true,
+      "worker_creation_filetime_preserved": true,
+      "worker_lease_preserved": true,
+      "worker_logs_grew_after_web_exit": true,
+      "restarted_web_recognized_worker": true,
+      "duplicate_run_http_status": 409,
+      "duplicate_run_code": "pipeline_busy",
+      "second_worker_started": false,
+      "all_stages_completed": true,
+      "task_completed": true,
+      "run_record_status": "completed",
+      "finished_at_present": true,
+      "worker_returncode": 0,
+      "invalid_handle_error_observed": false
+    }
+  },
+  "automated_evidence": {
+    "targeted_tests": {
+      "passed": 55,
+      "failed": 0
+    },
+    "full_pytest": {
+      "passed": 526,
+      "failed": 0
+    },
+    "self_tests": "pass",
+    "web_smoke": "pass",
+    "git_diff_check": "pass",
+    "ruff_current_findings": 182,
+    "ruff_parent_findings": 182,
+    "ruff_result": "fail_pre_existing_baseline"
+  },
+  "privacy": {
+    "contains_source_path": false,
+    "contains_real_filename": false,
+    "contains_username": false,
+    "contains_complete_source_hash": false,
+    "contains_subtitle_text": false,
+    "contains_prompt_or_request_content": false,
+    "contains_secret_or_authorization_header": false
+  }
+}

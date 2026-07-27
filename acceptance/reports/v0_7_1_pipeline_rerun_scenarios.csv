@@ -1,0 +1,7 @@
+scenario_id,evidence_type,result,summary
+S1,real_media_live,pass,"Read-only plan returned 200 without blockers; state and output fingerprints unchanged; no Worker started"
+S2,real_media_live,pass,"Independent longform run completed ASR, translation, quality, outputs, report, and archive; task and run record completed; return code 0"
+S3,real_media_live,pass,"Two same-stem inputs had distinct task identities, output stems, outputs, and completed states without collision"
+S7,real_media_live,pass,"Worker survived Web termination with identity and lease preserved; restarted Web recovered it; duplicate run rejected; original run completed"
+AUTOMATED,targeted_and_full,pass,"55 targeted tests and 526 full-suite tests passed; smoke, imports, syntax, self-tests, and diff check passed"
+RUFF,quality_gate,fail,"Repository-wide ruff has 182 findings, identical in count to the parent commit baseline"
