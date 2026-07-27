@@ -61,6 +61,7 @@ campaign, bump the version, build release archives, or create tags.
 - Web smoke, Electron JavaScript syntax checks, and `git diff --check`: passed.
 - Privacy audit found no real source path, filename, complete source hash,
   transcript, prompt, secret, or token in the public reports.
+- The evidence content commit is `90eaccb`.
 
 ## Unresolved And Next
 

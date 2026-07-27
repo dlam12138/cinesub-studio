@@ -5,7 +5,7 @@
   "branch": "codex/pipeline-longform-acceptance",
   "runtime_base": "252f75c",
   "acceptance_start_commit": "6f87b90",
-  "evidence_commit": "pending",
+  "evidence_commit": "90eaccb",
   "result": "fail_release_blocker",
   "release_blocker": true,
   "allows_stage_3": false,

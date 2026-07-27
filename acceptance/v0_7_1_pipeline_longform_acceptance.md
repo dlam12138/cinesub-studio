@@ -4,7 +4,7 @@
 - Branch: `codex/pipeline-longform-acceptance`
 - Runtime base: `252f75c`
 - Acceptance start commit: `6f87b90`
-- Evidence commit: pending
+- Evidence commit: `90eaccb`
 - Result: **Fail - release blocker**
 - Allows Stage 3: **No**
 - Allows Release Prep: **No**
