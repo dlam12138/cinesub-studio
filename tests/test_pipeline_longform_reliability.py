@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -367,6 +369,140 @@ def _start_background_run(monkeypatch, tmp_path: Path, run_id: str, command: lis
     )
     thread.start()
     return thread, launch_gate, parent_lease, lock_path
+
+
+def test_spawn_pipeline_worker_detaches_stdio_into_run_scoped_logs(tmp_path: Path):
+    sentinel = tmp_path / "release"
+    sentinel.write_text("go", encoding="ascii")
+    command = [
+        sys.executable,
+        "-u",
+        str(HELPER_PATH),
+        "--mode",
+        "detached-worker",
+        "--sentinel",
+        str(sentinel),
+    ]
+
+    process, stdout_path, stderr_path = pipeline_api.spawn_pipeline_worker(
+        command,
+        env=build_probe_env(),
+        run_id="stdio-run",
+        work_dir=tmp_path / "work",
+        cwd=Path(__file__).resolve().parents[1],
+    )
+
+    assert process.wait(timeout=15) == 0
+    assert stdout_path == tmp_path / "work" / "runs" / "stdio-run" / "worker.stdout.log"
+    assert stderr_path == tmp_path / "work" / "runs" / "stdio-run" / "worker.stderr.log"
+    stdout = stdout_path.read_text(encoding="utf-8")
+    stderr = stderr_path.read_text(encoding="utf-8")
+    assert '"stdin_eof": true' in stdout
+    assert "worker_after" in stdout
+    assert "worker stderr after" in stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows parent/worker handle lifecycle")
+def test_worker_continues_writing_after_spawning_parent_is_terminated(tmp_path: Path):
+    parent_pid_file = tmp_path / "parent.pid"
+    child_pid_file = tmp_path / "child.pid"
+    sentinel = tmp_path / "release"
+    result_file = tmp_path / "result.json"
+    work_dir = tmp_path / "work"
+    parent = PipelineProbe(
+        "--mode",
+        "spawn-worker-parent",
+        "--pid-file",
+        parent_pid_file,
+        "--child-pid-file",
+        child_pid_file,
+        "--sentinel",
+        sentinel,
+        "--result-file",
+        result_file,
+        "--work-dir",
+        work_dir,
+        "--run-id",
+        "parent-exit-run",
+    )
+    try:
+        event = parent.wait_for_event("spawned", timeout=20.0)
+        parent_pid = int(event["parent_pid"])
+        subprocess.run(
+            ["taskkill", "/F", "/PID", str(parent_pid)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        sentinel.write_text("continue", encoding="ascii")
+        deadline = time.monotonic() + 20.0
+        while not result_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert result_file.exists(), "worker did not finish after parent termination"
+        assert json.loads(result_file.read_text(encoding="utf-8"))["status"] == "completed"
+        run_dir = work_dir / "runs" / "parent-exit-run"
+        assert "worker_after" in (run_dir / "worker.stdout.log").read_text(encoding="utf-8")
+        assert "worker stderr after" in (run_dir / "worker.stderr.log").read_text(encoding="utf-8")
+    finally:
+        parent.cleanup()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows exited process object semantics")
+def test_process_identity_rejects_exited_process_with_queryable_filetime():
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    creation_filetime = windows_process_creation_filetime(process.pid)
+    assert creation_filetime
+    assert process.wait(timeout=10) == 0
+    assert not process_identity_matches(process.pid, creation_filetime)
+
+
+@pytest.mark.parametrize(
+    "status", ["completed", "failed", "stale", "aborted_plan_changed"]
+)
+def test_worker_terminal_guard_preserves_existing_terminal_records(
+    tmp_path: Path, status: str
+):
+    record_path = tmp_path / "pipeline_run.json"
+    original = write_run_record(record_path, {
+        "run_id": "terminal-run",
+        "status": status,
+        "finished_at": 123.0,
+        "marker": "keep",
+    })
+
+    batch_worker._ensure_run_record_terminal(
+        record_path,
+        run_id="terminal-run",
+        error=OSError(22, "private details"),
+        returncode=1,
+    )
+
+    assert json.loads(record_path.read_text(encoding="utf-8")) == original
+
+
+def test_detached_worker_stream_sanitizes_and_survives_closed_output():
+    raw = io.StringIO()
+    stream = batch_worker._SanitizedWorkerStream(raw)
+    stream.write(
+        "api-key=sk-secret\n"
+        "prompt: private instructions\n"
+        "transcript: private dialogue\n"
+        "path D:\\private\\movie.mkv\n"
+    )
+    cleaned = raw.getvalue()
+    for forbidden in (
+        "sk-secret",
+        "private instructions",
+        "private dialogue",
+        r"D:\private\movie.mkv",
+    ):
+        assert forbidden not in cleaned
+    assert "[redacted]" in cleaned
+    assert "[project-path]" in cleaned
+
+    raw.close()
+    assert stream.write("after close") == len("after close")
+    stream.flush()
 
 
 def test_pipeline_lock_contends_across_real_processes(tmp_path: Path):

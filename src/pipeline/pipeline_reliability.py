@@ -769,12 +769,49 @@ def windows_process_creation_filetime(pid: int) -> int:
         kernel32.CloseHandle(handle)
 
 
+def windows_process_exit_code(pid: int) -> int | None:
+    """Return the Windows process exit code, or ``None`` if it cannot be queried."""
+    if os.name != "nt" or not pid:
+        return None
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x1000, False, int(pid))
+    if not handle:
+        return None
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return None
+        return int(code.value)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+WINDOWS_STILL_ACTIVE = 259
+
+
 def process_identity_matches(pid: int, creation_filetime: int) -> bool:
     if not pid:
         return False
     if os.name == "nt":
         observed = windows_process_creation_filetime(pid)
-        return bool(observed and creation_filetime and observed == creation_filetime)
+        exit_code = windows_process_exit_code(pid)
+        return bool(
+            observed
+            and creation_filetime
+            and observed == creation_filetime
+            and exit_code == WINDOWS_STILL_ACTIVE
+        )
     try:
         os.kill(pid, 0)
         return True
