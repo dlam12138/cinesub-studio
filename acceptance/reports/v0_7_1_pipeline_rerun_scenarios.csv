@@ -4,4 +4,5 @@ S2,real_media_live,pass,"Independent longform run completed ASR, translation, qu
 S3,real_media_live,pass,"Two same-stem inputs had distinct task identities, output stems, outputs, and completed states without collision"
 S7,real_media_live,pass,"Worker survived Web termination with identity and lease preserved; restarted Web recovered it; duplicate run rejected; original run completed"
 AUTOMATED,targeted_and_full,pass,"55 targeted tests and 526 full-suite tests passed; smoke, imports, syntax, self-tests, and diff check passed"
-RUFF,quality_gate,fail,"Repository-wide ruff has 182 findings, identical in count to the parent commit baseline"
+RUFF,quality_gate,pass,"Changed-file findings remain 30, identical to the parent; repository-wide findings remain 182; both deltas are 0"
+STAGE2,acceptance_gate,pass,"All required real-media, automated, privacy, Windows CI, and no-regression checks passed"

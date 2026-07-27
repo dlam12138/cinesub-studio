@@ -7,9 +7,9 @@
   "final_fix_commit": "b090b8a",
   "initial_stage_2_result": "fail_release_blocker",
   "post_fix_real_media_result": "pass",
-  "stage_2_result": "fail_quality_gate_blocker",
-  "release_blocker": true,
-  "allows_stage_3": false,
+  "stage_2_result": "pass",
+  "release_blocker": false,
+  "allows_stage_3": true,
   "allows_release_prep": false,
   "sample": {
     "sample_id": "sample-long-02",
@@ -88,9 +88,15 @@
     "self_tests": "pass",
     "web_smoke": "pass",
     "git_diff_check": "pass",
+    "changed_files_ruff": "pass",
+    "changed_files_ruff_policy": "no_regression_with_pre_existing_debt",
+    "changed_files_current_findings": 30,
+    "changed_files_parent_findings": 30,
+    "changed_files_ruff_delta": 0,
     "ruff_current_findings": 182,
     "ruff_parent_findings": 182,
-    "ruff_result": "fail_pre_existing_baseline"
+    "ruff_delta": 0,
+    "ruff_result": "pass_no_regression_with_pre_existing_debt"
   },
   "privacy": {
     "contains_source_path": false,

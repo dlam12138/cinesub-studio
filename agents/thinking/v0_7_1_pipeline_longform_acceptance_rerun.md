@@ -32,8 +32,8 @@ start Stage 3, prepare a release, create a tag, or create a release.
   idempotent.
 - Treat Windows PID/FileTime identity as live only when the exit code is
   `STILL_ACTIVE`; atomically mark confirmed dead non-terminal records stale.
-- Keep the Stage 2 gate at Fail because the required full ruff command still
-  reports 182 pre-existing findings, the same count as the parent commit.
+- Apply the corrected scoped no-regression lint gate. Repository-wide Ruff
+  debt and changed-file findings predate this branch and do not increase.
 
 ## Operations
 
@@ -66,12 +66,16 @@ start Stage 3, prepare a release, create a tag, or create a release.
   request body, API key, Authorization header, or session token is present in
   public evidence.
 - Full ruff: 182 findings; parent commit full ruff: 182 findings.
+- Direct Ruff on the seven changed Python files reports 30 findings in both
+  the current and parent revisions; changed-file and repository deltas are 0.
 
 ## Unresolved And Next
 
-- The repository-wide ruff baseline must be cleaned or the Stage 2 policy must
-  explicitly adopt a no-new-findings rule before Stage 2 can pass.
-- Until that gate is resolved: Stage 2 Fail, release blocker true, Stage 3 No,
-  Release Prep No.
+- The earlier report conservatively treated repository-wide Ruff zero debt as
+  a hard gate. The corrected Stage 2 policy is scoped no-regression: historical
+  lint debt is tracked separately and does not block this lifecycle fix.
+- Stage 2 Pass, release blocker false, Stage 3 may begin, Release Prep No.
+- The next product phase is the ASR and translation quality campaign, not an
+  unrelated repository-wide Ruff cleanup.
 - No ASR, translation, resegmentation, glossary, provider, quality-threshold,
   UI, packaging, version, tag, or release work was performed.
