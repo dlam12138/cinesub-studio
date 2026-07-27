@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -185,8 +186,9 @@ def test_t1_plan_run_retry_share_effective_config_hash_and_paths(monkeypatch, tm
     parsed = web_server.parse_pipeline_request_payload(body)
 
     plan_result = pipeline_api.plan_pipeline(**parsed)
-    h_plan = plan_result["effective_config_hash"]
-    assert h_plan
+    h_plan_prefix = plan_result["effective_config_hash_prefix"]
+    assert re.fullmatch(r"[0-9a-f]{8}", h_plan_prefix)
+    assert "effective_config_hash" not in plan_result
 
     config_run, _ = pipeline_api.resolve_pipeline_request_config(action="run", **parsed)
     config_retry, _ = pipeline_api.resolve_pipeline_request_config(
@@ -195,8 +197,10 @@ def test_t1_plan_run_retry_share_effective_config_hash_and_paths(monkeypatch, tm
     h_run = _plan_for(config_run, states).effective_config_hash
     h_retry = _plan_for(config_retry, states).effective_config_hash
 
-    # All three actions resolve the same effective config -> same hash.
-    assert h_plan == h_run == h_retry
+    # Public plan responses expose only a short prefix; the internal run and
+    # retry paths retain the full hash used for worker validation.
+    assert h_plan_prefix == h_run[:8] == h_retry[:8]
+    assert h_run == h_retry
     # action only selects the --run/--retry-failed flag; paths are action-independent.
     assert config_run.input_dir == config_retry.input_dir
     assert config_run.output_dir == config_retry.output_dir
@@ -250,21 +254,23 @@ def test_t3_config_param_change_alters_hash_and_keeps_parity(monkeypatch, tmp_pa
     def hashes_for(model):
         body = {"input_dir": str(input_dir), "model": model, "translate_enabled": False}
         parsed = web_server.parse_pipeline_request_payload(body)
-        h_plan = pipeline_api.plan_pipeline(**parsed)["effective_config_hash"]
+        h_plan_prefix = pipeline_api.plan_pipeline(**parsed)["effective_config_hash_prefix"]
         c_run, _ = pipeline_api.resolve_pipeline_request_config(action="run", **parsed)
         c_retry, _ = pipeline_api.resolve_pipeline_request_config(
             action="retry-failed", **parsed
         )
         h_run = _plan_for(c_run, states).effective_config_hash
         h_retry = _plan_for(c_retry, states).effective_config_hash
-        return h_plan, h_run, h_retry
+        return h_plan_prefix, h_run, h_retry
 
     small_plan, small_run, small_retry = hashes_for("small")
     large_plan, large_run, large_retry = hashes_for("large-v3")
 
     # Each action set stays internally consistent.
-    assert small_plan == small_run == small_retry
-    assert large_plan == large_run == large_retry
+    assert small_plan == small_run[:8] == small_retry[:8]
+    assert large_plan == large_run[:8] == large_retry[:8]
+    assert small_run == small_retry
+    assert large_run == large_retry
     # The model change is bound into the effective config -> hash changes.
     assert small_plan != large_plan
 
@@ -466,6 +472,43 @@ def test_t8_chinese_and_spaces_in_filename_handled(monkeypatch, tmp_path):
     # task_id is collision-safe (spaces collapsed to dashes by sanitize_stem).
     assert task["task_id"].startswith("电影-样本-")
     assert task["relative_input_path"] == "电影 样本.wav"
+
+
+def test_t8b_public_plan_response_strips_private_paths_and_full_hashes(monkeypatch, tmp_path):
+    _neutralize_stores(monkeypatch)
+    states = tmp_path / "states"
+    states.mkdir()
+    monkeypatch.setattr(pipeline_api, "PIPELINE_STATES_DIR", states)
+
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    media = input_dir / "movie.mp4"
+    media.write_bytes(b"audio")
+
+    body = {"input_dir": str(input_dir), "model": "small", "translate_enabled": False}
+    parsed = web_server.parse_pipeline_request_payload(body)
+    public = pipeline_api.plan_pipeline(**parsed)
+    config, _ = pipeline_api.resolve_pipeline_request_config(action="run", **parsed)
+    internal = _plan_for(config, states).to_internal_dict()
+
+    assert "plan_fingerprint" not in public
+    assert "effective_config_hash" not in public
+    assert public["plan_fingerprint_prefix"] == internal["plan_fingerprint"][:8]
+    assert public["effective_config_hash_prefix"] == internal["effective_config_hash"][:8]
+    assert re.fullmatch(r"[0-9a-f]{64}", internal["plan_fingerprint"])
+    assert re.fullmatch(r"[0-9a-f]{64}", internal["effective_config_hash"])
+
+    public_task = public["tasks"][0]
+    internal_task = internal["tasks"][0]
+    for key in (
+        "input_path",
+        "state_path",
+        "legacy_state_path",
+        "input_fingerprint",
+        "expected_signatures",
+    ):
+        assert key not in public_task
+        assert key in internal_task
 
 
 # --------------------------------------------------------------------------- #

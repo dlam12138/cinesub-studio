@@ -415,7 +415,7 @@ def scan_pipeline(input_dir: str = "") -> dict:
             ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
         },
     )
-    result = plan.to_dict()
+    result = plan.to_public_dict()
     result["preview_scope"] = "default_config"
     return result
 
@@ -426,7 +426,7 @@ def plan_pipeline(**parsed) -> dict:
     Resolves the same ``BatchConfig`` that ``/api/pipeline/run`` would execute
     (via ``resolve_pipeline_request_config``) and builds the shared
     ``PipelinePlan`` without a lease, run record, worker, or any state mutation.
-    Returns ``plan.to_dict()``; the Web handler merges ``preview_scope`` and the
+    Returns ``plan.to_public_dict()``; the Web handler merges ``preview_scope`` and the
     preflight findings. Model-availability/download checks are intentionally NOT
     performed here — the caller runs ``pipeline_request_preflight``.
     """
@@ -439,7 +439,7 @@ def plan_pipeline(**parsed) -> dict:
             ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
         },
     )
-    return plan.to_dict()
+    return plan.to_public_dict()
 
 
 def start_pipeline_background(
