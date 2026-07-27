@@ -95,6 +95,8 @@ STATUS_LABELS = {
     "stale": "可能中断",
 }
 
+TERMINAL_RUN_STATUSES = {"completed", "failed", "stale", "aborted_plan_changed"}
+
 
 _ABORT_REASON_MESSAGES = {
     "plan_fingerprint_mismatch": "预检后流水线计划发生变化，已中止。",
@@ -133,7 +135,8 @@ def _run_record_view() -> dict:
         if key in {
             "schema_version", "run_id", "action", "status", "task_ids",
             "current_task_id", "current_stage", "started_at", "updated_at",
-            "finished_at", "counts", "failure_stage_counts",
+            "finished_at", "counts", "failure_stage_counts", "failure_reason",
+            "error_category", "error_summary", "worker_returncode",
         }
     }
     if record.get("status") == "aborted_plan_changed":
@@ -166,10 +169,18 @@ def get_pipeline_task() -> dict:
                 "started_at": record.get("started_at", 0),
                 "run_id": record.get("run_id", ""),
             }
-        if record.get("status") != "stale":
-            record["status"] = "stale"
-            record["finished_at"] = time.time()
-            write_run_record(PIPELINE_RUN_RECORD, record)
+        record = _mark_run_record_worker_lost(record)
+        memory = {
+            **memory,
+            "running": False,
+            "status": record.get("status", "stale"),
+            "returncode": (
+                memory.get("returncode")
+                if memory.get("returncode") is not None
+                else int(record.get("worker_returncode") or 1)
+            ),
+            "error": record.get("error_summary", ""),
+        }
     if record and record.get("status") == "aborted_plan_changed":
         memory = {
             **memory,
@@ -179,6 +190,27 @@ def get_pipeline_task() -> dict:
             **_aborted_run_extras(record),
         }
     return memory
+
+
+def _mark_run_record_worker_lost(
+    record: dict,
+    *,
+    returncode: int | None = None,
+) -> dict:
+    if not record or record.get("status") in TERMINAL_RUN_STATUSES:
+        return record
+    updated = {
+        **record,
+        "status": "stale",
+        "finished_at": time.time(),
+        "current_task_id": "",
+        "current_stage": "",
+        "failure_reason": "worker_process_not_alive",
+        "error_category": "WorkerLost",
+        "error_summary": "Worker exited before the run reached a terminal state.",
+        "worker_returncode": int(returncode if returncode is not None else 1),
+    }
+    return write_run_record(PIPELINE_RUN_RECORD, updated)
 
 
 def _safe_artifacts(raw: dict) -> dict:
@@ -699,22 +731,18 @@ def run_pipeline_background(
     returncode = None
     process = None
     try:
-        process = subprocess.Popen(
+        process, stdout_path, stderr_path = spawn_pipeline_worker(
             command,
-            cwd=str(PROJECT_ROOT),
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
+            run_id=_run_id,
         )
         record = read_run_record(PIPELINE_RUN_RECORD)
         write_run_record(PIPELINE_RUN_RECORD, {
             **record,
             "worker_pid": process.pid,
             "worker_creation_filetime": windows_process_creation_filetime(process.pid),
+            "worker_stdout_log": stdout_path.relative_to(WORK_DIR).as_posix(),
+            "worker_stderr_log": stderr_path.relative_to(WORK_DIR).as_posix(),
         })
         if _worker_lease is not None:
             _worker_lease.release()
@@ -740,12 +768,6 @@ def run_pipeline_background(
         with PIPELINE_TASK_LOCK:
             PIPELINE_TASK["pid"] = process.pid
 
-        assert process.stdout is not None
-        with PIPELINE_LOG.open("a", encoding="utf-8") as log:
-            for line in process.stdout:
-                log.write(_clean_log_line(line))
-                log.flush()
-
         returncode = process.wait()
         finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
         with PIPELINE_LOG.open("a", encoding="utf-8") as log:
@@ -763,6 +785,13 @@ def run_pipeline_background(
             if observed is not None:
                 returncode = observed
     finally:
+        record = read_run_record(PIPELINE_RUN_RECORD)
+        if (
+            returncode is not None
+            and record.get("run_id") == _run_id
+            and record.get("status") not in TERMINAL_RUN_STATUSES
+        ):
+            _mark_run_record_worker_lost(record, returncode=returncode)
         with PIPELINE_TASK_LOCK:
             PIPELINE_TASK["running"] = False
             PIPELINE_TASK["pid"] = None
@@ -778,11 +807,64 @@ def run_pipeline_background(
             pass
 
 
+def spawn_pipeline_worker(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    run_id: str,
+    work_dir: Path | None = None,
+    cwd: Path | None = None,
+) -> tuple[subprocess.Popen, Path, Path]:
+    """Start one detached Pipeline worker with durable run-scoped stdio."""
+    root = Path(work_dir or WORK_DIR)
+    safe_run_id = sanitize_stem(run_id) or "unknown-run"
+    run_dir = root / "runs" / safe_run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = run_dir / "worker.stdout.log"
+    stderr_path = run_dir / "worker.stderr.log"
+    child_env = dict(env)
+    child_env["CINESUB_PIPELINE_DETACHED_STDIO"] = "1"
+    child_env["CINESUB_PIPELINE_SUMMARY_LOGS"] = "1"
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    stdout_handle = stdout_path.open("ab", buffering=0)
+    stderr_handle = stderr_path.open("ab", buffering=0)
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd or PROJECT_ROOT),
+            env=child_env,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            close_fds=True,
+            creationflags=creationflags,
+        )
+    finally:
+        stdout_handle.close()
+        stderr_handle.close()
+    return process, stdout_path, stderr_path
+
+
 def read_pipeline_log() -> dict:
-    if not PIPELINE_LOG.exists():
+    record = read_run_record(PIPELINE_RUN_RECORD) or {}
+    run_logs: list[Path] = []
+    for key in ("worker_stdout_log", "worker_stderr_log"):
+        relative = str(record.get(key) or "")
+        if not relative:
+            continue
+        try:
+            candidate = (WORK_DIR / relative).resolve()
+            if candidate.is_relative_to(WORK_DIR.resolve()) and candidate.is_file():
+                run_logs.append(candidate)
+        except OSError:
+            continue
+    sources = run_logs or ([PIPELINE_LOG] if PIPELINE_LOG.exists() else [])
+    if not sources:
         return {"ok": True, "lines": [], "text": ""}
     try:
-        text = PIPELINE_LOG.read_text(encoding="utf-8")
+        text = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace") for path in sources
+        )
     except OSError as exc:
         return {"ok": False, "error": str(exc), "lines": [], "text": ""}
     lines = [_clean_log_line(line) for line in text.splitlines()[-200:]]

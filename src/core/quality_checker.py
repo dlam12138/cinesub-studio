@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -795,7 +796,7 @@ def print_report_summary(report: QualityReport) -> None:
         for itype, count in sorted(issue_types.items(), key=lambda x: -x[1]):
             _safe_print(f"    - {itype}: {count}")
 
-    if report.issues:
+    if report.issues and os.environ.get("CINESUB_PIPELINE_SUMMARY_LOGS") != "1":
         _safe_print(f"\n  详细问题列表:")
         for issue in report.issues:
             icon = severity_icon.get(issue.severity, "?")
@@ -803,6 +804,8 @@ def print_report_summary(report: QualityReport) -> None:
             _safe_print(f"    {icon} {idx_str} [{issue.type}] {issue.text}")
             if issue.suggestion:
                 _safe_print(f"      建议: {issue.suggestion}")
+    elif report.issues:
+        _safe_print("\n  详细问题已写入私有质检报告，Worker 日志仅保留摘要。")
 
     _safe_print(f"{'='*60}\n")
 

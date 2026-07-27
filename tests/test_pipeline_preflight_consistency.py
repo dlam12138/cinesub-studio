@@ -418,6 +418,93 @@ def test_t6_provider_content_change_aborts_worker(
     assert list(worker_dirs["states"].glob("*.state.json")) == []
 
 
+def test_worker_top_level_exception_forces_failed_run_record(
+    monkeypatch, worker_dirs, model_available
+):
+    _neutralize_stores(monkeypatch)
+    media = worker_dirs["input"] / "late-failure.mp4"
+    media.write_bytes(b"media")
+    argv_tail = _worker_argv(
+        worker_dirs["input"],
+        worker_dirs["work"],
+        worker_dirs["output"],
+        worker_dirs["models"],
+        model="small",
+        no_translate=True,
+    )
+    config = _worker_config(argv_tail)
+    expected = _plan_for(config, worker_dirs["states"]).plan_fingerprint
+
+    def fail_after_task_state(self):
+        self.tasks = self._materialize_plan(self.plan)
+        task = self.tasks[0]
+        task.status = "failed"
+        task.stage = "quality_checking"
+        task.error = "token=secret-value D:\\private\\movie.mkv subtitle body"
+        task.error_category = "OSError"
+        task.error_stage = "quality_checking"
+        task.save()
+        raise OSError(22, task.error)
+
+    monkeypatch.setattr(batch_worker.BatchPipeline, "run", fail_after_task_state)
+
+    assert _run_worker(monkeypatch, argv_tail, expected_plan=expected) == 1
+    record = json.loads(
+        (worker_dirs["work"] / "pipeline_run.json").read_text(encoding="utf-8")
+    )
+    assert record["status"] == "failed"
+    assert record["finished_at"] > 0
+    assert record["error_category"] == "OSError"
+    serialized = json.dumps(record, ensure_ascii=False)
+    assert "secret-value" not in serialized
+    assert "D:\\private" not in serialized
+    assert "subtitle body" not in serialized
+
+
+def test_worker_normal_completion_is_not_overwritten_by_terminal_guard(
+    monkeypatch, worker_dirs, model_available
+):
+    _neutralize_stores(monkeypatch)
+    media = worker_dirs["input"] / "success.mp4"
+    media.write_bytes(b"media")
+    argv_tail = _worker_argv(
+        worker_dirs["input"],
+        worker_dirs["work"],
+        worker_dirs["output"],
+        worker_dirs["models"],
+        model="small",
+        no_translate=True,
+    )
+    config = _worker_config(argv_tail)
+    expected = _plan_for(config, worker_dirs["states"]).plan_fingerprint
+
+    def complete_run(self):
+        self.tasks = []
+        return {"total": 1, "completed": 1, "failed": 0, "skipped": 0}
+
+    monkeypatch.setattr(batch_worker.BatchPipeline, "run", complete_run)
+
+    run_record_path = worker_dirs["work"] / "pipeline_run.json"
+    run_record_path.write_text(json.dumps({
+        "schema_version": 1,
+        "run_id": "preflight-run",
+        "status": "preparing",
+        "worker_stdout_log": "runs/preflight-run/worker.stdout.log",
+        "worker_stderr_log": "runs/preflight-run/worker.stderr.log",
+    }), encoding="utf-8")
+
+    assert _run_worker(monkeypatch, argv_tail, expected_plan=expected) == 0
+    record = json.loads(
+        run_record_path.read_text(encoding="utf-8")
+    )
+    assert record["status"] == "completed"
+    assert record["finished_at"] > 0
+    assert record["worker_returncode"] == 0
+    assert record["worker_stdout_log"] == "runs/preflight-run/worker.stdout.log"
+    assert record["worker_stderr_log"] == "runs/preflight-run/worker.stderr.log"
+    assert "failure_reason" not in record
+
+
 # --------------------------------------------------------------------------- #
 # T7: GET /api/pipeline/scan?input_dir=<dir> -> 200 + preview_scope=default_config
 # --------------------------------------------------------------------------- #

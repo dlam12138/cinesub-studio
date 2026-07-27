@@ -49,8 +49,9 @@ from pipeline_stages import (
 from pipeline_cli import build_pipeline_parser
 from pipeline_config import resolve_cli_config
 from pipeline_reporting import safe_console_print, show_review, show_review_detail, show_status
+from process_env import redact_project_path  # noqa: E402
 from runtime_paths import resolve_runtime_paths
-from stage_event_log import write_stage_event
+from stage_event_log import sanitize_event_text, write_stage_event
 from task_state import (
     RetryPlan,
     RetryPlanChanged,
@@ -106,6 +107,77 @@ VIDEO_EXTENSIONS = {
     ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v",
     ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wav",
 }
+
+TERMINAL_RUN_STATUSES = {"completed", "failed", "stale", "aborted_plan_changed"}
+
+
+class _SanitizedWorkerStream:
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, value) -> int:
+        text = str(value or "")
+        if not text:
+            return 0
+        cleaned_parts = []
+        for part in text.splitlines(keepends=True):
+            ending = "\n" if part.endswith(("\n", "\r")) else ""
+            body = part.rstrip("\r\n")
+            cleaned = sanitize_event_text(redact_project_path(body, PROJECT_ROOT))
+            cleaned_parts.append(cleaned + ending)
+        try:
+            self._stream.write("".join(cleaned_parts))
+        except (OSError, ValueError):
+            return len(text)
+        return len(text)
+
+    def flush(self) -> None:
+        try:
+            self._stream.flush()
+        except (OSError, ValueError):
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def _configure_detached_worker_output() -> None:
+    if os.environ.get("CINESUB_PIPELINE_DETACHED_STDIO") != "1":
+        return
+    sys.stdout = _SanitizedWorkerStream(sys.stdout)
+    sys.stderr = _SanitizedWorkerStream(sys.stderr)
+
+
+def _ensure_run_record_terminal(
+    path: Path,
+    *,
+    run_id: str,
+    error: BaseException | None = None,
+    returncode: int = 1,
+) -> None:
+    record = read_run_record(path)
+    if record.get("run_id") != run_id:
+        return
+    if record.get("status") in TERMINAL_RUN_STATUSES:
+        return
+    error_category = type(error).__name__ if error is not None else "WorkerExit"
+    write_run_record(path, {
+        **record,
+        "status": "failed",
+        "finished_at": time.time(),
+        "current_task_id": "",
+        "current_stage": "",
+        "failure_reason": (
+            "worker_unhandled_exception"
+            if error is not None
+            else "worker_exit_without_terminal_record"
+        ),
+        "error_category": error_category,
+        "error_summary": (
+            f"{error_category}: worker exited before writing a terminal run record."
+        ),
+        "worker_returncode": int(returncode),
+    })
 
 
 def discover_videos(input_dir: Path) -> list[Path]:
@@ -822,6 +894,7 @@ class BatchPipeline:
 
 
 def main() -> int:
+    _configure_detached_worker_output()
     parser = build_pipeline_parser()
     args = parser.parse_args()
 
@@ -985,6 +1058,8 @@ def main() -> int:
         write_run_record(run_record_path, base)
         print(f"Pipeline aborted ({abort_reason}); see run record.")
 
+    unhandled_error: BaseException | None = None
+    worker_returncode = 1
     try:
         try:
             plan = build_pipeline_plan(config, read_only=True)
@@ -1032,7 +1107,9 @@ def main() -> int:
                 )
                 return 1
             if not task_ids and not expected_plan:
+                base_record = read_run_record(run_record_path) or {}
                 write_run_record(run_record_path, {
+                    **base_record,
                     "schema_version": 1,
                     "run_id": run_id,
                     "action": action,
@@ -1049,10 +1126,13 @@ def main() -> int:
                     "finished_at": time.time(),
                     "counts": {},
                     "failure_stage_counts": {},
+                    "worker_returncode": 0,
                 })
                 print("No pending files found." if action == "run" else "No failed tasks need retry.")
                 return 0
+            base_record = read_run_record(run_record_path) or {}
             record = write_run_record(run_record_path, {
+                **base_record,
                 "schema_version": 1,
                 "run_id": run_id,
                 "action": action,
@@ -1108,9 +1188,23 @@ def main() -> int:
             "failure_stage_counts": failure_stage_counts,
             "current_task_id": "",
             "current_stage": "",
+            "worker_returncode": returncode,
         })
+        worker_returncode = returncode
         return returncode
+    except Exception as exc:
+        unhandled_error = exc
+        safe_console_print(
+            f"Worker failed before terminal record: {type(exc).__name__}"
+        )
+        return 1
     finally:
+        _ensure_run_record_terminal(
+            run_record_path,
+            run_id=run_id,
+            error=unhandled_error,
+            returncode=worker_returncode,
+        )
         if lock:
             lock.release()
         if worker_lease:

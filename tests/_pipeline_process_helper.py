@@ -355,6 +355,8 @@ def _run_child(argv: list[str]) -> int:
             "lease-worker",
             "launcher",
             "fake-worker",
+            "detached-worker",
+            "spawn-worker-parent",
             "abrupt-exit",
             "fail-import",
             "fail-runtime",
@@ -369,6 +371,10 @@ def _run_child(argv: list[str]) -> int:
     parser.add_argument("--hold-seconds", type=float, default=0.0)
     parser.add_argument("--pid-file", default="")
     parser.add_argument("--sentinel", default="")
+    parser.add_argument("--work-dir", default="")
+    parser.add_argument("--run-id", default="")
+    parser.add_argument("--child-pid-file", default="")
+    parser.add_argument("--result-file", default="")
     args = parser.parse_args(argv)
 
     _emit({"event": "started", "mode": args.mode})
@@ -388,6 +394,69 @@ def _run_child(argv: list[str]) -> int:
 
     if args.mode == "fail-runtime":
         raise RuntimeError("probe intentional runtime failure")
+
+    if args.mode == "detached-worker":
+        stdin_eof = sys.stdin.read() == ""
+        if args.pid_file:
+            Path(args.pid_file).write_text(str(os.getpid()), encoding="ascii")
+        _emit({"event": "worker_before", "stdin_eof": stdin_eof})
+        print("worker stderr before", file=sys.stderr, flush=True)
+        deadline = time.monotonic() + 30.0
+        while args.sentinel and not Path(args.sentinel).exists():
+            if time.monotonic() >= deadline:
+                return 4
+            time.sleep(0.02)
+        _emit({"event": "worker_after"})
+        print("worker stderr after", file=sys.stderr, flush=True)
+        if args.result_file:
+            Path(args.result_file).write_text(
+                json.dumps({"status": "completed", "pid": os.getpid()}),
+                encoding="utf-8",
+            )
+        return 0
+
+    if args.mode == "spawn-worker-parent":
+        for name in SRC_SUBDIRS:
+            entry = str(REPO_ROOT / "src" / name)
+            if entry not in sys.path:
+                sys.path.insert(0, entry)
+        import pipeline_api
+
+        child_command = [
+            sys.executable,
+            "-u",
+            str(HELPER_PATH),
+            "--mode",
+            "detached-worker",
+            "--sentinel",
+            args.sentinel,
+            "--result-file",
+            args.result_file,
+        ]
+        process, stdout_path, stderr_path = pipeline_api.spawn_pipeline_worker(
+            child_command,
+            env=build_probe_env(),
+            run_id=args.run_id or "parent-exit-run",
+            work_dir=Path(args.work_dir),
+            cwd=REPO_ROOT,
+        )
+        if args.pid_file:
+            Path(args.pid_file).write_text(str(os.getpid()), encoding="ascii")
+        if args.child_pid_file:
+            Path(args.child_pid_file).write_text(str(process.pid), encoding="ascii")
+        _emit({
+            "event": "spawned",
+            "parent_pid": os.getpid(),
+            "child_pid": process.pid,
+            "stdout_log": str(stdout_path),
+            "stderr_log": str(stderr_path),
+        })
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                return process.returncode or 0
+            time.sleep(0.05)
+        return 5
 
     PipelineRunLock = _bootstrap_imports()
 
