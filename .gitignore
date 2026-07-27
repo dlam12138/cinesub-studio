@@ -93,11 +93,14 @@ ffmpeg/bin/
 acceptance/*
 !acceptance/v0_7_1_real_media_acceptance.md
 !acceptance/windows_pipeline_lock_lease_stability.md
+!acceptance/v0_7_1_pipeline_longform_acceptance.md
 !acceptance/reports/
 acceptance/reports/*
 !acceptance/reports/v0_7_1_summary.json
 !acceptance/reports/v0_7_1_performance.csv
 !acceptance/reports/v0_7_1_retry_window_audit.csv
+!acceptance/reports/v0_7_1_pipeline_summary.json
+!acceptance/reports/v0_7_1_pipeline_scenarios.csv
 .superdesign/
 research/
 TRIAL.md

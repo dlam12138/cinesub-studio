@@ -1,0 +1,88 @@
+{
+  "schema_version": 2,
+  "acceptance": "v0.7.1-stage2-pipeline-longform",
+  "date": "2026-07-27",
+  "branch": "codex/pipeline-longform-acceptance",
+  "runtime_base": "252f75c",
+  "acceptance_start_commit": "6f87b90",
+  "evidence_commit": "90eaccb",
+  "result": "fail_release_blocker",
+  "release_blocker": true,
+  "allows_stage_3": false,
+  "allows_release_prep": false,
+  "sample": {
+    "sample_id": "sample-long-02",
+    "duration_minutes": 45.1,
+    "container": "mkv",
+    "source_hash_prefix": "f296414a2968"
+  },
+  "runtime": {
+    "model": "large-v3",
+    "device": "cuda",
+    "compute_type": "float16",
+    "local_files_only": true,
+    "provider": "stub-local"
+  },
+  "real_media_live": {
+    "S1": {
+      "result": "pass",
+      "plan_status_codes": [200, 200],
+      "classification_stable": true,
+      "filesystem_snapshot_unchanged": true,
+      "persistent_side_effects": false
+    },
+    "S2": {
+      "result": "fail",
+      "run_accepted": true,
+      "asr_completed": true,
+      "asr_duration_seconds": 225.463825,
+      "translation_completed": true,
+      "translation_request_count": 27,
+      "quality_completed": false,
+      "finalization_completed": false,
+      "input_archived": false,
+      "run_record_completed": false
+    },
+    "S3": {
+      "result": "not_run",
+      "reason": "strict_stop_after_s7_failure"
+    },
+    "S7": {
+      "result": "fail",
+      "web_killed_during_asr": true,
+      "web_restarted": true,
+      "run_id_preserved": true,
+      "worker_pid_preserved_during_restart": true,
+      "worker_creation_filetime_preserved_during_restart": true,
+      "worker_lease_preserved_during_restart": true,
+      "second_run_rejected_busy": true,
+      "second_worker_started": false,
+      "stdio_failure_observed": true,
+      "error_category": "OSError",
+      "error_message": "[Errno 22] Invalid argument",
+      "failed_stage": "quality_checking",
+      "worker_terminal_success": false,
+      "run_record_terminal": false,
+      "residual_acceptance_processes_after_cleanup": false
+    }
+  },
+  "permanent_automated_evidence": {
+    "scenarios": ["S4", "S5", "S6", "S8", "S9", "S10", "S11", "S12"],
+    "targeted_tests": "61 passed",
+    "full_pytest": "516 passed",
+    "stage_reuse_test_substitution": "tests/test_pipeline_offline_e2e.py",
+    "requested_stage_reuse_test_present": false,
+    "subtitle_translate_self_test": "pass",
+    "quality_checker_self_test": "pass",
+    "web_smoke": "pass",
+    "node_checks": "pass",
+    "git_diff_check": "pass"
+  },
+  "privacy": {
+    "contains_source_path": false,
+    "contains_real_filename": false,
+    "contains_complete_source_hash": false,
+    "contains_transcript_or_prompt": false,
+    "contains_secret_or_token": false
+  }
+}

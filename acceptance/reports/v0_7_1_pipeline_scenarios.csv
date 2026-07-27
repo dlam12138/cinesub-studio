@@ -1,0 +1,13 @@
+scenario_id,evidence_type,result,summary
+S1,real_media_live,pass,"Two read-only plans returned 200; stable classification; metadata snapshots unchanged; no persistent side effects"
+S2,real_media_live,fail,"ASR and local translation completed; quality checking failed with OSError 22; no finalization or archive; run record not completed"
+S3,real_media_live,not_run,"Strict stop after S7 release-blocker failure"
+S4,permanent_automated,pass,"Stage reuse and signature coverage passed in the 61-test targeted suite"
+S5,permanent_automated,pass,"Translation failure and retry coverage passed"
+S6,permanent_automated,pass,"Collision and legacy-state safety coverage passed"
+S7,real_media_live,fail,"Worker survived Web restart and retained identity and lease, then invalid inherited stdio caused quality-stage failure and a non-terminal run record"
+S8,permanent_automated,pass,"Stale/dead worker automated coverage passed; live run exposed a remaining exited-process recognition gap"
+S9,permanent_automated,pass,"Global run lock and worker lease coverage passed"
+S10,permanent_automated,pass,"Retry-failed scope and preflight consistency coverage passed"
+S11,permanent_automated,pass,"Archive identity automated coverage passed"
+S12,permanent_automated,pass,"Completed archive/output automated coverage passed; live S2 did not reach this stage"
