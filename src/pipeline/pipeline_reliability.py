@@ -227,16 +227,10 @@ class PipelinePlan:
     def ok(self) -> bool:
         return not self.blockers
 
-    def to_dict(self, *, include_private_paths: bool = False) -> dict[str, Any]:
+    def to_internal_dict(self) -> dict[str, Any]:
         tasks = []
         for item in self.tasks:
             row = asdict(item)
-            if not include_private_paths:
-                row.pop("input_path", None)
-                row.pop("state_path", None)
-                row.pop("legacy_state_path", None)
-                row.pop("input_fingerprint", None)
-                row.pop("expected_signatures", None)
             tasks.append(row)
         return {
             "ok": self.ok,
@@ -246,6 +240,28 @@ class PipelinePlan:
             "plan_fingerprint": self.plan_fingerprint,
             "effective_config_hash": self.effective_config_hash,
         }
+
+    def to_public_dict(self) -> dict[str, Any]:
+        tasks = []
+        for item in self.tasks:
+            row = asdict(item)
+            row.pop("input_path", None)
+            row.pop("state_path", None)
+            row.pop("legacy_state_path", None)
+            row.pop("input_fingerprint", None)
+            row.pop("expected_signatures", None)
+            tasks.append(row)
+        return {
+            "ok": self.ok,
+            "tasks": tasks,
+            "blockers": [asdict(item) for item in self.blockers],
+            "counts": dict(self.counts),
+            "plan_fingerprint_prefix": self.plan_fingerprint[:8],
+            "effective_config_hash_prefix": self.effective_config_hash[:8],
+        }
+
+    def to_dict(self, *, include_private_paths: bool = False) -> dict[str, Any]:
+        return self.to_internal_dict() if include_private_paths else self.to_public_dict()
 
 
 def _state_data(path: Path) -> dict[str, Any] | None:
