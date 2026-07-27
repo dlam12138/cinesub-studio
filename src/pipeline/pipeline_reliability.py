@@ -14,6 +14,7 @@ from typing import Any, Iterable
 from urllib.parse import urlparse
 
 from output_paths import plan_pipeline_outputs
+from subtitle_model import SUPPORTED_SUBTITLE_FORMATS
 
 
 TASK_STEM_LIMIT = 72
@@ -171,6 +172,24 @@ def stage_signature(stage: str, config_payload: dict[str, Any], upstream: Any) -
     })
 
 
+def _translation_profile_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    quality = profile.get("quality_thresholds", profile.get("quality", {})) or {}
+    return {
+        "translation_style": profile.get("translation_style", ""),
+        "glossary": profile.get("glossary", []),
+        "max_cps_zh": quality.get("max_cps_zh", 8),
+        "max_chars_per_subtitle_zh": quality.get("max_chars_per_subtitle_zh", 36),
+    }
+
+
+def _enabled_subtitle_formats(formats: Any) -> list[str]:
+    return [
+        str(fmt)
+        for fmt in list(formats or ["srt"])
+        if SUPPORTED_SUBTITLE_FORMATS.get(str(fmt)) == "enabled"
+    ] or ["srt"]
+
+
 @dataclass
 class PipelineBlocker:
     code: str
@@ -248,10 +267,15 @@ def _config_payloads(config: Any) -> dict[str, dict[str, Any]]:
         "target_language": getattr(config, "target_language", ""),
         "prompt_hash": canonical_hash(str(getattr(config, "translation_prompt", "") or "")),
         "profile_id": getattr(config, "language_profile_id", ""),
-        "profile_hash": canonical_hash(profile),
+        "profile_hash": canonical_hash(_translation_profile_payload(profile)),
         "mode": getattr(config, "translation_mode", ""),
+        "batch_size": getattr(config, "translation_batch_size", 20),
+        "temperature": getattr(config, "translation_temperature", 0.2),
+        "context_window": getattr(config, "context_window", 3),
         "strategy": getattr(config, "translation_strategy_mode", ""),
+        "scene_gap_seconds": getattr(config, "translation_scene_gap_seconds", 30.0),
         "reliability": getattr(config, "translation_reliability_mode", ""),
+        "max_extra_requests": getattr(config, "translation_max_extra_requests", 12),
     }
     quality = {
         "profile_quality": profile.get("quality_thresholds", profile.get("quality", {})),
@@ -265,7 +289,7 @@ def _config_payloads(config: Any) -> dict[str, dict[str, Any]]:
         "quality": quality,
         "final_output": {
             "translate": bool(getattr(config, "translate", True)),
-            "formats": list(getattr(config, "subtitle_formats", ["srt"])),
+            "formats": _enabled_subtitle_formats(getattr(config, "subtitle_formats", ["srt"])),
             "translation_mode": getattr(config, "translation_mode", ""),
         },
     }

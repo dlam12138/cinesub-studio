@@ -56,7 +56,7 @@ def offline_pipeline(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(batch_worker, "STAGE_EVENT_LOG", roots["events"])
     set_state_root_provider(lambda: roots["states"])
 
-    calls = {"extract": 0, "transcribe": 0}
+    calls = {"extract": 0, "transcribe": 0, "translate": 0, "quality": 0}
 
     def fake_extract(context, **kwargs):
         calls["extract"] += 1
@@ -93,31 +93,53 @@ def offline_pipeline(tmp_path: Path, monkeypatch):
             {"language_detection": language},
         )
 
+    def fake_translate_api(**kwargs):
+        return _openai_response(kwargs["body"])
+
+    real_translate_stage = batch_worker.translate_stage
+
+    def fake_translate_stage(*args, **kwargs):
+        calls["translate"] += 1
+        return real_translate_stage(*args, **kwargs)
+
+    def fake_quality_check(context, *, report_path, **kwargs):
+        calls["quality"] += 1
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps({"status": "pass", "issues": []}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return StageResult("quality_checking", "completed", (report_path,))
+
     monkeypatch.setattr(batch_worker, "extract_audio_stage", fake_extract)
     monkeypatch.setattr(batch_worker, "transcribe_stage", fake_transcribe)
-    monkeypatch.setattr(subtitle_translate, "_call_llm_api", lambda **kwargs: _openai_response(kwargs["body"]))
+    monkeypatch.setattr(batch_worker, "translate_stage", fake_translate_stage)
+    monkeypatch.setattr(batch_worker, "quality_check_stage", fake_quality_check)
+    monkeypatch.setattr(subtitle_translate, "_call_llm_api", fake_translate_api)
 
-    def make_pipeline(*, mode: str = "bilingual") -> batch_worker.BatchPipeline:
-        return batch_worker.BatchPipeline(batch_worker.BatchConfig(
-            input_dir=roots["input"],
-            output_dir=roots["output"],
-            work_dir=roots["work"],
-            model_dir=roots["models"],
-            model="offline-stub",
-            device="cpu",
-            local_files_only=True,
-            asr_mode="fixed",
-            language="fr",
-            translate=True,
-            api_provider="openai-compatible",
-            api_base="https://offline.invalid",
-            api_key="offline-test-only",
-            llm_model="offline-llm-stub",
-            target_language="zh-CN",
-            translation_mode=mode,
-            translation_reliability_mode="off",
-            move_completed=False,
-        ))
+    def make_pipeline(*, mode: str = "bilingual", **overrides) -> batch_worker.BatchPipeline:
+        config = {
+            "input_dir": roots["input"],
+            "output_dir": roots["output"],
+            "work_dir": roots["work"],
+            "model_dir": roots["models"],
+            "model": "offline-stub",
+            "device": "cpu",
+            "local_files_only": True,
+            "asr_mode": "fixed",
+            "language": "fr",
+            "translate": True,
+            "api_provider": "openai-compatible",
+            "api_base": "https://offline.invalid",
+            "api_key": "offline-test-only",
+            "llm_model": "offline-llm-stub",
+            "target_language": "zh-CN",
+            "translation_mode": mode,
+            "translation_reliability_mode": "off",
+            "move_completed": False,
+        }
+        config.update(overrides)
+        return batch_worker.BatchPipeline(batch_worker.BatchConfig(**config))
 
     yield roots, calls, make_pipeline
     set_state_root_provider(lambda: batch_worker.DIR_WORK_STATES)
@@ -157,7 +179,7 @@ def test_offline_pipeline_generates_complete_artifact_sets(
     assert {event["stage"] for event in events if event["event"] == "completed"} >= {
         "extracting_audio", "transcribing", "translating", "quality_checking",
     }
-    assert calls == {"extract": 1, "transcribe": 1}
+    assert calls == {"extract": 1, "transcribe": 1, "translate": 1, "quality": 1}
 
 
 def test_offline_pipeline_failure_reuses_intermediate_outputs_on_retry(
@@ -167,13 +189,10 @@ def test_offline_pipeline_failure_reuses_intermediate_outputs_on_retry(
     media = roots["input"] / "离线恢复.mp4"
     media.write_bytes(b"offline media fixture")
 
-    monkeypatch.setattr(
-        subtitle_translate,
-        "_call_llm_api",
-        lambda **kwargs: (_ for _ in ()).throw(
-            TranslationReliabilityError("offline injected failure", kind="network_error")
-        ),
-    )
+    def fail_translate_api(**kwargs):
+        raise TranslationReliabilityError("offline injected failure", kind="network_error")
+
+    monkeypatch.setattr(subtitle_translate, "_call_llm_api", fail_translate_api)
     first = make_pipeline().run()
     assert first["failed"] == 1
 
@@ -190,11 +209,10 @@ def test_offline_pipeline_failure_reuses_intermediate_outputs_on_retry(
     assert TaskState.load(retry_plan.selected_tasks[0].state_path()).status == "failed"
     apply_retry_failed_plan(retry_plan, run_id="retry-run")
 
-    monkeypatch.setattr(
-        subtitle_translate,
-        "_call_llm_api",
-        lambda **kwargs: _openai_response(kwargs["body"]),
-    )
+    def recover_translate_api(**kwargs):
+        return _openai_response(kwargs["body"])
+
+    monkeypatch.setattr(subtitle_translate, "_call_llm_api", recover_translate_api)
     second = make_pipeline().run()
     recovered = TaskState.load(
         roots["states"] / f"{task_identity(media, roots['input'])[0]}.state.json"
@@ -202,7 +220,7 @@ def test_offline_pipeline_failure_reuses_intermediate_outputs_on_retry(
 
     assert second["completed"] == 1
     assert recovered is not None and recovered.status == "completed"
-    assert calls == {"extract": 1, "transcribe": 1}
+    assert calls == {"extract": 1, "transcribe": 1, "translate": 2, "quality": 1}
     assert (roots["output"] / "reports" / f"{media.stem}.offline-stub.quality_report.json").is_file()
 
 
@@ -216,7 +234,7 @@ def test_offline_pipeline_second_run_skips_with_stage_signatures(offline_pipelin
 
     assert first["completed"] == 1
     assert second == {"total": 1, "completed": 0, "failed": 0, "skipped": 1}
-    assert calls == {"extract": 1, "transcribe": 1}
+    assert calls == {"extract": 1, "transcribe": 1, "translate": 1, "quality": 1}
     state = TaskState.load(
         roots["states"] / f"{task_identity(media, roots['input'])[0]}.state.json"
     )
@@ -244,4 +262,105 @@ def test_missing_final_output_fingerprint_rebuilds_only_finalization(offline_pip
     assert plan.tasks[0].category == "rebuild"
     assert plan.tasks[0].rebuild_from == "final_output"
     assert make_pipeline().run()["completed"] == 1
-    assert calls == {"extract": 1, "transcribe": 1}
+    assert calls == {"extract": 1, "transcribe": 1, "translate": 1, "quality": 1}
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"translation_batch_size": 8},
+        {"translation_temperature": 0.0},
+        {"context_window": 1},
+        {"translation_max_extra_requests": 3},
+        {"translation_scene_gap_seconds": 7.5},
+    ],
+)
+def test_translation_signature_knobs_rebuild_from_translation(
+    offline_pipeline, override: dict,
+) -> None:
+    roots, calls, make_pipeline = offline_pipeline
+    media = roots["input"] / "translation-knob.mp4"
+    media.write_bytes(b"offline media fixture")
+
+    assert make_pipeline().run()["completed"] == 1
+    changed = make_pipeline(**override)
+    plan = batch_worker.build_pipeline_plan(changed.config)
+
+    assert plan.tasks[0].category == "rebuild"
+    assert plan.tasks[0].rebuild_from == "translation"
+    assert changed.run()["completed"] == 1
+    assert calls == {"extract": 1, "transcribe": 1, "translate": 2, "quality": 2}
+
+
+def test_quality_only_profile_threshold_rebuilds_from_quality(
+    offline_pipeline,
+) -> None:
+    roots, calls, make_pipeline = offline_pipeline
+    media = roots["input"] / "quality-only.mp4"
+    media.write_bytes(b"offline media fixture")
+    baseline_profile = {
+        "quality_thresholds": {"language_probability_warning": 0.80},
+        "translation_style": "film style",
+        "glossary": [{"source": "Jean", "target": "让", "note": ""}],
+    }
+    changed_profile = {
+        **baseline_profile,
+        "quality_thresholds": {"language_probability_warning": 0.95},
+    }
+
+    assert make_pipeline(lang_profile_config=baseline_profile).run()["completed"] == 1
+    changed = make_pipeline(lang_profile_config=changed_profile)
+    plan = batch_worker.build_pipeline_plan(changed.config)
+
+    assert plan.tasks[0].category == "rebuild"
+    assert plan.tasks[0].rebuild_from == "quality"
+    assert changed.run()["completed"] == 1
+    assert calls == {"extract": 1, "transcribe": 1, "translate": 1, "quality": 2}
+
+
+def test_translation_length_threshold_still_rebuilds_from_translation(
+    offline_pipeline,
+) -> None:
+    roots, calls, make_pipeline = offline_pipeline
+    media = roots["input"] / "translation-length-threshold.mp4"
+    media.write_bytes(b"offline media fixture")
+    baseline_profile = {
+        "quality_thresholds": {
+            "language_probability_warning": 0.80,
+            "max_cps_zh": 8,
+            "max_chars_per_subtitle_zh": 36,
+        },
+    }
+    changed_profile = {
+        "quality_thresholds": {
+            "language_probability_warning": 0.80,
+            "max_cps_zh": 6,
+            "max_chars_per_subtitle_zh": 36,
+        },
+    }
+
+    assert make_pipeline(lang_profile_config=baseline_profile).run()["completed"] == 1
+    changed = make_pipeline(lang_profile_config=changed_profile)
+    plan = batch_worker.build_pipeline_plan(changed.config)
+
+    assert plan.tasks[0].category == "rebuild"
+    assert plan.tasks[0].rebuild_from == "translation"
+    assert changed.run()["completed"] == 1
+    assert calls == {"extract": 1, "transcribe": 1, "translate": 2, "quality": 2}
+
+
+def test_reserved_ass_request_does_not_invalidate_final_output(
+    offline_pipeline,
+) -> None:
+    roots, calls, make_pipeline = offline_pipeline
+    media = roots["input"] / "reserved-ass.mp4"
+    media.write_bytes(b"offline media fixture")
+
+    assert make_pipeline(subtitle_formats=["srt"]).run()["completed"] == 1
+    changed = make_pipeline(subtitle_formats=["srt", "ass"])
+    plan = batch_worker.build_pipeline_plan(changed.config)
+
+    assert plan.tasks[0].category == "skip"
+    assert plan.tasks[0].rebuild_from == ""
+    assert changed.run() == {"total": 1, "completed": 0, "failed": 0, "skipped": 1}
+    assert calls == {"extract": 1, "transcribe": 1, "translate": 1, "quality": 1}
