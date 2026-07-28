@@ -42,7 +42,7 @@ evaluation improvements.
 
 - Target version: `0.7.0`.
 - Positioning: quality-neutral personal-use reliability release.
-- Portable candidate build: pending final packaged acceptance.
+- Portable candidate build: passed local packaged acceptance.
 - Tag: not created.
 - GitHub Release: not created.
-- Release approval: pending separate final acceptance.
+- Release approval: still requires a separate explicit decision.
