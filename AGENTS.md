@@ -2,26 +2,37 @@
 
 本文件面向 agent 和源码维护者。普通用户说明只写在 `README.md`。
 
-## Agent 连续工作记录
+## 产品北极星
 
-为避免长任务、跨轮对话或上下文压缩后失焦，所有在本仓库工作的 agent 必须遵守：
+CineSub Studio 主要作为个人自用的 Windows 长片字幕软件维护。
 
-1. 每个任务轮次开始执行、分析或修改前，先递归读取 `agents/thinking/` 下的全部文件。
-2. 读取后先确认当前目标、已完成事项、未解决问题和明确约束，再继续工作；不得仅凭对话记忆重复已完成操作。
-3. 每个任务轮次结束前，在 `agents/thinking/` 新增一份按时间排序的 Markdown 记录。记录至少包含：
-   - 用户目标；
-   - 已知事实与证据；
-   - 本轮决策摘要；
-   - 实际执行的操作；
-   - 验证结果；
-   - 未解决问题与下一步。
-4. 记录只写可审计的简明决策依据和工作摘要，不记录隐藏思维链、逐 token 推理、密钥、token、用户媒体内容或其他敏感信息。
-5. 若本轮仅回答问题或读取资料，也要记录读取范围、结论以及是否修改文件。
-6. 若 `agents/thinking/` 不存在，先创建该目录和说明文件，再执行其他任务。
+优先级：
+
+1. 可靠完成整部电影。
+2. 尽量减少本地环境配置。
+3. 任务可恢复，诊断清楚且可执行。
+4. 生成实用的中文和双语 SRT。
+5. 减少人工复核工作量。
+
+非目标：
+
+1. 训练或持续优化 ASR 模型。
+2. 构建自有翻译模型。
+3. 复刻完整字幕编辑器。
+4. 支持所有平台或 ASR 后端。
+5. 未经人工复核就宣称专业字幕质量。
+
+## 工程治理
+
+- 普通修复：代码修改、对应测试、`git diff --check` 和清晰提交信息。
+- 用户可见功能：自动测试、README 或使用文档，以及一次真实 smoke。
+- 发布阻断、迁移或重大架构变化：正式 acceptance 报告、独立证据和完整 closeout。
+- `agents/thinking/` 只记录重大设计选择、难以逆转的架构决策、真实验收发现的发布阻断问题，或后续维护者必须理解的重要取舍。纯操作日志不提交，也不要求每轮递归读取全部历史。
+- 记录只写可审计摘要，不写隐藏思维链、密钥、token、用户媒体内容或其他敏感信息。
 
 ## 当前交付边界
 
-仓库只维护 GitHub 已上传的源码；正式二进制交付物只有：
+仓库只维护 GitHub 已上传的源码。当前已正式发布的二进制交付物只有：
 
 ```text
 CineSubStudio-0.6.2-windows-x64-portable.zip
@@ -30,7 +41,7 @@ CineSubStudio-0.6.2-windows-x64-portable.zip.sha256
 
 不要在源码或文档中恢复已退役的 NSIS、BAT/PowerShell 便携启动包、FunASR、WhisperX、通用 ASR candidate 竞争、`mixed-route-v1` 或多后端 segment routing 产品链路。v0.7 只允许固定配方 `local-retry-selective-v2` 在同一 faster-whisper 会话内执行受控局部重试，不得向用户暴露候选 registry 或 candidate ID。
 
-0.6.2 的 Electron 目录布局和构建接口是冻结基线。改变 EXE 启动契约、资源目录、数据目录或发布文件名时必须升级版本并同步测试。
+0.6.2 的 Electron 目录布局和构建接口是冻结基线。0.7.0 只升级版本化文件名，不改变 EXE 启动契约、资源目录或数据目录；以后改变这些契约时必须再次升级版本并同步测试。
 
 ## 代码结构
 
@@ -102,6 +113,8 @@ acceptance/reports/v0_7_1_stage3a_public_gold_asr.csv
 acceptance/reports/v0_7_1_stage3a_public_gold_translation.csv
 acceptance/v0_7_1_stage3a_closeout.md
 acceptance/reports/v0_7_1_stage3a_closeout_summary.json
+acceptance/v0_7_self_use_release_candidate.md
+acceptance/reports/v0_7_self_use_release_candidate_summary.json
 ```
 
 其余 `acceptance/` 内容均为本地私有证据，包括媒体片段、OCR 帧、完整 transcript、
@@ -110,6 +123,13 @@ acceptance/reports/v0_7_1_stage3a_closeout_summary.json
 但只允许本地 PaddleOCR 引擎，不得使用 Google Lens 云端 OCR，不得将该工具集成进产品链路。
 
 还不得提交 API Key、token、用户媒体、字幕产物、测试私有样本、构建 staging、EXE、DLL、模型或 Release ZIP。公开源码只保留 example 配置、代码、必要测试、许可证和当前用户/开发者文档。
+
+## 研究工具边界
+
+Stage 3 Campaign、公共金标、JiWER、SacreBLEU 和 blind review 工具均为
+`experimental`、`research-only`。生产运行时不得导入这些工具，Electron 便携包
+不得包含它们，SUMM-RE、MediaSpeech、Campaign manifest 和盲审数据也不得进入
+portable runtime dependency path。JiWER 与 SacreBLEU 只属于开发依赖。
 
 ## ASR 约束
 

@@ -98,6 +98,7 @@ acceptance/*
 !acceptance/windows_pipeline_lock_lease_stability.md
 !acceptance/v0_7_1_pipeline_longform_acceptance.md
 !acceptance/v0_7_1_pipeline_longform_acceptance_rerun.md
+!acceptance/v0_7_self_use_release_candidate.md
 !acceptance/reports/
 acceptance/reports/*
 !acceptance/reports/v0_7_1_summary.json
@@ -114,6 +115,7 @@ acceptance/reports/*
 !acceptance/reports/v0_7_1_pipeline_scenarios.csv
 !acceptance/reports/v0_7_1_pipeline_rerun_summary.json
 !acceptance/reports/v0_7_1_pipeline_rerun_scenarios.csv
+!acceptance/reports/v0_7_self_use_release_candidate_summary.json
 .superdesign/
 research/
 TRIAL.md

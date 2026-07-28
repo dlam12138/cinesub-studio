@@ -2,7 +2,7 @@
 
 本文件只记录面向用户的显著变化，不等同于完整 Git 提交历史。
 
-## Unreleased — v0.7.x candidate
+## Unreleased — v0.7.0 candidate
 
 ### Added
 
@@ -39,8 +39,9 @@ evaluation improvements.
 
 ### Release status
 
-- Target version: not yet fixed beyond `v0.7.x candidate`.
-- Portable candidate build: pending an explicit target version.
+- Target version: `0.7.0`.
+- Positioning: quality-neutral personal-use reliability release.
+- Portable candidate build: pending final packaged acceptance.
 - Tag: not created.
 - GitHub Release: not created.
 - Release approval: pending separate final acceptance.
