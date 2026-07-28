@@ -14,11 +14,10 @@ import sys
 import time
 from pathlib import Path
 
-from asr_runtime import resolve_quality_loop_config
 from asr_model_locator import locate_asr_model, validate_model_directory
+from asr_runtime import resolve_quality_loop_config
 from ffmpeg_locator import find_ffmpeg
 from runtime_paths import resolve_runtime_paths
-
 
 BASE_SHA = "ff2f48b754687346410c850ecdf628045056de8c"
 VIDEOCR_RELEASE = {
@@ -44,7 +43,10 @@ RUN_PROFILES = {
     "quality": ("large-v3", "quality", None),
 }
 CAMPAIGN_PROFILES = tuple(RUN_PROFILES)
-CAMPAIGN_SAMPLES = (
+MULTILINGUAL_CAMPAIGN_SCOPE = "stage3b_multilingual"
+FRENCH_CAMPAIGN_SCOPE = "stage3a_french_film"
+CAMPAIGN_SCOPES = (FRENCH_CAMPAIGN_SCOPE, MULTILINGUAL_CAMPAIGN_SCOPE)
+MULTILINGUAL_CAMPAIGN_SAMPLES = (
     {"sample_id": "sample-01", "description": "french-low-volume", "asr_mode": "fixed", "language": "fr"},
     {"sample_id": "sample-02", "description": "french-near-field", "asr_mode": "auto", "language": None},
     {"sample_id": "sample-03", "description": "french-far-field", "asr_mode": "fixed", "language": "fr"},
@@ -73,15 +75,17 @@ PAIR_INVARIANT_FIELDS = (
 
 def _private_acceptance_path(path: str | Path) -> Path:
     resolved = Path(path).resolve()
-    private_root = (
-        resolve_runtime_paths().project_root
-        / "acceptance"
-        / "v0.7.1-real-media-private"
-    ).resolve()
-    try:
-        resolved.relative_to(private_root)
-    except ValueError as exc:
-        raise ValueError(f"Private acceptance artifact must stay under {private_root}") from exc
+    project_root = resolve_runtime_paths().project_root
+    private_roots = (
+        (project_root / "acceptance" / "v0.7.1-real-media-private").resolve(),
+        (project_root / "work" / "stage3").resolve(),
+    )
+    if not any(
+        resolved == root or root in resolved.parents
+        for root in private_roots
+    ):
+        allowed = ", ".join(str(root) for root in private_roots)
+        raise ValueError(f"Private acceptance artifact must stay under one of: {allowed}")
     return resolved
 
 
@@ -145,16 +149,33 @@ def resolve_acceptance_profile(profile: str) -> dict:
     return resolved
 
 
-def build_campaign_contract(evaluated_sha: str) -> dict:
+def _campaign_samples(campaign_scope: str) -> tuple[dict, ...]:
+    if campaign_scope == FRENCH_CAMPAIGN_SCOPE:
+        return tuple({
+            "sample_id": f"sample-{number:02d}",
+            "description": f"french-film-window-{number:02d}",
+            "asr_mode": "fixed",
+            "language": "fr",
+        } for number in range(1, 7))
+    if campaign_scope == MULTILINGUAL_CAMPAIGN_SCOPE:
+        return MULTILINGUAL_CAMPAIGN_SAMPLES
+    raise ValueError(f"Unknown campaign scope: {campaign_scope}")
+
+
+def build_campaign_contract(
+    evaluated_sha: str,
+    campaign_scope: str = MULTILINGUAL_CAMPAIGN_SCOPE,
+) -> dict:
     evaluated_sha = str(evaluated_sha or "").strip()
     if not evaluated_sha:
         raise ValueError("evaluated_sha is required")
+    campaign_samples = _campaign_samples(campaign_scope)
     scenarios = [
         {**sample, "scenario_id": f'{sample["sample_id"]}-primary', "role": "primary"}
-        for sample in CAMPAIGN_SAMPLES
+        for sample in campaign_samples
     ]
     control = next(
-        sample for sample in CAMPAIGN_SAMPLES
+        sample for sample in campaign_samples
         if sample["sample_id"] == MULTILINGUAL_CONTROL_SAMPLE_ID
     )
     scenarios.append({
@@ -184,6 +205,7 @@ def build_campaign_contract(evaluated_sha: str) -> dict:
     return {
         "schema_version": 1,
         "campaign": "asr-baseline-hardening-v1",
+        "campaign_scope": campaign_scope,
         "evaluated_sha": evaluated_sha,
         "local_files_only": True,
         "private_evidence_required": True,
@@ -610,6 +632,13 @@ def run_profile(args: argparse.Namespace) -> dict:
         "decode_config_sha256": _decode_config_sha256(effective_config),
         "runtime_config_sha256": _runtime_config_sha256(effective_config),
         "output_srt_sha256": sha256_file(srt_path),
+        "artifacts": {
+            "output_srt": str(srt_path),
+            "language_report": str(lang_path),
+            "asr_review": str(
+                Path(args.output_dir).resolve() / f"{input_path.stem}.{model}.asr_review.json"
+            ),
+        },
         "gpu_samples": gpu_samples,
     }
     _write_json(private_dir / f"{run_id}.run.local.json", payload)
@@ -619,23 +648,75 @@ def run_profile(args: argparse.Namespace) -> dict:
 def run_campaign(args: argparse.Namespace) -> dict:
     private_dir = _private_acceptance_path(args.private_dir)
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    samples = manifest.get("samples", {})
-    expected_sample_ids = {sample["sample_id"] for sample in CAMPAIGN_SAMPLES}
+    raw_samples = manifest.get("samples", {})
+    samples = (
+        {
+            str(sample.get("id") or sample.get("sample_id")): sample
+            for sample in raw_samples
+        }
+        if isinstance(raw_samples, list)
+        else raw_samples
+    )
+    campaign_scope = str(
+        getattr(args, "campaign_scope", "")
+        or manifest.get("campaign_scope")
+        or MULTILINGUAL_CAMPAIGN_SCOPE
+    )
+    if manifest.get("campaign_scope") != campaign_scope:
+        raise ValueError("Campaign manifest scope does not match requested scope")
+    campaign_samples = _campaign_samples(campaign_scope)
+    expected_sample_ids = {sample["sample_id"] for sample in campaign_samples}
     if set(samples) != expected_sample_ids:
         raise ValueError("Campaign manifest must define exactly sample-01 through sample-06")
+    if manifest.get("authorized") is not True:
+        raise ValueError("Campaign manifest must set authorized=true")
+    allowed_reference_types = {"gold_verbatim", "production_subtitle", "ocr_weak"}
+    source_groups: dict[str, list[tuple[float, float]]] = {}
+    for sample_id, sample in samples.items():
+        if sample.get("authorized") is not True:
+            raise ValueError(f"{sample_id} must explicitly set authorized=true")
+        if sample.get("reference_type") not in allowed_reference_types:
+            raise ValueError(f"{sample_id} has an invalid reference_type")
+        sample_language = str(
+            sample.get("reference_language") or sample.get("language") or ""
+        ).strip()
+        if not sample_language:
+            raise ValueError(f"{sample_id} must define reference_language")
+        if (
+            sample.get("reference_type") != "ocr_weak"
+            and not str(sample.get("reference_path") or "").strip()
+        ):
+            raise ValueError(f"{sample_id} must define reference_path")
+        if campaign_scope == FRENCH_CAMPAIGN_SCOPE and sample_language != "fr":
+            raise ValueError(f"{sample_id} must be French in the Stage 3A scope")
+        source_group_id = str(sample.get("source_group_id") or "").strip()
+        if not source_group_id:
+            raise ValueError(f"{sample_id} must define source_group_id")
+        start = _parse_campaign_time(sample.get("start"))
+        end = _parse_campaign_time(sample.get("end"))
+        if end <= start:
+            raise ValueError(f"{sample_id} must define a positive source window")
+        intervals = source_groups.setdefault(source_group_id, [])
+        if any(start < previous_end and previous_start < end for previous_start, previous_end in intervals):
+            raise ValueError(f"{sample_id} overlaps another window in {source_group_id}")
+        intervals.append((start, end))
+    if campaign_scope == FRENCH_CAMPAIGN_SCOPE and len(source_groups) < 3:
+        raise ValueError("Stage 3A requires at least three distinct source_group_id values")
     current_sha = _git_sha(resolve_runtime_paths().project_root)
     if current_sha != args.evaluated_sha:
         raise RuntimeError(
             f"Campaign evaluated SHA mismatch: expected {args.evaluated_sha}, current {current_sha}"
         )
 
-    contract = build_campaign_contract(args.evaluated_sha)
+    contract = build_campaign_contract(args.evaluated_sha, campaign_scope)
     private_dir.mkdir(parents=True, exist_ok=True)
     _write_json(private_dir / "campaign.contract.local.json", contract)
     reports = []
     for planned in contract["runs"]:
         sample = samples[planned["sample_id"]]
-        input_path = Path(sample.get("input", "")).expanduser().resolve()
+        input_path = Path(
+            sample.get("media_path") or sample.get("input") or ""
+        ).expanduser().resolve()
         if not input_path.is_file():
             raise FileNotFoundError(
                 f'Private campaign input is unavailable for {planned["sample_id"]}'
@@ -657,12 +738,35 @@ def run_campaign(args: argparse.Namespace) -> dict:
             device=args.device,
             compute_type=args.compute_type,
             hotword_prompt="",
-            input_duration=float(sample.get("duration_seconds", 0.0)),
+            input_duration=(
+                _parse_campaign_time(sample.get("end"))
+                - _parse_campaign_time(sample.get("start"))
+            ),
         ))
         reports.append(report)
     summary = validate_campaign_reports(contract, reports)
     _write_json(private_dir / "campaign.summary.local.json", summary)
     return summary
+
+
+def _parse_campaign_time(value: object) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("Campaign window time is required")
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return float(text)
+    parts = text.replace(",", ".").split(":")
+    if len(parts) not in {2, 3}:
+        raise ValueError(f"Invalid campaign window time: {text}")
+    try:
+        numbers = [float(part) for part in parts]
+    except ValueError as exc:
+        raise ValueError(f"Invalid campaign window time: {text}") from exc
+    if len(numbers) == 2:
+        return numbers[0] * 60 + numbers[1]
+    return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
 
 
 def _effective_value(report: dict, field: str, fallback: object = None) -> object:
@@ -716,6 +820,13 @@ def compare_quality_control(control: dict, quality: dict) -> dict:
         key for key in set(left) | set(right)
         if left.get(key) != right.get(key)
     )
+    accepted_window_count = quality.get("asr_retry_report", {}).get(
+        "accepted_window_count"
+    )
+    if not isinstance(accepted_window_count, int) or isinstance(
+        accepted_window_count, bool
+    ):
+        accepted_window_count = None
     assertions = {
         "effective_config_diff": differences,
         "effective_config_diff_whitelist": list(CONFIG_DIFF_WHITELIST),
@@ -727,8 +838,22 @@ def compare_quality_control(control: dict, quality: dict) -> dict:
         "output_srt_hash_match": control.get("output_srt_sha256") == quality.get("output_srt_sha256"),
         "control_retry_off": left.get("asr_retry_mode") == "off",
         "quality_retry_dry_run": right.get("asr_retry_mode") == "dry_run",
+        "quality_retry_accepted_window_count": accepted_window_count,
     }
-    if not all(value for key, value in assertions.items() if key.endswith("_match") or key.endswith("_valid") or key in {"control_retry_off", "quality_retry_dry_run"}):
+    assertions["quality_dry_run_no_output_apply"] = (
+        assertions["quality_retry_accepted_window_count"] == 0
+    )
+    required = (
+        "effective_config_diff_valid",
+        "invariant_fields_match",
+        "decode_config_hash_match",
+        "runtime_config_hash_match",
+        "input_hash_match",
+        "control_retry_off",
+        "quality_retry_dry_run",
+        "quality_dry_run_no_output_apply",
+    )
+    if not all(assertions[key] for key in required):
         raise RuntimeError("quality and large-control acceptance contracts differ")
     return assertions
 
@@ -773,13 +898,18 @@ def validate_campaign_reports(contract: dict, reports: list[dict]) -> dict:
             "scenario_id": scenario_id,
             **compare_quality_control(by_profile["large-control"], by_profile["quality"]),
         })
+    decode_variance_count = sum(
+        not row["output_srt_hash_match"] for row in comparisons
+    )
     return {
         "schema_version": 1,
         "campaign": contract.get("campaign"),
+        "campaign_scope": contract.get("campaign_scope"),
         "evaluated_sha": contract.get("evaluated_sha"),
         "run_count": len(reports),
         "comparison_count": len(comparisons),
-        "status": "pass",
+        "status": "pass" if decode_variance_count == 0 else "pass_with_decode_variance",
+        "independent_decode_variance_count": decode_variance_count,
         "comparisons": comparisons,
     }
 
@@ -917,6 +1047,11 @@ def main() -> int:
 
     campaign_parser = subparsers.add_parser("campaign-plan")
     campaign_parser.add_argument("--evaluated-sha", required=True)
+    campaign_parser.add_argument(
+        "--campaign-scope",
+        choices=CAMPAIGN_SCOPES,
+        default=MULTILINGUAL_CAMPAIGN_SCOPE,
+    )
     campaign_parser.add_argument("--output", required=True)
 
     review_parser = subparsers.add_parser("review-sample")
@@ -939,6 +1074,11 @@ def main() -> int:
     campaign_run_parser.add_argument("--private-dir", required=True)
     campaign_run_parser.add_argument("--device", default="cuda")
     campaign_run_parser.add_argument("--compute-type", default="float16")
+    campaign_run_parser.add_argument(
+        "--campaign-scope",
+        choices=CAMPAIGN_SCOPES,
+        default="",
+    )
 
     args = parser.parse_args()
     if args.action == "model-preflight":
@@ -952,7 +1092,10 @@ def main() -> int:
     elif args.action == "run":
         run_profile(args)
     elif args.action == "campaign-plan":
-        _write_json(Path(args.output), build_campaign_contract(args.evaluated_sha))
+        _write_json(
+            Path(args.output),
+            build_campaign_contract(args.evaluated_sha, args.campaign_scope),
+        )
     elif args.action == "campaign-run":
         run_campaign(args)
     elif args.action == "review-sample":

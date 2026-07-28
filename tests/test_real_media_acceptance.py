@@ -1,12 +1,13 @@
-from argparse import Namespace
 import json
+from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from real_media_acceptance import (
     BASE_SHA,
+    FRENCH_CAMPAIGN_SCOPE,
+    MULTILINGUAL_CAMPAIGN_SCOPE,
     build_campaign_contract,
     build_run_command,
     build_videocr_command,
@@ -170,6 +171,44 @@ def test_campaign_contract_fixes_six_primary_modes_and_exactly_28_runs() -> None
     }
 
 
+def test_stage3a_contract_allows_six_french_windows_and_keeps_28_runs() -> None:
+    contract = build_campaign_contract("evaluated-sha", FRENCH_CAMPAIGN_SCOPE)
+
+    assert contract["campaign_scope"] == FRENCH_CAMPAIGN_SCOPE
+    assert contract["run_count"] == 28
+    assert len({run["run_id"] for run in contract["runs"]}) == 28
+    primary = [
+        run for run in contract["runs"]
+        if run["role"] == "primary"
+    ]
+    assert len(primary) == 24
+    assert {(run["asr_mode"], run["language"]) for run in primary} == {
+        ("fixed", "fr")
+    }
+    control = [
+        run for run in contract["runs"]
+        if run["role"] == "single-language-multilingual-control"
+    ]
+    assert len(control) == 4
+    assert {(run["sample_id"], run["asr_mode"], run["language"]) for run in control} == {
+        ("sample-01", "multilingual", None)
+    }
+
+
+def test_stage3_private_root_is_accepted(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "real_media_acceptance.resolve_runtime_paths",
+        lambda: Namespace(project_root=tmp_path),
+    )
+    from real_media_acceptance import _private_acceptance_path
+
+    assert _private_acceptance_path(tmp_path / "work" / "stage3" / "asr") == (
+        tmp_path / "work" / "stage3" / "asr"
+    ).resolve()
+    with pytest.raises(ValueError, match="must stay under"):
+        _private_acceptance_path(tmp_path / "output")
+
+
 def test_quality_control_resolves_quality_then_only_overrides_retry() -> None:
     quality = resolve_acceptance_profile("quality")
     control = resolve_acceptance_profile("large-control")
@@ -233,6 +272,9 @@ def _campaign_report(planned: dict) -> dict:
         "decode_config_sha256": f'{planned["scenario_id"]}-decode-hash',
         "runtime_config_sha256": "runtime-hash",
         "output_srt_sha256": f'{planned["scenario_id"]}-srt-hash',
+        "asr_retry_report": {
+            "accepted_window_count": 0,
+        },
     }
 
 
@@ -245,12 +287,14 @@ def test_campaign_validation_asserts_all_seven_quality_control_pairs() -> None:
     assert summary["status"] == "pass"
     assert summary["run_count"] == 28
     assert summary["comparison_count"] == 7
+    assert summary["independent_decode_variance_count"] == 0
     assert all(
         row["effective_config_diff"] == ["asr_retry_mode"]
         and row["decode_config_hash_match"]
         and row["runtime_config_hash_match"]
         and row["input_hash_match"]
         and row["output_srt_hash_match"]
+        and row["quality_dry_run_no_output_apply"]
         for row in summary["comparisons"]
     )
 
@@ -296,6 +340,39 @@ def test_quality_control_comparison_rejects_decode_drift() -> None:
         compare_quality_control(reports["large-control"], reports["quality"])
 
 
+def test_quality_control_records_independent_decode_variance_without_blame_on_retry() -> None:
+    contract = build_campaign_contract("evaluated-sha")
+    planned = [
+        row for row in contract["runs"]
+        if row["scenario_id"] == "sample-01-primary"
+        and row["profile"] in {"large-control", "quality"}
+    ]
+    reports = {row["profile"]: _campaign_report(row) for row in planned}
+    reports["quality"]["output_srt_sha256"] = "independent-cuda-decode-varied"
+
+    comparison = compare_quality_control(
+        reports["large-control"],
+        reports["quality"],
+    )
+
+    assert comparison["output_srt_hash_match"] is False
+    assert comparison["quality_dry_run_no_output_apply"] is True
+
+
+def test_quality_control_rejects_a_dry_run_that_accepted_output_windows() -> None:
+    contract = build_campaign_contract("evaluated-sha")
+    planned = [
+        row for row in contract["runs"]
+        if row["scenario_id"] == "sample-01-primary"
+        and row["profile"] in {"large-control", "quality"}
+    ]
+    reports = {row["profile"]: _campaign_report(row) for row in planned}
+    reports["quality"]["asr_retry_report"]["accepted_window_count"] = 1
+
+    with pytest.raises(RuntimeError, match="contracts differ"):
+        compare_quality_control(reports["large-control"], reports["quality"])
+
+
 def test_review_sampling_is_deterministic_and_remediation_reuses_indexes() -> None:
     first = deterministic_review_indexes(
         sample_id="sample-04",
@@ -335,9 +412,29 @@ def test_campaign_runner_dispatches_exact_plan_without_media_processing(
         media = private_root / "media" / f"{sample_id}.mp4"
         media.parent.mkdir(parents=True, exist_ok=True)
         media.write_bytes(b"private-fixture")
-        samples[sample_id] = {"input": str(media), "duration_seconds": 240}
+        reference = private_root / "reference" / f"{sample_id}.srt"
+        reference.parent.mkdir(parents=True, exist_ok=True)
+        reference.write_text("1\n00:00:00,000 --> 00:00:01,000\nreference\n", encoding="utf-8")
+        samples[sample_id] = {
+            "input": str(media),
+            "duration_seconds": 240,
+            "authorized": True,
+            "source_group_id": f"source-{number:02d}",
+            "start": 0,
+            "end": 240,
+            "reference_type": "gold_verbatim",
+            "reference_language": "en",
+            "reference_path": str(reference),
+        }
     manifest = private_root / "campaign.local.json"
-    manifest.write_text(json.dumps({"samples": samples}), encoding="utf-8")
+    manifest.write_text(
+        json.dumps({
+            "authorized": True,
+            "campaign_scope": MULTILINGUAL_CAMPAIGN_SCOPE,
+            "samples": samples,
+        }),
+        encoding="utf-8",
+    )
     calls = []
 
     monkeypatch.setattr(
@@ -362,6 +459,7 @@ def test_campaign_runner_dispatches_exact_plan_without_media_processing(
         private_dir=str(private_root / "campaign"),
         device="cuda",
         compute_type="float16",
+        campaign_scope=MULTILINGUAL_CAMPAIGN_SCOPE,
     ))
 
     assert summary["run_count"] == 28

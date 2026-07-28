@@ -1,0 +1,13 @@
+sample_id,source_group_id,category,strategy,cue_count,structure_passed,time_mismatch_count,empty_count,suspicious_wrapper_count,output_sha256_prefix,human_review_status,fidelity_decision
+sample-01,film-01,clear_near_field,standard,34,true,0,0,0,4f87a5d22acc,unreviewed,inconclusive
+sample-01,film-01,clear_near_field,three_pass,34,true,0,0,0,63b6be11cb11,unreviewed,inconclusive
+sample-02,film-01,near_field_continuity,standard,46,true,0,0,0,6d9cd1c3d74b,unreviewed,inconclusive
+sample-02,film-01,near_field_continuity,three_pass,46,true,0,0,0,45f39fe82615,unreviewed,inconclusive
+sample-03,film-02,low_volume_dialogue,standard,37,true,0,0,0,e995b9d6018a,unreviewed,inconclusive
+sample-03,film-02,low_volume_dialogue,three_pass,37,true,0,0,0,3282b1b6d123,unreviewed,inconclusive
+sample-04,film-02,low_volume_difficult,standard,42,true,0,0,0,11f305778e3b,unreviewed,inconclusive
+sample-04,film-02,low_volume_difficult,three_pass,42,true,0,0,0,94ac2b5ef946,unreviewed,inconclusive
+sample-05,film-03,far_field_oratory,standard,20,true,0,0,0,8f579193bd42,unreviewed,inconclusive
+sample-05,film-03,far_field_oratory,three_pass,20,true,0,0,0,3551688715fe,unreviewed,inconclusive
+sample-06,film-03,far_field_difficult,standard,22,true,0,0,0,4971e2d62c76,unreviewed,inconclusive
+sample-06,film-03,far_field_difficult,three_pass,22,true,0,0,0,1be852b16098,unreviewed,inconclusive
