@@ -1,13 +1,10 @@
 # 智译字幕工坊 / CineSub Studio
 
-CineSub Studio 是一款本地优先的 Windows 长片字幕工作台，用于生成原文、中文和双语 SRT。它自动完成转写、翻译、质量检查和失败恢复，但字幕在公开使用前仍应人工复核。当前正式版本为 `0.6.2`。
+CineSub Studio 是一款面向 Windows 的本地长片字幕工作台，用于自动完成语音识别、中文翻译、质量检查以及原文、中文和双语 SRT 输出。
 
-> `main` 当前包含尚未正式发布的 v0.7.0 源码候选；最新可下载便携版本仍为 0.6.2。源码接口和正式二进制可能暂时不同。
+当前稳定源码节点为 [`v0.7.0`](https://github.com/dlam12138/cinesub-studio/tree/v0.7.0)。自动生成的字幕仍应在公开使用前人工复核；最新公开便携包以 [GitHub Releases](https://github.com/dlam12138/cinesub-studio/releases) 页面为准。
 
-未发布候选以可靠性、恢复、配置身份、诊断、评测工具和隐私边界为主。
-现有质量评测没有提供足够证据修改 ASR 模型分工或翻译默认策略，因此候选保持
-现有质量默认值，也不包含 ASR 或翻译质量提升声明。显著变化与发布边界见
-[`CHANGELOG.md`](CHANGELOG.md)。
+[项目总说明](PROJECT_OVERVIEW.md) · [版本变化](CHANGELOG.md) · [Windows 便携版快速入门](docs/windows_portable_quickstart.md)
 
 ## 下载与启动
 
@@ -176,7 +173,7 @@ GitHub 源码面向开发和本地调试，不包含模型、Python 运行时、
 
 - [模型参数与调优参考](docs/model_tuning_reference.md)
 
-0.7.0 候选包的唯一构建入口：
+0.7.0 便携包的唯一构建入口：
 
 ```powershell
 .\.venv\Scripts\python.exe -B scripts\build_portable_release.py

@@ -10,6 +10,9 @@ def _read(relative: str) -> str:
 def test_user_readme_matches_public_source_and_portable_release():
     readme = _read("README.md")
     for marker in (
+        "PROJECT_OVERVIEW.md",
+        "当前稳定源码节点",
+        "v0.7.0",
         "CineSubStudio-0.6.2-windows-x64-portable.zip",
         "CineSubStudio.exe",
         "data/config/",
@@ -29,6 +32,46 @@ def test_user_readme_matches_public_source_and_portable_release():
         "project_evaluation_report",
     ):
         assert internal_marker not in readme
+
+
+def test_project_overview_explains_product_capabilities_boundaries_and_direction():
+    overview = _read("PROJECT_OVERVIEW.md")
+    for marker in (
+        "English summary",
+        "项目定位",
+        "为什么开发",
+        "核心流程",
+        "当前能力",
+        "项目边界",
+        "v0.7.0 当前状态",
+        "技术架构",
+        "怎样开始使用",
+        "后续方向",
+        "faster-whisper",
+        "DeepSeek / OpenAI-compatible API",
+        "原文 / 中文 / 双语 SRT",
+        "个人自用可靠性版本",
+        "路线 A",
+    ):
+        assert marker in overview
+    for internal_history in (
+        "PR #",
+        "Milestone",
+        "523a07c3",
+        "push 失败",
+        "分支清理",
+    ):
+        assert internal_history not in overview
+
+
+def test_changelog_matches_the_v0_7_tag_without_claiming_a_github_release():
+    changelog = _read("CHANGELOG.md")
+
+    assert "## v0.7.0 — 2026-07-28" in changelog
+    assert "Tag: `v0.7.0` created." in changelog
+    assert "GitHub Release: not created." in changelog
+    assert "Release assets: not uploaded." in changelog
+    assert "Unreleased — v0.7.0 candidate" not in changelog
 
 
 def test_stage3_research_tools_are_excluded_from_portable_backend():

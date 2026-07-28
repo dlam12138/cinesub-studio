@@ -2,7 +2,7 @@
 
 本文件只记录面向用户的显著变化，不等同于完整 Git 提交历史。
 
-## Unreleased — v0.7.0 candidate
+## v0.7.0 — 2026-07-28
 
 ### Added
 
@@ -43,6 +43,7 @@ evaluation improvements.
 - Target version: `0.7.0`.
 - Positioning: quality-neutral personal-use reliability release.
 - Portable candidate build: passed local packaged acceptance.
-- Tag: not created.
+- Tag: `v0.7.0` created.
 - GitHub Release: not created.
+- Release assets: not uploaded.
 - Release approval: still requires a separate explicit decision.
