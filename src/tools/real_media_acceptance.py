@@ -14,11 +14,10 @@ import sys
 import time
 from pathlib import Path
 
-from asr_runtime import resolve_quality_loop_config
 from asr_model_locator import locate_asr_model, validate_model_directory
+from asr_runtime import resolve_quality_loop_config
 from ffmpeg_locator import find_ffmpeg
 from runtime_paths import resolve_runtime_paths
-
 
 BASE_SHA = "ff2f48b754687346410c850ecdf628045056de8c"
 VIDEOCR_RELEASE = {
@@ -73,15 +72,17 @@ PAIR_INVARIANT_FIELDS = (
 
 def _private_acceptance_path(path: str | Path) -> Path:
     resolved = Path(path).resolve()
-    private_root = (
-        resolve_runtime_paths().project_root
-        / "acceptance"
-        / "v0.7.1-real-media-private"
-    ).resolve()
-    try:
-        resolved.relative_to(private_root)
-    except ValueError as exc:
-        raise ValueError(f"Private acceptance artifact must stay under {private_root}") from exc
+    project_root = resolve_runtime_paths().project_root
+    private_roots = (
+        (project_root / "acceptance" / "v0.7.1-real-media-private").resolve(),
+        (project_root / "work" / "stage3").resolve(),
+    )
+    if not any(
+        resolved == root or root in resolved.parents
+        for root in private_roots
+    ):
+        allowed = ", ".join(str(root) for root in private_roots)
+        raise ValueError(f"Private acceptance artifact must stay under one of: {allowed}")
     return resolved
 
 
@@ -610,6 +611,13 @@ def run_profile(args: argparse.Namespace) -> dict:
         "decode_config_sha256": _decode_config_sha256(effective_config),
         "runtime_config_sha256": _runtime_config_sha256(effective_config),
         "output_srt_sha256": sha256_file(srt_path),
+        "artifacts": {
+            "output_srt": str(srt_path),
+            "language_report": str(lang_path),
+            "asr_review": str(
+                Path(args.output_dir).resolve() / f"{input_path.stem}.{model}.asr_review.json"
+            ),
+        },
         "gpu_samples": gpu_samples,
     }
     _write_json(private_dir / f"{run_id}.run.local.json", payload)
@@ -623,6 +631,18 @@ def run_campaign(args: argparse.Namespace) -> dict:
     expected_sample_ids = {sample["sample_id"] for sample in CAMPAIGN_SAMPLES}
     if set(samples) != expected_sample_ids:
         raise ValueError("Campaign manifest must define exactly sample-01 through sample-06")
+    if manifest.get("authorized") is not True:
+        raise ValueError("Campaign manifest must set authorized=true")
+    allowed_reference_types = {"gold_verbatim", "production_subtitle", "ocr_weak"}
+    for sample_id, sample in samples.items():
+        if sample.get("authorized") is not True:
+            raise ValueError(f"{sample_id} must explicitly set authorized=true")
+        if sample.get("reference_type") not in allowed_reference_types:
+            raise ValueError(f"{sample_id} has an invalid reference_type")
+        if not str(sample.get("reference_language") or "").strip():
+            raise ValueError(f"{sample_id} must define reference_language")
+        if not str(sample.get("reference_path") or "").strip():
+            raise ValueError(f"{sample_id} must define reference_path")
     current_sha = _git_sha(resolve_runtime_paths().project_root)
     if current_sha != args.evaluated_sha:
         raise RuntimeError(

@@ -1,10 +1,9 @@
-from argparse import Namespace
 import json
+from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from real_media_acceptance import (
     BASE_SHA,
     build_campaign_contract,
@@ -168,6 +167,20 @@ def test_campaign_contract_fixes_six_primary_modes_and_exactly_28_runs() -> None
     assert {(run["sample_id"], run["asr_mode"], run["language"]) for run in control} == {
         ("sample-01", "multilingual", None)
     }
+
+
+def test_stage3_private_root_is_accepted(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "real_media_acceptance.resolve_runtime_paths",
+        lambda: Namespace(project_root=tmp_path),
+    )
+    from real_media_acceptance import _private_acceptance_path
+
+    assert _private_acceptance_path(tmp_path / "work" / "stage3" / "asr") == (
+        tmp_path / "work" / "stage3" / "asr"
+    ).resolve()
+    with pytest.raises(ValueError, match="must stay under"):
+        _private_acceptance_path(tmp_path / "output")
 
 
 def test_quality_control_resolves_quality_then_only_overrides_retry() -> None:
@@ -335,9 +348,22 @@ def test_campaign_runner_dispatches_exact_plan_without_media_processing(
         media = private_root / "media" / f"{sample_id}.mp4"
         media.parent.mkdir(parents=True, exist_ok=True)
         media.write_bytes(b"private-fixture")
-        samples[sample_id] = {"input": str(media), "duration_seconds": 240}
+        reference = private_root / "reference" / f"{sample_id}.srt"
+        reference.parent.mkdir(parents=True, exist_ok=True)
+        reference.write_text("1\n00:00:00,000 --> 00:00:01,000\nreference\n", encoding="utf-8")
+        samples[sample_id] = {
+            "input": str(media),
+            "duration_seconds": 240,
+            "authorized": True,
+            "reference_type": "gold_verbatim",
+            "reference_language": "en",
+            "reference_path": str(reference),
+        }
     manifest = private_root / "campaign.local.json"
-    manifest.write_text(json.dumps({"samples": samples}), encoding="utf-8")
+    manifest.write_text(
+        json.dumps({"authorized": True, "samples": samples}),
+        encoding="utf-8",
+    )
     calls = []
 
     monkeypatch.setattr(
