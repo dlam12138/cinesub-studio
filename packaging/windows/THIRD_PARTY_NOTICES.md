@@ -1,4 +1,4 @@
-# Third-Party Notices — 智译字幕工坊 / CineSub Studio v0.6.2
+# Third-Party Notices — 智译字幕工坊 / CineSub Studio
 
 本便携压缩包包含以下第三方组件的运行时库。相应许可和归属声明如下。
 

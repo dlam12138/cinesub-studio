@@ -259,7 +259,10 @@ def required_final_outputs(task: TaskState, config) -> list[Path]:
     )
     required = [outputs.source_srt]
     if config.translate:
-        required.extend([outputs.translation_output, outputs.quality_report])
+        required.append(outputs.translated_srt)
+        if config.translation_mode == "bilingual":
+            required.append(outputs.bilingual_srt)
+        required.append(outputs.quality_report)
     return required
 
 

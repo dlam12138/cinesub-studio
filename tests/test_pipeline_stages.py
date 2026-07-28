@@ -95,6 +95,46 @@ def test_translate_and_quality_stages_return_structured_results(tmp_path: Path, 
     assert quality_result.stage == "quality_checking"
 
 
+def test_bilingual_translation_requires_translated_only_companion(
+    tmp_path: Path, monkeypatch
+) -> None:
+    context = _context(tmp_path)
+    source = context.output_dir / "source.srt"
+    bilingual = context.output_dir / "bilingual.srt"
+    translated = context.output_dir / "zh.srt"
+    source.write_text("source", encoding="utf-8")
+
+    translation = types.ModuleType("subtitle_translate")
+
+    def fake_translate_srt(**kwargs):
+        kwargs["output_path"].write_text("bilingual", encoding="utf-8")
+
+    translation.translate_srt = fake_translate_srt
+    monkeypatch.setitem(sys.modules, "subtitle_translate", translation)
+    config = SimpleNamespace(
+        api_provider="openai-compatible",
+        api_base="",
+        api_key="secret",
+        llm_model="model",
+        target_language="zh-CN",
+        translation_batch_size=20,
+        translation_temperature=0.2,
+        translation_mode="bilingual",
+        context_window=3,
+        lang_profile_config={},
+    )
+
+    with pytest.raises(StageError, match="translated-only"):
+        pipeline_stages.translate_stage(
+            context,
+            source_srt=source,
+            output_path=bilingual,
+            translated_output_path=translated,
+            config=config,
+            effective_prompt="",
+        )
+
+
 def test_terminology_consistency_reports_missing_profile_terms(tmp_path: Path) -> None:
     source = tmp_path / "source.srt"
     translated = tmp_path / "translated.srt"

@@ -170,7 +170,8 @@ def transcribe_stage(
 
 
 def translate_stage(
-    context: TaskContext, *, source_srt: Path, output_path: Path, config: Any, effective_prompt: str,
+    context: TaskContext, *, source_srt: Path, output_path: Path,
+    translated_output_path: Path | None = None, config: Any, effective_prompt: str,
 ) -> StageResult:
     started = time.perf_counter()
     from subtitle_translate import translate_srt
@@ -180,6 +181,7 @@ def translate_stage(
     summary = translate_srt(
         input_path=source_srt,
         output_path=output_path,
+        translated_output_path=translated_output_path,
         api_provider=config.api_provider,
         api_base=config.api_base,
         api_key=config.api_key,
@@ -203,6 +205,11 @@ def translate_stage(
     )
     if not _valid(output_path):
         raise StageError("translating", "Translation completed without a non-empty SRT output.")
+    if translated_output_path is not None and not _valid(translated_output_path):
+        raise StageError(
+            "translating",
+            "Translation completed without a non-empty translated-only SRT output.",
+        )
     safe_summary = (
         summary.safe_summary()
         if hasattr(summary, "safe_summary")
@@ -215,7 +222,10 @@ def translate_stage(
         {
             "schema_version": 1,
             "source_srt": str(source_srt),
-            "translated_srt": str(output_path),
+            "translated_srt": str(translated_output_path or output_path),
+            "bilingual_srt": (
+                str(output_path) if translated_output_path is not None else ""
+            ),
             "translation": safe_summary,
             "terminology_consistency": _terminology_consistency(
                 source_srt, output_path, profile.get("glossary", [])
@@ -241,6 +251,8 @@ def translate_stage(
         )
         semantic_review_report = str(candidate) if _valid(candidate) else ""
     outputs = [output_path, translation_report]
+    if translated_output_path is not None:
+        outputs.append(translated_output_path)
     if semantic_review_report:
         outputs.append(Path(semantic_review_report))
     return StageResult(

@@ -330,6 +330,20 @@ function registerDirectoryPicker() {
   });
 }
 
+function registerOutputDirectoryOpener() {
+  ipcMain.handle("shell:open-output-directory", async () => {
+    const outputDirectory = app.isPackaged
+      ? path.join(path.dirname(process.execPath), "data", "output")
+      : path.join(repoRoot, "output");
+    fs.mkdirSync(outputDirectory, { recursive: true });
+    const errorMessage = await shell.openPath(outputDirectory);
+    if (errorMessage) {
+      throw new Error(`Could not open output directory: ${errorMessage}`);
+    }
+    return true;
+  });
+}
+
 async function main() {
   const port = parsePort();
   let python;
@@ -400,6 +414,7 @@ configurePortableElectronPaths();
 
 app.whenReady().then(() => {
   registerDirectoryPicker();
+  registerOutputDirectoryOpener();
   return main();
 });
 

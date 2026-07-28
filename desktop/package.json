@@ -1,6 +1,6 @@
 {
   "name": "cinesub-studio-desktop",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "cinesubBuildFlavor": "unified",
   "private": true,
   "productName": "智译字幕工坊",
@@ -48,6 +48,10 @@
           "!src/tools/segment_asr_*.py",
           "!src/tools/stage5_go_no_go.py",
           "!src/tools/semantic_review_regression.py",
+          "!src/tools/asr_quality_evaluation.py",
+          "!src/tools/public_gold_sample_prep.py",
+          "!src/tools/public_gold_translation_review.py",
+          "!src/tools/real_media_acceptance.py",
           "!src/tools/translation_quality_benchmark.py",
           "!src/tools/translation_strategy_finale.py",
           "!src/tools/wenyi_*.py"

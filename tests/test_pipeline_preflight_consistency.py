@@ -722,6 +722,21 @@ def test_t10_model_availability_parity_and_runtime_priority(monkeypatch, tmp_pat
 # the "可直接运行" ready message.
 # --------------------------------------------------------------------------- #
 
+def test_web_pipeline_never_moves_selected_input_files():
+    command = pipeline_api._build_background_command(
+        action="run",
+        provider_id="",
+        language_profile_id="",
+        input_dir=r"D:\Movies",
+        model="small",
+        device="auto",
+        compute_type="",
+        translate_enabled=False,
+    )
+
+    assert "--no-move-completed" in command
+
+
 def test_t11_index_scan_routes_to_plan_and_default_config_lacks_ready_message():
     html = (Path(web_server.WEB_ROOT) / "index.html").read_text(encoding="utf-8")
 

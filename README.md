@@ -76,6 +76,8 @@ data/.cache/    Electron、pip 和 Hugging Face 缓存
 4. 在 `data/output/` 查看原文、译文、双语字幕和质量报告。
 
 大文件建议使用本机路径或输入目录，不要通过浏览器上传整部电影。
+Web/Electron 批量任务不会移动或删除所选输入文件；归档移动只保留为开发者
+显式 CLI 选项。
 
 ## 三种 ASR 模式
 
