@@ -41,6 +41,10 @@ AUDIO_SUFFIXES = {".wav", ".flac", ".opus", ".mp3", ".ogg", ".m4a"}
 TEXT_SUFFIXES = {".txt"}
 TABLE_SUFFIXES = {".tsv", ".csv"}
 EXPECTED_SAMPLE_IDS = tuple(f"sample-{number:02d}" for number in range(1, 7))
+SUMMRE_REPOSITORY = "linagora/SUMM-RE"
+SUMMRE_REVISION = "6b5492d1cea1e483131627c939f82c3989c52b0d"
+SUMMRE_LICENSE = "CC BY-SA 4.0"
+SUMMRE_CITATION = "SUMM-RE: A corpus of French meeting-style conversations (2024)"
 SOURCE_SUFFIX_RE = re.compile(
     r"(?i)(?:[-_.](?:clip|segment|seg|chunk|part|utt))?[-_.]?\d+(?:[-_.]\d+)?$"
 )
@@ -280,9 +284,7 @@ def _same_stem_pairs(reader: ArchiveReader, names: list[str]) -> dict[str, tuple
             continue
         transcript_member = text_by_stem.get(path.with_suffix("").as_posix().casefold())
         if transcript_member:
-            transcript = _decode_text(reader.read(transcript_member))
-            if transcript:
-                pairs[audio] = (transcript_member, transcript)
+            pairs[audio] = (transcript_member, "")
     return pairs
 
 
@@ -294,6 +296,13 @@ def _derive_source_group(audio_member: str, all_audio: list[str]) -> tuple[str, 
     }
     if len(parents) >= 3 and path.parent.as_posix() not in {"", "."}:
         return path.parent.as_posix(), "audio_parent_directory"
+    if re.fullmatch(
+        r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        path.stem,
+    ):
+        raise ValueError(
+            "MediaSpeech uses flat per-clip UUID names without recoverable source metadata"
+        )
     stem = SOURCE_SUFFIX_RE.sub("", path.stem).strip("-_.")
     if not stem or stem == path.stem:
         raise ValueError(
@@ -382,9 +391,22 @@ def inspect_archive(archive: Path, output: Path) -> dict[str, Any]:
             raise ValueError("No stable audio/transcript pairing rule was found")
         candidates: list[Candidate] = []
         source_rules = set()
+        source_group_error = ""
         for audio_member, (transcript_member, transcript) in sorted(pairs.items()):
-            source_group_id, source_rule = _derive_source_group(audio_member, audio)
+            try:
+                source_group_id, source_rule = _derive_source_group(
+                    audio_member, audio
+                )
+            except ValueError as exc:
+                source_group_error = str(exc)
+                candidates.clear()
+                source_rules.clear()
+                break
             source_rules.add(source_rule)
+            if not transcript:
+                transcript = _decode_text(reader.read(transcript_member))
+            if not transcript:
+                continue
             raw = reader.read(audio_member)
             if PurePosixPath(audio_member).suffix.casefold() == ".wav":
                 duration, rms = _wave_metrics(raw)
@@ -421,11 +443,17 @@ def inspect_archive(archive: Path, output: Path) -> dict[str, Any]:
         "observed_transcript_layout": _layout(names, TEXT_SUFFIXES | TABLE_SUFFIXES),
         "pairing_rule": pairing_rule,
         "source_group_rule": sorted(source_rules),
+        "source_group_reliable": not bool(source_group_error),
+        "source_group_error": source_group_error,
         "candidate_group_count": group_count,
         "candidate_count": len(candidates),
         "candidates": [asdict(row) for row in candidates],
     }
     _write_json(output, payload)
+    if source_group_error:
+        raise ValueError(
+            f"{source_group_error}; discovery report written to {output}"
+        )
     return payload
 
 
@@ -692,6 +720,341 @@ def build_bundles(
     return manifest
 
 
+def _merge_summre_segments(raw_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    segments = []
+    for row in raw_segments:
+        transcript = str(row.get("transcript") or "").strip()
+        start = float(row.get("start") or 0)
+        end = float(row.get("end") or 0)
+        if transcript and end > start:
+            segments.append({"start": start, "end": end, "transcript": transcript})
+    segments.sort(key=lambda row: (row["start"], row["end"]))
+    clips = []
+    current: list[dict[str, Any]] = []
+    for segment in segments:
+        if current and (
+            segment["start"] - current[-1]["end"] > 2.0
+            or segment["end"] - current[0]["start"] > 15.0
+        ):
+            duration = current[-1]["end"] - current[0]["start"]
+            if 2.999 <= duration <= 15.001:
+                clips.append({
+                    "start": current[0]["start"],
+                    "end": current[-1]["end"],
+                    "transcript": " ".join(row["transcript"] for row in current),
+                })
+            current = []
+        current.append(segment)
+        duration = current[-1]["end"] - current[0]["start"]
+        if duration >= 2.999:
+            if duration <= 15.001:
+                clips.append({
+                    "start": current[0]["start"],
+                    "end": current[-1]["end"],
+                    "transcript": " ".join(row["transcript"] for row in current),
+                })
+            current = []
+    return clips
+
+
+def _select_summre_clips(
+    clips: list[dict[str, Any]],
+    *,
+    min_duration: float,
+    max_duration: float,
+    silence_ms: int,
+) -> list[dict[str, Any]]:
+    selected = []
+    duration = 0.0
+    for clip in clips:
+        addition = clip["end"] - clip["start"]
+        if selected:
+            addition += silence_ms / 1000
+        if duration + addition > max_duration:
+            continue
+        selected.append(clip)
+        duration += addition
+        if duration >= min_duration:
+            return selected
+    return []
+
+
+def _summre_audio_bytes(audio: object) -> bytes:
+    if isinstance(audio, dict):
+        raw = audio.get("bytes")
+        if isinstance(raw, bytes):
+            return raw
+        path = str(audio.get("path") or "")
+        if path:
+            if re.match(r"^https?://", path):
+                with urllib.request.urlopen(path, timeout=120) as response:
+                    return response.read()
+            candidate = Path(path)
+            if candidate.is_file():
+                return candidate.read_bytes()
+    raise ValueError("SUMM-RE streaming record did not expose undecoded audio bytes")
+
+
+def _normalized_audio_frames(raw: bytes, temporary_dir: Path, key: str) -> bytes:
+    try:
+        with wave.open(io.BytesIO(raw), "rb") as handle:
+            if (
+                handle.getnchannels() == 1
+                and handle.getframerate() == 16000
+                and handle.getsampwidth() == 2
+                and handle.getcomptype() == "NONE"
+            ):
+                return handle.readframes(handle.getnframes())
+    except (EOFError, wave.Error):
+        pass
+    source = temporary_dir / f"{hashlib.sha256(key.encode()).hexdigest()[:12]}.audio"
+    output = source.with_suffix(".wav")
+    source.write_bytes(raw)
+    ffmpeg = find_ffmpeg(resolve_runtime_paths().project_root)
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is required to normalize SUMM-RE audio")
+    subprocess.run(
+        [
+            str(ffmpeg), "-v", "error", "-i", str(source), "-ac", "1",
+            "-ar", "16000", "-c:a", "pcm_s16le", "-y", str(output),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    with wave.open(str(output), "rb") as handle:
+        return handle.readframes(handle.getnframes())
+
+
+def prepare_summre(
+    output_dir: Path,
+    *,
+    splits: tuple[str, ...] = ("dev", "test"),
+    min_source_groups: int = 3,
+    min_duration: float = 45,
+    max_duration: float = 75,
+    silence_ms: int = 250,
+) -> dict[str, Any]:
+    if not splits or any(split not in {"dev", "test"} for split in splits):
+        raise ValueError("SUMM-RE public gold permits only dev and test splits")
+    try:
+        import datasets
+    except ImportError as exc:
+        raise RuntimeError(
+            "SUMM-RE streaming requires the optional 'datasets' package"
+        ) from exc
+    selected_by_meeting: dict[str, list[dict[str, Any]]] = {}
+    observed_records = 0
+    for split in splits:
+        stream = datasets.load_dataset(
+            SUMMRE_REPOSITORY,
+            name="all",
+            split=split,
+            streaming=True,
+            revision=SUMMRE_REVISION,
+        )
+        stream = stream.cast_column("audio", datasets.Audio(decode=False))
+        for record in stream:
+            observed_records += 1
+            meeting_id = str(record.get("meeting_id") or "").strip()
+            audio_id = str(record.get("audio_id") or "").strip()
+            if not meeting_id or not audio_id:
+                continue
+            rows = selected_by_meeting.setdefault(meeting_id, [])
+            if len(rows) >= 2:
+                continue
+            clips = _select_summre_clips(
+                _merge_summre_segments(list(record.get("segments") or [])),
+                min_duration=min_duration,
+                max_duration=max_duration,
+                silence_ms=silence_ms,
+            )
+            if not clips:
+                continue
+            rows.append({
+                "split": split,
+                "meeting_id": meeting_id,
+                "speaker_id": str(record.get("speaker_id") or ""),
+                "audio_id": audio_id,
+                "audio": record.get("audio"),
+                "clips": clips,
+            })
+            ready = [
+                key for key, values in selected_by_meeting.items()
+                if len(values) >= 2
+            ]
+            if len(ready) >= min_source_groups:
+                selected_by_meeting = {
+                    key: selected_by_meeting[key][:2]
+                    for key in sorted(ready)[:min_source_groups]
+                }
+                break
+        if len(selected_by_meeting) >= min_source_groups and all(
+            len(rows) >= 2 for rows in selected_by_meeting.values()
+        ):
+            break
+    if len(selected_by_meeting) < min_source_groups or not all(
+        len(rows) >= 2 for rows in selected_by_meeting.values()
+    ):
+        raise RuntimeError(
+            "SUMM-RE streaming did not yield two eligible tracks for three meetings"
+        )
+    flattened = [
+        row for meeting_id in sorted(selected_by_meeting)
+        for row in selected_by_meeting[meeting_id]
+    ]
+    snapshot_material = {
+        "repository": SUMMRE_REPOSITORY,
+        "revision": SUMMRE_REVISION,
+        "records": [
+            {
+                "split": row["split"],
+                "meeting_id": row["meeting_id"],
+                "audio_id": row["audio_id"],
+                "clips": row["clips"],
+            }
+            for row in flattened
+        ],
+        "tool_version": TOOL_VERSION,
+    }
+    snapshot_sha = hashlib.sha256(
+        json.dumps(
+            snapshot_material,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_samples = []
+    selection_samples = []
+    with tempfile.TemporaryDirectory(
+        prefix="cinesub-public-gold-summre-"
+    ) as temporary:
+        temporary_dir = Path(temporary)
+        for sample_number, row in enumerate(flattened, start=1):
+            sample_id = f"sample-{sample_number:02d}"
+            audio_raw = _summre_audio_bytes(row["audio"])
+            frames = _normalized_audio_frames(
+                audio_raw, temporary_dir, row["audio_id"]
+            )
+            audio_sha = hashlib.sha256(audio_raw).hexdigest()
+            wav_path = output_dir / f"{sample_id}.wav"
+            srt_path = output_dir / f"{sample_id}.gold.fr.srt"
+            clips_path = output_dir / f"{sample_id}.clips.local.json"
+            cursor_frames = 0
+            silence_frames = round(16000 * silence_ms / 1000)
+            clip_rows = []
+            with wave.open(str(wav_path), "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(16000)
+                for clip_index, clip in enumerate(row["clips"], start=1):
+                    if clip_index > 1:
+                        output.writeframes(b"\0\0" * silence_frames)
+                        cursor_frames += silence_frames
+                    source_start = max(round(float(clip["start"]) * 16000), 0)
+                    source_end = min(
+                        round(float(clip["end"]) * 16000),
+                        len(frames) // 2,
+                    )
+                    if source_end <= source_start:
+                        raise ValueError("SUMM-RE clip falls outside its audio track")
+                    start = cursor_frames / 16000
+                    pcm = frames[source_start * 2:source_end * 2]
+                    output.writeframes(pcm)
+                    cursor_frames += len(pcm) // 2
+                    end = cursor_frames / 16000
+                    clip_rows.append({
+                        "clip_index": clip_index,
+                        "start": round(start, 6),
+                        "end": round(end, 6),
+                        "source_start": round(float(clip["start"]), 6),
+                        "source_end": round(float(clip["end"]), 6),
+                        "transcript": clip["transcript"],
+                    })
+            srt_path.write_text(
+                "\n\n".join(
+                    (
+                        f"{clip['clip_index']}\n"
+                        f"{_srt_time(clip['start'])} --> {_srt_time(clip['end'])}\n"
+                        f"{clip['transcript']}"
+                    )
+                    for clip in clip_rows
+                ) + "\n",
+                encoding="utf-8",
+            )
+            _write_json(clips_path, {
+                "schema_version": 1,
+                "sample_id": sample_id,
+                "split": row["split"],
+                "meeting_id": row["meeting_id"],
+                "speaker_id": row["speaker_id"],
+                "audio_id": row["audio_id"],
+                "audio_sha256": audio_sha,
+                "clips": clip_rows,
+            })
+            duration = cursor_frames / 16000
+            manifest_samples.append({
+                "id": sample_id,
+                "source_group_id": row["meeting_id"],
+                "media_path": wav_path.name,
+                "start": 0,
+                "end": round(duration, 6),
+                "reference_language": "fr",
+                "reference_type": "gold_verbatim",
+                "reference_path": srt_path.name,
+                "clips_path": clips_path.name,
+                "authorized": True,
+            })
+            selection_samples.append({
+                "sample_id": sample_id,
+                "split": row["split"],
+                "meeting_id": row["meeting_id"],
+                "speaker_id": row["speaker_id"],
+                "audio_id": row["audio_id"],
+                "audio_sha256": audio_sha,
+                "duration_seconds": round(duration, 6),
+                "clip_count": len(clip_rows),
+            })
+    manifest = {
+        "schema_version": 1,
+        "authorized": True,
+        "campaign_scope": "stage3a_public_gold",
+        "dataset": "SUMM-RE",
+        "dataset_version": SUMMRE_REVISION,
+        "dataset_license": SUMMRE_LICENSE,
+        "dataset_citation": SUMMRE_CITATION,
+        "source_page": f"https://huggingface.co/datasets/{SUMMRE_REPOSITORY}",
+        "dataset_snapshot_sha256": snapshot_sha,
+        "archive_hash_prefix": snapshot_sha[:12],
+        "selection_identity": snapshot_sha,
+        "samples": manifest_samples,
+    }
+    selection = {
+        "schema_version": 1,
+        "tool_version": TOOL_VERSION,
+        "dataset": "SUMM-RE",
+        "dataset_revision": SUMMRE_REVISION,
+        "license": SUMMRE_LICENSE,
+        "splits_allowed": ["dev", "test"],
+        "splits_used": sorted({row["split"] for row in flattened}),
+        "streaming": True,
+        "train_used": False,
+        "observed_record_count": observed_records,
+        "selection_signals": [
+            "meeting_id", "speaker_id", "segment_duration",
+            "transcript_word_count", "dataset_revision",
+        ],
+        "model_results_read": False,
+        "selection_identity": snapshot_sha,
+        "samples": selection_samples,
+    }
+    _write_json(output_dir / "public-gold-manifest.local.json", manifest)
+    _write_json(output_dir / "public-gold-selection.local.json", selection)
+    return manifest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Prepare deterministic private MediaSpeech French public-gold bundles."
@@ -714,12 +1077,24 @@ def main() -> int:
     prepare.add_argument("--max-duration", type=float, default=75)
     prepare.add_argument("--silence-ms", type=int, default=250)
     prepare.add_argument("--seed", default="stage3a-public-gold-v1")
+    summre = subparsers.add_parser("prepare-summre")
+    summre.add_argument("--output-dir", type=Path, required=True)
+    summre.add_argument(
+        "--split",
+        action="append",
+        choices=("dev", "test"),
+        default=[],
+    )
+    summre.add_argument("--min-source-groups", type=int, default=3)
+    summre.add_argument("--min-duration", type=float, default=45)
+    summre.add_argument("--max-duration", type=float, default=75)
+    summre.add_argument("--silence-ms", type=int, default=250)
     args = parser.parse_args()
     if args.action == "download":
         payload = download_archive(args.source_url, args.output_dir)
     elif args.action == "inspect":
         payload = inspect_archive(args.archive, args.output)
-    else:
+    elif args.action == "prepare":
         discovery_path = args.discovery or (
             args.output_dir / "public-gold-discovery.local.json"
         )
@@ -742,6 +1117,15 @@ def main() -> int:
             discovery,
             selection,
             args.output_dir,
+            silence_ms=args.silence_ms,
+        )
+    else:
+        payload = prepare_summre(
+            args.output_dir,
+            splits=tuple(args.split or ("dev", "test")),
+            min_source_groups=args.min_source_groups,
+            min_duration=args.min_duration,
+            max_duration=args.max_duration,
             silence_ms=args.silence_ms,
         )
     print(json.dumps(payload, ensure_ascii=False, indent=2))

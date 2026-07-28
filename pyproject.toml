@@ -6,6 +6,7 @@ requires-python = ">=3.10,<3.14"
 
 [project.optional-dependencies]
 dev = [
+    "datasets>=3,<5",
     "jiwer>=4,<5",
     "pytest",
     "ruff",

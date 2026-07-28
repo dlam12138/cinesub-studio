@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import sys
 import wave
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from public_gold_sample_prep import (
@@ -13,6 +15,7 @@ from public_gold_sample_prep import (
     ArchiveReader,
     build_bundles,
     inspect_archive,
+    prepare_summre,
     select_bundles,
 )
 
@@ -78,6 +81,11 @@ def test_unreliable_source_group_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="reliable parent or stable filename"):
         inspect_archive(archive_path, tmp_path / "discovery.json")
+    discovery = json.loads(
+        (tmp_path / "discovery.json").read_text(encoding="utf-8")
+    )
+    assert discovery["source_group_reliable"] is False
+    assert discovery["candidate_group_count"] == 0
 
 
 def test_selection_is_deterministic_and_identity_binds_archive_and_tool() -> None:
@@ -186,3 +194,63 @@ def test_archive_reader_never_extracts_members_implicitly(tmp_path: Path) -> Non
             "transcription humaine groupe 1 extrait 1"
         )
     assert not (tmp_path / "source-01").exists()
+
+
+def test_summre_fallback_streams_only_dev_test_and_uses_real_meeting_ids(
+    tmp_path: Path, monkeypatch
+) -> None:
+    records = []
+    for meeting in range(1, 4):
+        for speaker in range(1, 3):
+            records.append({
+                "meeting_id": f"meeting-{meeting:02d}",
+                "speaker_id": f"speaker-{speaker:02d}",
+                "audio_id": f"meeting-{meeting:02d}-speaker-{speaker:02d}",
+                "audio": {"bytes": _wav_bytes(seconds=7)},
+                "segments": [
+                    {"start": 0.0, "end": 3.0, "transcript": "bonjour à tous"},
+                    {"start": 3.1, "end": 6.1, "transcript": "suite de réunion"},
+                ],
+            })
+
+    class FakeStream:
+        def __iter__(self):
+            return iter(records)
+
+        def cast_column(self, _name, _feature):
+            return self
+
+    calls = []
+
+    def fake_load_dataset(_repository, **kwargs):
+        calls.append(kwargs)
+        return FakeStream()
+
+    fake_datasets = SimpleNamespace(
+        load_dataset=fake_load_dataset,
+        Audio=lambda decode: {"decode": decode},
+    )
+    monkeypatch.setitem(sys.modules, "datasets", fake_datasets)
+
+    manifest = prepare_summre(
+        tmp_path / "prepared",
+        splits=("dev", "test"),
+        min_duration=5,
+        max_duration=8,
+    )
+
+    assert calls[0]["split"] == "dev"
+    assert all(call["split"] in {"dev", "test"} for call in calls)
+    assert all(call["split"] != "train" for call in calls)
+    assert manifest["dataset"] == "SUMM-RE"
+    assert manifest["dataset_license"] == "CC BY-SA 4.0"
+    assert len(manifest["samples"]) == 6
+    assert len({row["source_group_id"] for row in manifest["samples"]}) == 3
+    selection = json.loads(
+        (tmp_path / "prepared" / "public-gold-selection.local.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert selection["streaming"] is True
+    assert selection["train_used"] is False
+    assert selection["model_results_read"] is False

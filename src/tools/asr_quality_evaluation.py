@@ -428,6 +428,7 @@ def _public_projection(detail: dict[str, Any]) -> dict[str, Any]:
         "dataset_citation": detail.get("dataset_citation"),
         "source_page": detail.get("source_page"),
         "archive_hash_prefix": detail.get("archive_hash_prefix"),
+        "dataset_snapshot_hash_prefix": detail.get("dataset_snapshot_hash_prefix"),
         "samples": public_samples,
         "source_groups": group_rows,
         "model_comparison": detail.get("model_comparison"),
@@ -808,7 +809,7 @@ def evaluate_campaign(
             large_clips,
             seed_material=(
                 f"{evaluated_sha}:"
-                f"{manifest.get('archive_local_download_sha256', '')}:"
+                f"{manifest.get('archive_local_download_sha256', '') or manifest.get('dataset_snapshot_sha256', '')}:"
                 f"{PUBLIC_GOLD_METRIC_VERSION}"
             ),
         )
@@ -920,6 +921,9 @@ def evaluate_campaign(
             manifest.get("archive_local_download_sha256")
             or manifest.get("archive_hash_prefix")
             or ""
+        )[:12],
+        "dataset_snapshot_hash_prefix": str(
+            manifest.get("dataset_snapshot_sha256") or ""
         )[:12],
         "gold_sample_count": sum(
             row["reference_type"] == "gold_verbatim" for row in detail_rows
