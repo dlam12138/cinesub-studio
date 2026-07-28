@@ -1140,6 +1140,7 @@ def _build_background_command(
     command += [
         "--input",
         input_dir if input_dir else str(PROJECT_ROOT / "input"),
+        "--no-move-completed",
     ]
 
     if not provider_id:

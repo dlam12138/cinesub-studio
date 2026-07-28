@@ -113,15 +113,34 @@ def _write_required_outputs(pipeline: BatchPipeline, task: TaskState, content: b
     if not audio.exists():
         audio.write_bytes(content)
     required = pipeline.required_final_outputs(task)
-    task.source_srt = str(required[0])
-    task.translated_srt = str(required[1]) if len(required) > 1 else ""
+    outputs = batch_worker.plan_pipeline_outputs(
+        output_root=pipeline.config.output_dir,
+        stem=task.output_stem,
+        model=pipeline.config.model,
+        target_language=pipeline.config.target_language,
+        translation_mode=pipeline.config.translation_mode,
+    )
+    task.source_srt = str(outputs.source_srt)
+    task.translated_srt = str(outputs.translated_srt) if pipeline.config.translate else ""
+    task.bilingual_srt = (
+        str(outputs.bilingual_srt)
+        if pipeline.config.translate
+        and pipeline.config.translation_mode == "bilingual"
+        else ""
+    )
     task.quality_report = str(required[-1]) if len(required) > 2 else ""
     task.artifact_fingerprints = {
         "audio": artifact_fingerprint(audio, force_full=True),
         "source_srt": artifact_fingerprint(required[0], force_full=True),
     }
     if len(required) > 1:
-        task.artifact_fingerprints["translation_output"] = artifact_fingerprint(required[1], force_full=True)
+        task.artifact_fingerprints["translation_output"] = artifact_fingerprint(
+            outputs.translation_output, force_full=True
+        )
+        if pipeline.config.translation_mode == "bilingual":
+            task.artifact_fingerprints["translated_companion"] = artifact_fingerprint(
+                outputs.translated_srt, force_full=True
+            )
     if len(required) > 2:
         task.artifact_fingerprints["quality_report"] = artifact_fingerprint(required[-1], force_full=True)
     task.artifact_fingerprints["final_output"] = artifact_set_fingerprint(required)

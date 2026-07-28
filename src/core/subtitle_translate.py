@@ -286,6 +286,7 @@ def translate_srt(
     input_path: Path,
     output_path: Path,
     *,
+    translated_output_path: Path | None = None,
     api_provider: str,
     api_base: str,
     api_key: str,
@@ -634,14 +635,21 @@ def translate_srt(
             kind="incomplete_translation",
         )
 
-    # For translated-only mode, swap text with translation
-    if translation_mode == "translated":
-        for item in items:
-            if item.translation:
-                item.text = item.translation
-                item.translation = ""
+    translated_items = [
+        SubtitleItem(
+            index=item.index,
+            time_line=item.time_line,
+            text=item.translation or item.text,
+        )
+        for item in items
+    ]
 
-    _atomic_write_srt(items, output_path)
+    if translation_mode == "translated":
+        _atomic_write_srt(translated_items, output_path)
+    else:
+        _atomic_write_srt(items, output_path)
+        if translated_output_path is not None:
+            _atomic_write_srt(translated_items, translated_output_path)
     summary.actual_requests = tracker.actual_requests
     summary.extra_requests = tracker.extra_requests
     summary.budget_exhausted = tracker.budget_exhausted

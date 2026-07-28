@@ -13,7 +13,7 @@ npm start
 
 默认端口为 `7860`，可通过 `CINESUB_DESKTOP_PORT` 覆盖。
 
-## 0.6.2 packaged 布局
+## 0.7.0 packaged 布局
 
 ```text
 CineSubStudio.exe
@@ -41,6 +41,6 @@ data/.cache/electron/     Electron userData 和 session cache
 
 构建器使用 `electron-builder --win --dir` 生成 Electron unpacked 目录，再加入 portable Python、FFmpeg、CUDA 和 `small` 模型，扫描敏感信息并输出 ZIP/SHA256。
 
-0.6.2 不生成 NSIS、用户可见启动脚本、自动更新或签名产物。若完整 ZIP 达到 GitHub 2 GiB 限制，构建器会生成 CPU 主包和独立 CUDA add-on。
+0.7.0 不生成 NSIS、用户可见启动脚本、自动更新或签名产物。若完整 ZIP 达到 GitHub 2 GiB 限制，构建器会生成 CPU 主包和独立 CUDA add-on。
 
-该布局是 0.6.2 冻结基线；改变入口、目录或资源边界必须升级版本并同步测试。
+0.7.0 沿用 0.6.2 冻结布局；改变入口、目录或资源边界必须再次升级版本并同步测试。

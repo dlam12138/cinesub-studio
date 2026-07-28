@@ -25,7 +25,8 @@ def test_extract_translations_accepts_deepseek_json_with_line_comments():
 
 def test_translate_srt_retries_once_for_incomplete_structured_output(monkeypatch, tmp_path):
     source = tmp_path / "source.srt"
-    output = tmp_path / "translated.srt"
+    output = tmp_path / "bilingual.srt"
+    translated = tmp_path / "translated.srt"
     source.write_text(
         "1\n00:00:01,000 --> 00:00:02,000\nBonjour.\n\n"
         "2\n00:00:02,000 --> 00:00:03,000\nBonsoir.\n\n",
@@ -47,6 +48,7 @@ def test_translate_srt_retries_once_for_incomplete_structured_output(monkeypatch
     translate_srt(
         input_path=source,
         output_path=output,
+        translated_output_path=translated,
         api_provider="openai-compatible",
         api_base="https://example.invalid",
         api_key="test-key",
@@ -59,10 +61,17 @@ def test_translate_srt_retries_once_for_incomplete_structured_output(monkeypatch
     )
 
     written = output.read_text(encoding="utf-8")
+    translated_written = translated.read_text(encoding="utf-8")
     assert len(calls) == 2
     assert "STRICT JSON RETRY" in calls[1]
     assert "你好。" in written
     assert "晚上好。" in written
+    assert "Bonjour." in written
+    assert "Bonsoir." in written
+    assert "你好。" in translated_written
+    assert "晚上好。" in translated_written
+    assert "Bonjour." not in translated_written
+    assert "Bonsoir." not in translated_written
 
 
 def test_translate_srt_reports_provider_structured_output_after_retry(monkeypatch, tmp_path):

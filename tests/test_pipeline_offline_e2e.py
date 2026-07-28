@@ -174,6 +174,16 @@ def test_offline_pipeline_generates_complete_artifact_sets(
 
     assert source.stat().st_size > 0
     assert translated.stat().st_size > 0
+    if mode == "bilingual":
+        translated_only = (
+            roots["output"]
+            / "zh"
+            / f"{media.stem}.offline-stub.translated.zh-CN.srt"
+        )
+        assert translated_only.stat().st_size > 0
+        assert state is not None
+        assert Path(state.translated_srt) == translated_only.resolve()
+        assert Path(state.bilingual_srt) == translated.resolve()
     assert report.stat().st_size > 0
     assert state is not None and state.status == "completed" and state.stage == "completed"
     assert {event["stage"] for event in events if event["event"] == "completed"} >= {

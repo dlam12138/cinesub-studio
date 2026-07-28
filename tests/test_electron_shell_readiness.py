@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).parent.parent
 DESKTOP = ROOT / "desktop"
 PACKAGE_JSON = DESKTOP / "package.json"
@@ -22,7 +21,7 @@ def _read(path: Path) -> str:
 def test_desktop_package_has_minimal_electron_start_script():
     package = json.loads(_read(PACKAGE_JSON))
     assert package["name"] == "cinesub-studio-desktop"
-    assert package["version"] == "0.6.2"
+    assert package["version"] == "0.7.0"
     assert package["private"] is True
     assert package["main"] == "main.js"
     assert package["scripts"]["start"] == "node launch.js"
@@ -45,13 +44,15 @@ def test_package_lock_exists_and_locks_electron():
     assert "node_modules/electron" in lock["packages"]
 
 
-def test_main_and_preload_exist_with_only_folder_picker_bridge():
+def test_main_and_preload_expose_only_scoped_filesystem_actions():
     assert MAIN_JS.exists()
     assert PRELOAD_JS.exists()
     preload = _read(PRELOAD_JS)
     assert 'contextBridge.exposeInMainWorld("cineSubDesktop"' in preload
     assert "selectDirectory" in preload
     assert 'ipcRenderer.invoke("dialog:select-directory")' in preload
+    assert "openOutputDirectory" in preload
+    assert 'ipcRenderer.invoke("shell:open-output-directory")' in preload
     assert "ipcRenderer.send" not in preload
     assert "ipcRenderer.on" not in preload
     assert "require(\"node:fs\")" not in preload
@@ -61,6 +62,15 @@ def test_main_and_preload_exist_with_only_folder_picker_bridge():
     assert "api_key" not in preload.lower()
     assert "token" not in preload.lower()
     assert "secret" not in preload.lower()
+
+
+def test_main_opens_only_the_application_output_directory():
+    main = _read(MAIN_JS)
+
+    assert 'ipcMain.handle("shell:open-output-directory"' in main
+    assert 'path.join(path.dirname(process.execPath), "data", "output")' in main
+    assert 'path.join(repoRoot, "output")' in main
+    assert "shell.openPath(outputDirectory)" in main
 
 
 def test_main_starts_existing_python_launcher_with_desktop_flags():

@@ -3193,7 +3193,7 @@
       <section class="single-result-panel" aria-label="当前任务状态与结果">
         <div class="single-result-head">
           <h2 data-i18n-en="Step 4 · Results">步骤 4 · 任务状态与结果</h2>
-          <div class="result-toolbar"><span id="singleLastUpdated" class="result-updated">尚未刷新</span><button id="singleRefreshButton" type="button" disabled>刷新状态</button></div>
+          <div class="result-toolbar"><span id="singleLastUpdated" class="result-updated">尚未刷新</span><button id="openOutputDirectoryButton" type="button" hidden>打开输出目录</button><button id="singleRefreshButton" type="button" disabled>刷新状态</button></div>
         </div>
         <div class="job-status">
           <span id="badge" class="badge-status">等待开始</span>
@@ -5565,6 +5565,22 @@ function setupDesktopDirectoryPicker() {
   });
 }
 
+function setupOutputDirectoryButton() {
+  var btn = document.getElementById('openOutputDirectoryButton');
+  if (!btn || !window.cineSubDesktop?.openOutputDirectory) return;
+  btn.hidden = false;
+  btn.addEventListener('click', async function() {
+    btn.disabled = true;
+    try {
+      await window.cineSubDesktop.openOutputDirectory();
+    } catch (err) {
+      showToast('打开输出目录失败：' + String(err.message || err), false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 async function loadPipelineSelects() {
   // Load provider select
   var ps = document.getElementById('pipelineProviderSelect');
@@ -5942,6 +5958,7 @@ function onLangProfileSelect() {
 
 // Load pipeline selects on page load
 setupDesktopDirectoryPicker();
+setupOutputDirectoryButton();
 syncAsrModeUI('single');
 syncAsrModeUI('pipeline');
 loadPipelineSelects();

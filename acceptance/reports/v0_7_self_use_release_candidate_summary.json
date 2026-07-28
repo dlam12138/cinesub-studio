@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "release_prep": {
+    "status": "pass",
+    "route_a": "active",
+    "target_version": "0.7.0",
+    "positioning": "quality-neutral personal-use reliability release",
+    "branch": "codex/v0.7-self-use-release-prep",
+    "base_sha": "10269a22364c55b8b1c8c628aac3ce1275f7fe3e",
+    "evaluated_runtime_sha": "654b49314fc16bd160191a24b876d9df8fd13429"
+  },
+  "stage3a": {
+    "reference_alignment_sanity": "pass",
+    "reviewed_clip_count": 6,
+    "reviewed_source_group_count": 3,
+    "pr_19_squash_sha": "10269a22364c55b8b1c8c628aac3ce1275f7fe3e",
+    "research_execution": "complete",
+    "closeout": "complete_no_promotion",
+    "candidate_promotion": "none",
+    "asr_model": "keep_current_model_split",
+    "resegment": "reject",
+    "retry": "keep_dry_run",
+    "translation_strategy": "keep_current_default",
+    "human_fidelity_gate": "not_completed",
+    "allows_quality_improvement_claim": false
+  },
+  "production_defaults": {
+    "portable_default_model": "small",
+    "large_v3_role": "explicit_quality_option",
+    "balanced_retry_mode": "dry_run",
+    "quality_retry_mode": "dry_run",
+    "translation_strategy": "standard",
+    "research_candidate_promoted": false
+  },
+  "package": {
+    "filename": "CineSubStudio-0.7.0-windows-x64-portable.zip",
+    "bytes": 2076877448,
+    "sha256": "687a9efa20493fe220163f5c58186be2ef27155c0769b9289b8cf0dbb0d326d8",
+    "single_top_level_directory": true,
+    "split_cuda_addon": false,
+    "manifest_file_count": 9283,
+    "manifest_payload_bytes": 3329205786,
+    "checksum_entries_checked": 9284,
+    "checksum_errors": 0,
+    "bundled_components": [
+      "Electron",
+      "portable Python",
+      "FFmpeg",
+      "FFprobe",
+      "CUDA runtime",
+      "required Python dependencies",
+      "small model"
+    ]
+  },
+  "fresh_directory_startup": {
+    "status": "pass",
+    "path_has_chinese_characters": true,
+    "path_has_spaces": true,
+    "direct_exe_launch": "pass",
+    "home_http_status": 200,
+    "diagnostics_http_status": 200,
+    "system_python_required": false,
+    "system_ffmpeg_path_required": false,
+    "cuda_diagnostics": "available_recommended",
+    "small_model_local_only_load": "pass",
+    "provider_save_and_masked_read": "pass",
+    "writes_confined_to_candidate_data": true,
+    "normal_close_process_cleanup": "pass",
+    "open_output_directory_scoped": true
+  },
+  "real_media_acceptance": {
+    "status": "completed",
+    "media_duration_seconds": 2705.87,
+    "cue_count": 534,
+    "stage_duration_seconds": {
+      "audio_extraction": 3.064889,
+      "asr": 111.200277,
+      "translation": 479.743792,
+      "quality_check": 0.104968
+    },
+    "outputs": {
+      "source_srt_bytes": 34014,
+      "chinese_srt_bytes": 34935,
+      "bilingual_srt_bytes": 48732,
+      "distinct_hash_count": 3,
+      "identical_cue_ids_and_timestamps": true,
+      "timestamps_valid": true,
+      "source_fallback_cue_count": 2
+    },
+    "quality": {
+      "status": "warning",
+      "issue_count": 125,
+      "error_count": 0
+    },
+    "downloads_http_200_and_nonempty": true,
+    "original_input_preserved": true,
+    "archived_external_input_count": 0,
+    "logs_contain_secret": false,
+    "logs_contain_subtitle_text": false
+  },
+  "recovery_smoke": {
+    "status": "pass",
+    "media_duration_seconds": 908.88,
+    "interruption_stage": "asr",
+    "original_worker_tree_cleaned_on_close": true,
+    "restart_state": "stale_warning",
+    "automatic_reset": false,
+    "explicit_rebuild_from": "asr",
+    "duplicate_worker_detected": false,
+    "maximum_running_worker_count": 1,
+    "final_status": "completed",
+    "final_failed_task_count": 0,
+    "final_stale_task_count": 0
+  },
+  "privacy_and_packaging": {
+    "secret_hits": 0,
+    "private_media_or_subtitle_hits": 0,
+    "private_absolute_path_hits": 0,
+    "git_or_runtime_record_hits": 0,
+    "research_dataset_or_review_hits": 0,
+    "forbidden_development_content_hits": 0,
+    "required_attributions_present": true,
+    "stale_notice_version_present": false
+  },
+  "verification": {
+    "pytest_passed": 560,
+    "official_import_check": "pass",
+    "self_tests": "pass",
+    "web_smoke": "pass",
+    "electron_node_syntax": "pass",
+    "changed_file_ruff_new_findings": 0,
+    "repository_ruff_preexisting_findings": 176,
+    "git_diff_check": "pass",
+    "windows_ci": {
+      "status": "success",
+      "run_id": 30339687606,
+      "url": "https://github.com/dlam12138/cinesub-studio/actions/runs/30339687606"
+    }
+  },
+  "gate": {
+    "release_prep": "pass",
+    "allows_tag_proposal": true,
+    "allows_github_release": false,
+    "tag_created": false,
+    "github_release_created": false
+  }
+}

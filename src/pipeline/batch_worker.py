@@ -633,9 +633,28 @@ class BatchPipeline:
             expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
             translated_cached = task.artifact_fingerprints.get("translation_output") or {}
             translated_current = artifact_fingerprint(output_translated, translated_cached)
+            companion_cached = (
+                task.artifact_fingerprints.get("translated_companion") or {}
+            )
+            companion_current = (
+                artifact_fingerprint(translated_srt, companion_cached)
+                if self.config.translation_mode == "bilingual"
+                else {}
+            )
             translation_valid = bool(
                 translated_current
                 and translated_current.get("sha256") == translated_cached.get("sha256")
+                and (
+                    self.config.translation_mode != "bilingual"
+                    or (
+                        companion_current
+                        and (
+                            not companion_cached
+                            or companion_current.get("sha256")
+                            == companion_cached.get("sha256")
+                        )
+                    )
+                )
                 and task.stage_build_signatures.get("translation") == expected["translation"]
             )
             if transcribed_now or not translation_valid:
@@ -649,14 +668,23 @@ class BatchPipeline:
                 self._translate(
                     source_srt=source_srt,
                     output_path=output_translated,
+                    translated_output_path=(
+                        translated_srt
+                        if self.config.translation_mode == "bilingual"
+                        else None
+                    ),
                     effective_prompt=effective_prompt,
                 )
                 translated_now = True
-                task.translated_srt = str(output_translated.resolve())
+                task.translated_srt = str(translated_srt.resolve())
                 task.bilingual_srt = str(bilingual_srt.resolve()) if self.config.translation_mode == "bilingual" else ""
                 task.artifact_fingerprints["translation_output"] = artifact_fingerprint(
                     output_translated, force_full=True
                 )
+                if self.config.translation_mode == "bilingual":
+                    task.artifact_fingerprints["translated_companion"] = (
+                        artifact_fingerprint(translated_srt, force_full=True)
+                    )
                 expected = expected_stage_signatures(self.config, task.to_dict(), task.input_fingerprint)
                 task.stage_build_signatures["translation"] = expected["translation"]
                 if self.config.translation_strategy_mode == "semantic_review":
@@ -682,9 +710,12 @@ class BatchPipeline:
                     )
                 task.save()
             else:
-                task.translated_srt = str(output_translated.resolve())
+                task.translated_srt = str(translated_srt.resolve())
                 if self.config.translation_mode == "bilingual":
                     task.bilingual_srt = str(bilingual_srt.resolve())
+                    task.artifact_fingerprints["translated_companion"] = (
+                        companion_current
+                    )
                 if self.config.translation_strategy_mode == "semantic_review":
                     candidate = output_translated.with_name(
                         f"{output_translated.stem}.semantic_review_report.json"
@@ -825,6 +856,7 @@ class BatchPipeline:
         self,
         source_srt: Path,
         output_path: Path,
+        translated_output_path: Path | None,
         effective_prompt: str,
     ) -> None:
         """Run LLM subtitle translation."""
@@ -835,6 +867,7 @@ class BatchPipeline:
                 context,
                 source_srt=source_srt,
                 output_path=output_path,
+                translated_output_path=translated_output_path,
                 config=self.config,
                 effective_prompt=effective_prompt,
             )

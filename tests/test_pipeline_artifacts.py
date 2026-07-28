@@ -31,6 +31,11 @@ def test_pipeline_artifacts_expose_output_download_and_outside_source_copy_only(
     bilingual_srt = output_dir / "bilingual" / "movie.small.bilingual.zh-CN.srt"
     bilingual_srt.parent.mkdir()
     bilingual_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nBonjour\n你好\n", encoding="utf-8")
+    translated_srt = output_dir / "zh" / "movie.small.translated.zh-CN.srt"
+    translated_srt.parent.mkdir()
+    translated_srt.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n你好\n", encoding="utf-8"
+    )
     report = output_dir / "reports" / "movie.small.quality_report.json"
     report.parent.mkdir()
     report.write_text(
@@ -44,7 +49,7 @@ def test_pipeline_artifacts_expose_output_download_and_outside_source_copy_only(
         {
             "source_srt": str(source_srt),
             "bilingual_srt": str(bilingual_srt),
-            "translated_srt": str(bilingual_srt),
+            "translated_srt": str(translated_srt),
             "quality_report": str(report),
             "language_detection": {"source_language": "en", "language_probability": 0.98},
         },
@@ -67,6 +72,11 @@ def test_pipeline_artifacts_expose_output_download_and_outside_source_copy_only(
     assert task["artifacts"]["source"]["download_url"] == ""
     assert task["artifacts"]["bilingual"]["downloadable"] is True
     assert task["artifacts"]["bilingual"]["download_url"].startswith("/api/pipeline/artifact?")
+    assert task["artifacts"]["translated"]["downloadable"] is True
+    assert (
+        task["artifacts"]["translated"]["download_url"]
+        != task["artifacts"]["bilingual"]["download_url"]
+    )
 
 
 def test_resolve_pipeline_artifact_rejects_unknown_traversal_and_outside_output(monkeypatch, tmp_path):

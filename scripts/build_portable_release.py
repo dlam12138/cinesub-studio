@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_VERSION = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 PRODUCT_SLUG = "CineSubStudio"
@@ -469,7 +468,7 @@ def build_portable_release(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the frozen CineSub Studio 0.6.2 Electron portable ZIP."
+        description="Build the frozen CineSub Studio Electron portable ZIP."
     )
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     parser.add_argument("--version", default=DEFAULT_VERSION)
