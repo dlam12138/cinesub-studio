@@ -167,6 +167,24 @@ def test_package_scan_rejects_user_config_and_scripts(tmp_path):
         builder._scan_package(root)
 
 
+def test_package_scan_rejects_non_relocatable_python_console_launchers(tmp_path):
+    builder = _load_builder()
+    launcher = (
+        tmp_path
+        / "portable"
+        / "resources"
+        / "app"
+        / "python"
+        / "Scripts"
+        / "pip.exe"
+    )
+    launcher.parent.mkdir(parents=True)
+    launcher.write_bytes(b"#!D:\\build-host\\python.exe")
+
+    with pytest.raises(builder.BuildError, match="non-relocatable"):
+        builder._scan_package(tmp_path / "portable")
+
+
 def test_sha256_sidecar_matches_zip(monkeypatch, tmp_path):
     builder = _load_builder()
     repo, unpacked = _make_repo(tmp_path)
