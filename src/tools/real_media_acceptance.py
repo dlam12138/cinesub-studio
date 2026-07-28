@@ -732,7 +732,8 @@ def run_campaign(args: argparse.Namespace) -> dict:
     if manifest.get("authorized") is not True:
         raise ValueError("Campaign manifest must set authorized=true")
     allowed_reference_types = {"gold_verbatim", "production_subtitle", "ocr_weak"}
-    source_groups: dict[str, list[tuple[float, float]]] = {}
+    source_groups: set[str] = set()
+    source_intervals: dict[tuple[str, str], list[tuple[float, float]]] = {}
     manifest_dir = Path(args.manifest).resolve().parent
     for sample_id, sample in samples.items():
         if sample.get("authorized") is not True:
@@ -762,11 +763,21 @@ def run_campaign(args: argparse.Namespace) -> dict:
         source_group_id = str(sample.get("source_group_id") or "").strip()
         if not source_group_id:
             raise ValueError(f"{sample_id} must define source_group_id")
+        source_groups.add(source_group_id)
+        source_asset_id = str(
+            sample.get("source_asset_id") or source_group_id
+        ).strip()
+        if campaign_scope == PUBLIC_GOLD_CAMPAIGN_SCOPE and not str(
+            sample.get("source_asset_id") or ""
+        ).strip():
+            raise ValueError(f"{sample_id} must define source_asset_id")
         start = _parse_campaign_time(sample.get("start"))
         end = _parse_campaign_time(sample.get("end"))
         if end <= start:
             raise ValueError(f"{sample_id} must define a positive source window")
-        intervals = source_groups.setdefault(source_group_id, [])
+        intervals = source_intervals.setdefault(
+            (source_group_id, source_asset_id), []
+        )
         if any(start < previous_end and previous_start < end for previous_start, previous_end in intervals):
             raise ValueError(f"{sample_id} overlaps another window in {source_group_id}")
         intervals.append((start, end))

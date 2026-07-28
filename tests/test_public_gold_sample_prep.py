@@ -164,6 +164,7 @@ def test_bundle_duration_timeline_manifest_and_private_clip_audit(tmp_path: Path
     assert manifest["campaign_scope"] == "stage3a_public_gold"
     assert len(manifest["samples"]) == 6
     assert all(row["reference_type"] == "gold_verbatim" for row in manifest["samples"])
+    assert all(row["source_asset_id"] for row in manifest["samples"])
     assert len({row["source_group_id"] for row in manifest["samples"]}) >= 3
     seen = set()
     for sample in manifest["samples"]:
@@ -251,6 +252,7 @@ def test_summre_fallback_streams_only_dev_test_and_uses_real_meeting_ids(
     assert manifest["dataset_license"] == "CC BY-SA 4.0"
     assert len(manifest["samples"]) == 6
     assert len({row["source_group_id"] for row in manifest["samples"]}) == 3
+    assert len({row["source_asset_id"] for row in manifest["samples"]}) == 6
     selection = json.loads(
         (tmp_path / "prepared" / "public-gold-selection.local.json").read_text(
             encoding="utf-8"

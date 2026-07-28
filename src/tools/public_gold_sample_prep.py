@@ -691,6 +691,7 @@ def build_bundles(
             manifest_samples.append({
                 "id": sample_id,
                 "source_group_id": sample["source_group_id"],
+                "source_asset_id": f"prepared-bundle:{sample_id}",
                 "media_path": wav_path.name,
                 "start": 0,
                 "end": round(duration, 6),
@@ -1119,6 +1120,7 @@ def prepare_summre(
             manifest_samples.append({
                 "id": sample_id,
                 "source_group_id": row["meeting_id"],
+                "source_asset_id": row["audio_id"],
                 "media_path": wav_path.name,
                 "start": 0,
                 "end": round(duration, 6),
