@@ -1,0 +1,114 @@
+{
+  "report_schema_version": 1,
+  "stage": "3A",
+  "status": "fail",
+  "failure_reason": "insufficient_gold_and_human_review_evidence",
+  "validated_scope": "French film samples",
+  "not_validated": [
+    "English",
+    "Mandarin",
+    "real code-switching"
+  ],
+  "sha": {
+    "asr_evaluated_sha": "e0be73e73c681c7f0eefa4ba19ad5ecdc080643b",
+    "translation_code_sha": "708eed7de67014063efc17ff176046f225ff7338"
+  },
+  "scope": {
+    "sample_count": 6,
+    "source_group_count": 3,
+    "windows_per_source_group": 2,
+    "total_duration_seconds": 720,
+    "windows_non_overlapping": true
+  },
+  "references": {
+    "gold_verbatim_count": 0,
+    "production_subtitle_count": 0,
+    "ocr_weak_count": 6,
+    "formal_asr_text_accuracy_available": false
+  },
+  "runtime": {
+    "device": "cuda",
+    "compute_type": "float16",
+    "local_files_only": true,
+    "ctranslate2_version": "4.8.1"
+  },
+  "models": {
+    "small": {
+      "revision": "flat",
+      "model_bin_sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+      "local_preflight_passed": true
+    },
+    "large_v3": {
+      "revision": "flat",
+      "model_bin_sha256": "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1",
+      "local_preflight_passed": true
+    }
+  },
+  "asr_campaign": {
+    "contract_scope": "stage3a_french_film",
+    "planned_run_count": 28,
+    "successful_run_count": 28,
+    "quality_control_pair_count": 7,
+    "contract_status": "pass_with_decode_variance",
+    "independent_decode_variance_pair_count": 1,
+    "quality_retry_planned_window_count": 0,
+    "quality_retry_executed_window_count": 0,
+    "quality_retry_accepted_window_count": 0,
+    "gold_sample_count": 0
+  },
+  "asr_aggregate": {
+    "speed": {
+      "run_count": 6,
+      "end_to_end_seconds": 48.614,
+      "cue_count": 159,
+      "gap_seconds": 31.17,
+      "over_20_cps_count": 15,
+      "over_42_character_line_count": 117
+    },
+    "balanced": {
+      "run_count": 6,
+      "end_to_end_seconds": 41.257,
+      "cue_count": 197,
+      "gap_seconds": 85.39,
+      "over_20_cps_count": 56,
+      "over_42_character_line_count": 95
+    },
+    "large_control": {
+      "run_count": 6,
+      "end_to_end_seconds": 171.609,
+      "cue_count": 200,
+      "gap_seconds": 81.99,
+      "over_20_cps_count": 51,
+      "over_42_character_line_count": 92
+    },
+    "quality": {
+      "run_count": 6,
+      "end_to_end_seconds": 187.898,
+      "cue_count": 201,
+      "gap_seconds": 81.21,
+      "over_20_cps_count": 51,
+      "over_42_character_line_count": 92
+    }
+  },
+  "translation_t1": {
+    "sample_count": 6,
+    "candidate_count": 12,
+    "standard_candidate_count": 6,
+    "three_pass_candidate_count": 6,
+    "structure_gate_passed": true,
+    "blind_review_generated": true,
+    "blind_review_completed": false,
+    "authorized_chinese_reference_available": false,
+    "qualified_bilingual_review_available": false,
+    "chinese_fluency_readability": "inconclusive",
+    "translation_fidelity": "inconclusive"
+  },
+  "decisions": {
+    "asr_model": "inconclusive",
+    "asr_resegment": "inconclusive",
+    "asr_retry": "keep_dry_run",
+    "translation_strategy": "inconclusive",
+    "allows_stage3b": true,
+    "allows_release_prep": false
+  }
+}

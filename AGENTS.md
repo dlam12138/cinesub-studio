@@ -92,6 +92,10 @@ acceptance/v0_7_1_real_media_acceptance.md
 acceptance/reports/v0_7_1_summary.json
 acceptance/reports/v0_7_1_performance.csv
 acceptance/reports/v0_7_1_retry_window_audit.csv
+acceptance/v0_7_1_stage3a_french_quality_campaign.md
+acceptance/reports/v0_7_1_stage3a_summary.json
+acceptance/reports/v0_7_1_stage3a_asr.csv
+acceptance/reports/v0_7_1_stage3a_translation.csv
 ```
 
 其余 `acceptance/` 内容均为本地私有证据，包括媒体片段、OCR 帧、完整 transcript、
