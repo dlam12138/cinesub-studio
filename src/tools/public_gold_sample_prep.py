@@ -4,6 +4,7 @@ import argparse
 import csv
 import gc
 import hashlib
+import http.client
 import io
 import json
 import math
@@ -864,29 +865,75 @@ def _summre_shard_audio(
     split: str,
     shard_index: int,
     selected_row_indexes: set[int],
+    cache_dir: Path,
 ) -> dict[int, bytes]:
     try:
-        import fsspec
         import pyarrow.parquet as pq
     except ImportError as exc:
-        raise RuntimeError(
-            "SUMM-RE range streaming requires pyarrow and fsspec[http]"
-        ) from exc
-    url = _summre_shard_url(split, shard_index)
-    with fsspec.open(
-        url,
-        "rb",
-        block_size=16 * 1024 * 1024,
-        cache_type="readahead",
-    ) as handle:
-        column = pq.ParquetFile(handle).read(columns=["audio"]).column("audio")
-        values = {
-            row_index: _summre_audio_bytes(column[row_index].as_py())
-            for row_index in sorted(selected_row_indexes)
-        }
+        raise RuntimeError("SUMM-RE preparation requires pyarrow") from exc
+    local_shard = _download_summre_shard(split, shard_index, cache_dir)
+    column = pq.ParquetFile(local_shard).read(columns=["audio"]).column("audio")
+    values = {
+        row_index: _summre_audio_bytes(column[row_index].as_py())
+        for row_index in sorted(selected_row_indexes)
+    }
     del column
     gc.collect()
     return values
+
+
+def _download_summre_shard(
+    split: str,
+    shard_index: int,
+    cache_dir: Path,
+    *,
+    attempts: int = 8,
+) -> Path:
+    url = _summre_shard_url(split, shard_index)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target = cache_dir / PurePosixPath(urllib.parse.urlsplit(url).path).name
+    partial = target.with_suffix(target.suffix + ".part")
+    request = urllib.request.Request(url, method="HEAD")
+    with urllib.request.urlopen(request, timeout=60) as response:
+        expected_size = int(response.headers.get("Content-Length") or 0)
+    if expected_size <= 0:
+        raise RuntimeError("SUMM-RE shard server did not provide Content-Length")
+    if target.is_file() and target.stat().st_size == expected_size:
+        return target
+    print(f"Selected SUMM-RE shard: {url}")
+    print(f"Expected size: {expected_size} bytes")
+    print(f"Target: {target}")
+    for _attempt in range(attempts):
+        existing = partial.stat().st_size if partial.is_file() else 0
+        if existing == expected_size:
+            break
+        headers = {"Range": f"bytes={existing}-"} if existing else {}
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                mode = "ab" if existing and response.status == 206 else "wb"
+                with partial.open(mode) as output:
+                    while chunk := response.read(8 * 1024 * 1024):
+                        output.write(chunk)
+        except (OSError, urllib.error.URLError, http.client.IncompleteRead):
+            continue
+    actual_size = partial.stat().st_size if partial.is_file() else 0
+    if actual_size != expected_size:
+        raise RuntimeError(
+            f"SUMM-RE shard download is incomplete: {actual_size}/{expected_size}"
+        )
+    os.replace(partial, target)
+    _write_json(target.with_suffix(target.suffix + ".download.local.json"), {
+        "repository": SUMMRE_REPOSITORY,
+        "revision": SUMMRE_REVISION,
+        "split": split,
+        "shard_index": shard_index,
+        "source_url": url,
+        "bytes": expected_size,
+        "local_download_sha256": sha256_file(target),
+        "digest_authority": "locally_computed_not_publisher_supplied",
+    })
+    return target
 
 
 def prepare_summre(
@@ -988,6 +1035,7 @@ def prepare_summre(
         prefix="cinesub-public-gold-summre-"
     ) as temporary:
         temporary_dir = Path(temporary)
+        shard_cache = output_dir.parent / "source" / "summre-selected-shards"
         audio_by_record: dict[tuple[str, int, int], bytes] = {}
         selected_shards = sorted({
             (row["split"], int(row["shard_index"])) for row in flattened
@@ -998,7 +1046,7 @@ def prepare_summre(
                 if row["split"] == split and int(row["shard_index"]) == shard_index
             }
             for row_index, raw in _summre_shard_audio(
-                split, shard_index, indexes
+                split, shard_index, indexes, shard_cache
             ).items():
                 audio_by_record[(split, shard_index, row_index)] = raw
         for sample_number, row in enumerate(flattened, start=1):

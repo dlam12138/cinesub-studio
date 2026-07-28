@@ -222,7 +222,7 @@ def test_summre_fallback_streams_only_dev_test_and_uses_real_meeting_ids(
             for index, row in enumerate(records)
         ]
 
-    def fake_audio(split, shard_index, selected_row_indexes):
+    def fake_audio(split, shard_index, selected_row_indexes, _cache_dir):
         assert split == "dev"
         assert shard_index == 0
         return {
