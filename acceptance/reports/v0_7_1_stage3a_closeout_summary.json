@@ -1,0 +1,71 @@
+{
+  "report_schema_version": 1,
+  "stage": "Stage 3A",
+  "research_execution": "complete",
+  "promotion_result": "no_candidate_promoted",
+  "closeout_decision": "complete_no_promotion",
+  "evidence_layers": {
+    "private_film_stage3a": {
+      "campaign_execution": "pass",
+      "evidence_gate": "fail_insufficient_evidence"
+    },
+    "public_gold_asr": {
+      "execution": "pass",
+      "gold_samples": 6,
+      "successful_runs": 40
+    },
+    "translation_assisted_review": {
+      "status": "complete",
+      "result": "inconclusive",
+      "reviewer_type": "llm_assisted_bilingual_review",
+      "human_fidelity_gate": "not_completed"
+    }
+  },
+  "reference_alignment_sanity": {
+    "result": "pass",
+    "reviewed_clip_count": 6,
+    "reviewed_source_group_count": 3,
+    "speaker_track_result": "pass",
+    "segment_boundary_result": "pass",
+    "normalization_result": "pass",
+    "candidate_window_assignment_result": "pass"
+  },
+  "decisions": {
+    "asr_model": "keep_current_model_split",
+    "resegment": "reject",
+    "retry": "keep_dry_run",
+    "translation_strategy": "keep_current_default",
+    "translation_fidelity": "not_human_validated"
+  },
+  "promotion_evidence": {
+    "large_v3_relative_wer_improvement": 0.02603036,
+    "large_v3_runtime_multiple_vs_small": 2.287203,
+    "severe_sample_regression": true,
+    "resegment_text_preserved_sample_count": 0,
+    "resegment_sample_count": 6,
+    "retry_accepted_window_count": 0,
+    "translation_fluency": {
+      "standard_wins": 23,
+      "three_pass_wins": 24,
+      "ties": 5,
+      "result": "inconclusive"
+    },
+    "translation_fidelity": {
+      "standard_wins": 18,
+      "three_pass_wins": 18,
+      "ties": 16,
+      "result": "inconclusive"
+    },
+    "standard_request_count": 6,
+    "three_pass_request_count": 24
+  },
+  "gates": {
+    "allows_asr_default_change": false,
+    "allows_translation_default_change": false,
+    "allows_quality_improvement_marketing_claim": false,
+    "allows_quality_neutral_release_prep": true,
+    "allows_tag": false,
+    "allows_github_release": false,
+    "release_approval": "pending_separate_final_acceptance"
+  }
+}

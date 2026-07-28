@@ -1,0 +1,7 @@
+sample_id,source_group_id,reference_type,reference_words,small_wer,small_cer,small_substitutions,small_insertions,small_deletions,small_seconds,large_v3_wer,large_v3_cer,large_v3_substitutions,large_v3_insertions,large_v3_deletions,large_v3_seconds,small_minus_large_wer
+sample-01,source-group-01,gold_verbatim,151,0.90728477,0.23722149,42,0,95,5.196554,0.82781457,0.19659240,35,0,90,10.949542,0.07947020
+sample-02,source-group-01,gold_verbatim,112,0.94642857,0.30740741,27,0,79,4.653440,0.94642857,0.30740741,22,0,84,9.732708,0.00000000
+sample-03,source-group-02,gold_verbatim,209,0.97129187,0.26315789,41,0,162,5.195903,0.90909091,0.23827751,51,0,139,12.717657,0.06220096
+sample-04,source-group-02,gold_verbatim,206,0.93203883,0.24196429,47,0,145,4.867520,0.86893204,0.19553571,56,0,123,12.709371,0.06310679
+sample-05,source-group-03,gold_verbatim,151,0.91390728,0.29787234,22,0,116,4.663140,0.96688742,0.38829787,18,0,128,9.691200,-0.05298014
+sample-06,source-group-03,gold_verbatim,136,0.94852941,0.33582090,22,0,107,4.568126,0.94117647,0.33731343,31,0,97,10.859330,0.00735294
