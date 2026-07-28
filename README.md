@@ -4,6 +4,11 @@ CineSub Studio 是一款 Windows 本地字幕工作台，可把视频或音频�
 
 > `main` 当前包含尚未正式发布的 v0.7.x 源码候选；最新可下载便携版本仍为 0.6.2。源码接口和正式二进制可能暂时不同。
 
+未发布候选以可靠性、恢复、配置身份、诊断、评测工具和隐私边界为主。
+现有质量评测没有提供足够证据修改 ASR 模型分工或翻译默认策略，因此候选保持
+现有质量默认值，也不包含 ASR 或翻译质量提升声明。显著变化与发布边界见
+[`CHANGELOG.md`](CHANGELOG.md)。
+
 ## 下载与启动
 
 普通用户只需要从 [GitHub Release v0.6.2](https://github.com/dlam12138/cinesub-studio/releases/tag/v0.6.2) 下载：
