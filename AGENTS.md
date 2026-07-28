@@ -100,6 +100,8 @@ acceptance/v0_7_1_stage3a_public_gold_addendum.md
 acceptance/reports/v0_7_1_stage3a_public_gold_summary.json
 acceptance/reports/v0_7_1_stage3a_public_gold_asr.csv
 acceptance/reports/v0_7_1_stage3a_public_gold_translation.csv
+acceptance/v0_7_1_stage3a_closeout.md
+acceptance/reports/v0_7_1_stage3a_closeout_summary.json
 ```
 
 其余 `acceptance/` 内容均为本地私有证据，包括媒体片段、OCR 帧、完整 transcript、

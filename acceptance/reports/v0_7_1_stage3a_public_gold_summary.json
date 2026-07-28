@@ -31,6 +31,11 @@
     "gold_verbatim_count": 6,
     "total_duration_seconds": 295.993876
   },
+  "reference_alignment_sanity": {
+    "result": "pass",
+    "reviewed_clip_count": 6,
+    "reviewed_source_group_count": 3
+  },
   "runtime": {
     "device": "cuda",
     "compute_type": "float16",
@@ -153,6 +158,10 @@
     "allows_production_asr_change": false,
     "allows_production_translation_change": false,
     "overrides_private_film_stage3a_failure": false,
-    "allows_release_prep": false
+    "allows_quality_improvement_claim": false,
+    "allows_quality_neutral_release_prep": true,
+    "release_prep_mode": "quality_neutral_only",
+    "allows_tag": false,
+    "allows_github_release": false
   }
 }

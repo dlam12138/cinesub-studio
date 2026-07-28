@@ -7,8 +7,8 @@
 The frozen 40-run campaign completed successfully on six French
 `gold_verbatim` samples. It closes the missing formal WER/CER measurement gap,
 but it does not replace the original private-film Stage 3A result. SUMM-RE is
-meeting-style speech rather than film dialogue, and translation review remains
-incomplete.
+meeting-style speech rather than film dialogue. Translation assisted review is
+complete but inconclusive; human French-Chinese fidelity review is incomplete.
 
 - ASR model decision: `keep_current_model_split`.
 - ASR resegment decision: `reject`.
@@ -18,7 +18,9 @@ incomplete.
 - Translation human fidelity review: `not_completed`.
 - Allows production ASR change: No.
 - Allows production translation change: No.
-- Allows Release Prep: No.
+- Allows quality-improvement claim: No.
+- Allows quality-neutral Release Prep: Yes.
+- Allows Tag or GitHub Release: No.
 
 The existing private-film campaign remains `execution pass / evidence gate
 fail`; its evidence and conclusions are unchanged.
@@ -43,9 +45,15 @@ revision `6b5492d1cea1e483131627c939f82c3989c52b0d`; no train data was used.
 - Total duration: 295.994 seconds.
 - Runtime: CUDA, float16, local files only.
 - Campaign: 40 planned, 40 successful.
+- Reference-alignment sanity: Pass; 6 clips across 3 source groups.
 
 The public evidence contains no transcripts, translations, original source
 identifiers, local paths, API material, prompts, or review answer key.
+
+The private alignment audit independently traced the selected speaker rows,
+rebuilt prepared audio from the local official dataset assets, verified the
+gold segment projection and frozen candidate hashes, and confirmed complete
+candidate window assignment. The audit does not publish audio or text.
 
 ## Matched ASR Model Evidence
 
@@ -121,7 +129,9 @@ strategy decision is therefore `inconclusive`.
 
 Qualified human French-Chinese fidelity review remains `not_completed`. This
 LLM-assisted result supports candidate screening and error discovery only; it
-cannot change production defaults or unlock Release Prep.
+cannot change production defaults or support a quality-improvement claim.
+Because no quality defaults are changing, it does not block quality-neutral
+packaging, runtime, documentation, privacy, and license preparation.
 
 ## Gate Summary
 
@@ -136,4 +146,6 @@ cannot change production defaults or unlock Release Prep.
 | Translation human fidelity gate | Not completed |
 | Select translation strategy | No — inconclusive |
 | Override private-film Stage 3A failure | No |
-| Release Prep | No |
+| Quality-improvement claim | No |
+| Quality-neutral Release Prep | Yes |
+| Tag or GitHub Release | No |
