@@ -1,0 +1,13 @@
+sample_id,source_group_id,reference_type,strategy,cue_count,structure_passed,actual_requests,assisted_review_status,human_fidelity_status,strategy_decision
+sample-01,source-group-01,gold_verbatim,standard,8,true,1,incomplete,not_completed,inconclusive
+sample-01,source-group-01,gold_verbatim,three_pass,8,true,3,incomplete,not_completed,inconclusive
+sample-02,source-group-01,gold_verbatim,standard,10,true,1,incomplete,not_completed,inconclusive
+sample-02,source-group-01,gold_verbatim,three_pass,10,true,4,incomplete,not_completed,inconclusive
+sample-03,source-group-02,gold_verbatim,standard,9,true,1,incomplete,not_completed,inconclusive
+sample-03,source-group-02,gold_verbatim,three_pass,9,true,5,incomplete,not_completed,inconclusive
+sample-04,source-group-02,gold_verbatim,standard,8,true,1,incomplete,not_completed,inconclusive
+sample-04,source-group-02,gold_verbatim,three_pass,8,true,4,incomplete,not_completed,inconclusive
+sample-05,source-group-03,gold_verbatim,standard,9,true,1,incomplete,not_completed,inconclusive
+sample-05,source-group-03,gold_verbatim,three_pass,9,true,4,incomplete,not_completed,inconclusive
+sample-06,source-group-03,gold_verbatim,standard,8,true,1,incomplete,not_completed,inconclusive
+sample-06,source-group-03,gold_verbatim,three_pass,8,true,4,incomplete,not_completed,inconclusive

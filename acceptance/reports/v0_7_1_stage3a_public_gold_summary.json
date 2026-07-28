@@ -1,0 +1,125 @@
+{
+  "report_schema_version": 1,
+  "stage": "3A Public Gold Addendum",
+  "status": "pass_with_no_production_promotion",
+  "evaluated_sha": "ec416ef18cf531e93a562a65894bc0ba5201ca15",
+  "primary_dataset_assessment": {
+    "name": "MediaSpeech French",
+    "source": "OpenSLR SLR108",
+    "source_page": "https://www.openslr.org/108/",
+    "license": "CC BY 4.0",
+    "archive_size_bytes": 637704318,
+    "archive_hash_prefix": "edefa83dab25",
+    "selected_for_campaign": false,
+    "rejection_reason": "insufficient_recoverable_source_group_identity"
+  },
+  "dataset": {
+    "name": "SUMM-RE",
+    "version": "6b5492d1cea1e483131627c939f82c3989c52b0d",
+    "split": "dev",
+    "train_used": false,
+    "license": "CC BY-SA 4.0",
+    "citation": "SUMM-RE: A corpus of French meeting-style conversations (2024)",
+    "source_page": "https://huggingface.co/datasets/linagora/SUMM-RE",
+    "snapshot_hash_prefix": "229e865cb064",
+    "domain": "French meeting-style speech"
+  },
+  "scope": {
+    "source_group_count": 3,
+    "speaker_tracks_per_group": 2,
+    "sample_count": 6,
+    "gold_verbatim_count": 6,
+    "total_duration_seconds": 295.993876
+  },
+  "runtime": {
+    "device": "cuda",
+    "compute_type": "float16",
+    "local_files_only": true,
+    "gpu_memory_telemetry": "unavailable"
+  },
+  "campaign": {
+    "planned_run_count": 40,
+    "successful_run_count": 40,
+    "quality_control_pair_count": 7,
+    "model_pair_count": 6,
+    "resegment_pair_count": 6,
+    "independent_decode_variance_pair_count": 0,
+    "status": "pass"
+  },
+  "model_comparison": {
+    "small": {
+      "wer": 0.95544041,
+      "cer": 0.35322048,
+      "substitutions": 214,
+      "insertions": 1,
+      "deletions": 707,
+      "reference_words": 965,
+      "empty_output_count": 1,
+      "hallucination_like_insertion_count": 0,
+      "end_to_end_seconds": 29.144683
+    },
+    "large_v3": {
+      "wer": 0.93056995,
+      "cer": 0.36705202,
+      "substitutions": 219,
+      "insertions": 4,
+      "deletions": 675,
+      "reference_words": 965,
+      "empty_output_count": 4,
+      "hallucination_like_insertion_count": 1,
+      "end_to_end_seconds": 66.659808
+    },
+    "relative_wer_improvement": 0.02603036,
+    "bootstrap": {
+      "resamples": 10000,
+      "seed_hex": "74fbee18d239684d",
+      "mean_delta_wer": 0.02477109,
+      "ci95_lower": 0.0032538,
+      "ci95_upper": 0.0462963,
+      "large_v3_winning_clip_count": 20,
+      "small_winning_clip_count": 14,
+      "tie_clip_count": 18,
+      "clip_count": 52
+    },
+    "sample_non_inferior_count": 5,
+    "severe_regression": true,
+    "decision": "keep_current_model_split"
+  },
+  "resegment_comparison": {
+    "sample_count": 6,
+    "text_preserved_count": 0,
+    "zero_duration_count": 0,
+    "overlap_count": 0,
+    "decision": "reject"
+  },
+  "retry": {
+    "planned_window_count": 0,
+    "executed_window_count": 0,
+    "accepted_window_count": 0,
+    "decision": "keep_dry_run"
+  },
+  "translation_t1": {
+    "sample_count": 6,
+    "candidate_count": 12,
+    "review_unit_count": 52,
+    "structure_gate_passed": true,
+    "standard_request_count": 6,
+    "three_pass_request_count": 24,
+    "answer_key_excluded_from_handoff": true,
+    "llm_assisted_review": "incomplete",
+    "human_fidelity_review": "not_completed",
+    "strategy_decision": "inconclusive"
+  },
+  "decisions": {
+    "stage3a_public_gold_asr": "pass",
+    "asr_model": "keep",
+    "resegment": "reject",
+    "retry": "keep_dry_run",
+    "translation_assisted_review": "incomplete",
+    "translation_human_fidelity_gate": "not_completed",
+    "allows_production_asr_change": false,
+    "allows_production_translation_change": false,
+    "overrides_private_film_stage3a_failure": false,
+    "allows_release_prep": false
+  }
+}
