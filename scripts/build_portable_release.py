@@ -304,9 +304,12 @@ def _scan_package(portable_root: Path) -> None:
     errors: list[str] = []
     for path in portable_root.rglob("*"):
         relative = path.relative_to(portable_root)
+        relative_posix = relative.as_posix().lower()
         lowered_parts = {part.lower() for part in relative.parts}
         if lowered_parts & FORBIDDEN_PACKAGE_PARTS:
             errors.append(f"forbidden directory: {relative}")
+        if relative_posix.startswith("resources/app/python/scripts/"):
+            errors.append(f"non-relocatable Python console launcher: {relative}")
         if path.is_file() and path.name.lower() in FORBIDDEN_PACKAGE_NAMES:
             errors.append(f"forbidden file: {relative}")
         if path.is_file() and "large-v3" in relative.as_posix().lower():
@@ -317,7 +320,6 @@ def _scan_package(portable_root: Path) -> None:
         # synthetic credentials in protocol examples. Local configuration is
         # never staged, so content scanning is limited to our backend and the
         # package-owned text files while filenames are checked everywhere.
-        relative_posix = relative.as_posix().lower()
         if relative_posix.startswith("resources/app/python/"):
             continue
         if relative_posix.startswith("resources/app/tools/"):

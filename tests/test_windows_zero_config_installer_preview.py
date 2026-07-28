@@ -188,6 +188,7 @@ def test_runtime_preparer_builds_from_portable_python_not_venv_executable():
     assert 'project_root / "tools" / "python"' in text
     assert 'project_root / ".venv"' in text
     assert '_site_packages(venv_root)' in text
+    assert 'shutil.rmtree(staged_python / "Scripts"' in text
     assert 'staged_python / "pyvenv.cfg"' in text
     assert '[str(python_exe), "-I", "-B"' in text
 

@@ -4,9 +4,7 @@ import argparse
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
-
 
 EXCLUDED_NAMES = {"__pycache__", ".pytest_cache", "pip-cache", "test", "tests"}
 REQUIRED_IMPORTS = ("faster_whisper", "ctranslate2", "av", "numpy", "requests")
@@ -69,6 +67,11 @@ def prepare_runtime(
 
     staged_python = resolved_destination / "python"
     _copy_tree(portable_python, staged_python)
+    # distlib console launchers embed the absolute interpreter path from the
+    # machine where they were installed. The application invokes python.exe
+    # and imported modules directly, so these development CLI wrappers are
+    # neither relocatable nor required in the packaged runtime.
+    shutil.rmtree(staged_python / "Scripts", ignore_errors=True)
     _copy_tree(_site_packages(venv_root), staged_python / "Lib" / "site-packages")
     _copy_tree(ffmpeg_root, resolved_destination / "tools" / "ffmpeg")
     ffplay = resolved_destination / "tools" / "ffmpeg" / "bin" / "ffplay.exe"
