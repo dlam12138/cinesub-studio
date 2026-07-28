@@ -106,7 +106,40 @@
     "standard_request_count": 6,
     "three_pass_request_count": 24,
     "answer_key_excluded_from_handoff": true,
-    "llm_assisted_review": "incomplete",
+    "reviewer_type": "llm_assisted_bilingual_review",
+    "llm_assisted_review": "complete",
+    "fluency_review": {
+      "raw_a": 19,
+      "raw_b": 28,
+      "standard_wins": 23,
+      "three_pass_wins": 24,
+      "ties": 5,
+      "three_pass_non_tie_preference_rate": 0.5106383,
+      "decision": "inconclusive"
+    },
+    "fidelity_review": {
+      "raw_a": 14,
+      "raw_b": 22,
+      "standard_wins": 18,
+      "three_pass_wins": 18,
+      "ties": 16,
+      "three_pass_non_tie_preference_rate": 0.5,
+      "severity": {
+        "none": 19,
+        "minor": 26,
+        "major": 5,
+        "severe": 2
+      },
+      "error_flags": {
+        "omission": 11,
+        "addition": 8,
+        "mistranslation": 20,
+        "terminology": 6,
+        "pronoun": 0,
+        "continuity": 4
+      },
+      "decision": "inconclusive"
+    },
     "human_fidelity_review": "not_completed",
     "strategy_decision": "inconclusive"
   },
@@ -115,7 +148,7 @@
     "asr_model": "keep",
     "resegment": "reject",
     "retry": "keep_dry_run",
-    "translation_assisted_review": "incomplete",
+    "translation_assisted_review": "complete",
     "translation_human_fidelity_gate": "not_completed",
     "allows_production_asr_change": false,
     "allows_production_translation_change": false,

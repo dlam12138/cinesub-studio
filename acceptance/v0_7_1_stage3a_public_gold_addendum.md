@@ -14,7 +14,7 @@ incomplete.
 - ASR resegment decision: `reject`.
 - ASR retry decision: `keep_dry_run`.
 - Stage 3A Public Gold ASR: Pass.
-- Translation assisted review: `incomplete`.
+- Translation assisted review: `complete`.
 - Translation human fidelity review: `not_completed`.
 - Allows production ASR change: No.
 - Allows production translation change: No.
@@ -100,12 +100,28 @@ configuration with only the strategy changed:
 
 A 52-unit handoff was generated with a blind Chinese-fluency sheet, an assisted
 French-to-Chinese fidelity sheet, and reviewer instructions. The private answer
-key is excluded from the handoff archive.
+key was excluded from the handoff archive. The completed review was returned
+without access to A/B strategy identity and was then decoded locally with the
+private key.
 
-No review result is fabricated here. LLM-assisted review is `incomplete`, and
-qualified human French-Chinese fidelity review is `not_completed`. Therefore
-the translation strategy remains `inconclusive` and cannot change production
-defaults.
+Reviewer type: `llm_assisted_bilingual_review`.
+
+| Review | standard wins | three-pass wins | Ties | Three-pass non-tie rate |
+| --- | ---: | ---: | ---: | ---: |
+| Chinese fluency | 23 | 24 | 5 | 51.06% |
+| French-Chinese fidelity | 18 | 18 | 16 | 50.00% |
+
+The fidelity review marked 19 `none`, 26 `minor`, 5 `major`, and 2 `severe`
+units. Across both options it recorded 11 omission, 8 addition, 20
+mistranslation, 6 terminology, 0 pronoun, and 4 continuity flags.
+
+Three-pass did not meet the frozen 60% assisted-review threshold in either
+review, while standard did not establish a consistent advantage. The assisted
+strategy decision is therefore `inconclusive`.
+
+Qualified human French-Chinese fidelity review remains `not_completed`. This
+LLM-assisted result supports candidate screening and error discovery only; it
+cannot change production defaults or unlock Release Prep.
 
 ## Gate Summary
 
@@ -116,6 +132,8 @@ defaults.
 | ASR model decision | Keep |
 | Change resegmentation default | No |
 | Enable retry apply mode | No |
-| Select translation strategy | No |
+| Translation assisted review | Complete |
+| Translation human fidelity gate | Not completed |
+| Select translation strategy | No — inconclusive |
 | Override private-film Stage 3A failure | No |
 | Release Prep | No |
