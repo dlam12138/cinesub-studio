@@ -160,11 +160,19 @@ def test_evaluator_scores_only_gold_and_emits_private_blind_artifacts(tmp_path) 
             "profile": planned["profile"],
             "evaluated_sha": evaluated_sha,
             "end_to_end_seconds": 1.0,
+            "asr_retry_report": {
+                "planned_window_count": 0,
+                "executed_window_count": 0,
+                "accepted_window_count": 0,
+                "windows": [],
+            },
             "artifacts": {
                 "output_srt": str(srt),
                 "asr_review": str(review),
             },
         }
+        if planned["run_id"] == "sample-01-primary-quality":
+            review.unlink()
         (reports_dir / f"{planned['run_id']}.run.local.json").write_text(
             json.dumps(report),
             encoding="utf-8",

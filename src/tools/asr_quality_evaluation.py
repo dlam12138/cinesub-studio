@@ -130,6 +130,20 @@ def _artifact_path(report: dict[str, Any], field: str) -> Path:
     return path
 
 
+def _retry_report(report: dict[str, Any]) -> dict[str, Any]:
+    value = str(report.get("artifacts", {}).get("asr_review") or "")
+    if value:
+        path = Path(value)
+        if path.is_file():
+            payload = read_json(path).get("asr_retry_report", {})
+            if isinstance(payload, dict):
+                return payload
+    payload = report.get("asr_retry_report", {})
+    if not isinstance(payload, dict):
+        raise ValueError("Campaign report contains an invalid ASR retry report")
+    return payload
+
+
 def _jiwer_metrics(reference: str, candidate: str) -> dict[str, Any]:
     try:
         import jiwer
@@ -314,9 +328,7 @@ def evaluate_campaign(
             profiles[profile] = metrics
 
         quality = by_sample[sample_id]["quality"]
-        retry_report = read_json(_artifact_path(quality, "asr_review")).get(
-            "asr_retry_report", {}
-        )
+        retry_report = _retry_report(quality)
         retry_windows = []
         for window_index, window in enumerate(retry_report.get("windows", []), start=1):
             retry_windows.append({
