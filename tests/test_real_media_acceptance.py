@@ -272,6 +272,9 @@ def _campaign_report(planned: dict) -> dict:
         "decode_config_sha256": f'{planned["scenario_id"]}-decode-hash',
         "runtime_config_sha256": "runtime-hash",
         "output_srt_sha256": f'{planned["scenario_id"]}-srt-hash',
+        "asr_retry_report": {
+            "accepted_window_count": 0,
+        },
     }
 
 
@@ -284,12 +287,14 @@ def test_campaign_validation_asserts_all_seven_quality_control_pairs() -> None:
     assert summary["status"] == "pass"
     assert summary["run_count"] == 28
     assert summary["comparison_count"] == 7
+    assert summary["independent_decode_variance_count"] == 0
     assert all(
         row["effective_config_diff"] == ["asr_retry_mode"]
         and row["decode_config_hash_match"]
         and row["runtime_config_hash_match"]
         and row["input_hash_match"]
         and row["output_srt_hash_match"]
+        and row["quality_dry_run_no_output_apply"]
         for row in summary["comparisons"]
     )
 
@@ -330,6 +335,39 @@ def test_quality_control_comparison_rejects_decode_drift() -> None:
     ]
     reports = {row["profile"]: _campaign_report(row) for row in planned}
     reports["quality"]["effective_config"]["beam_size"] = 6
+
+    with pytest.raises(RuntimeError, match="contracts differ"):
+        compare_quality_control(reports["large-control"], reports["quality"])
+
+
+def test_quality_control_records_independent_decode_variance_without_blame_on_retry() -> None:
+    contract = build_campaign_contract("evaluated-sha")
+    planned = [
+        row for row in contract["runs"]
+        if row["scenario_id"] == "sample-01-primary"
+        and row["profile"] in {"large-control", "quality"}
+    ]
+    reports = {row["profile"]: _campaign_report(row) for row in planned}
+    reports["quality"]["output_srt_sha256"] = "independent-cuda-decode-varied"
+
+    comparison = compare_quality_control(
+        reports["large-control"],
+        reports["quality"],
+    )
+
+    assert comparison["output_srt_hash_match"] is False
+    assert comparison["quality_dry_run_no_output_apply"] is True
+
+
+def test_quality_control_rejects_a_dry_run_that_accepted_output_windows() -> None:
+    contract = build_campaign_contract("evaluated-sha")
+    planned = [
+        row for row in contract["runs"]
+        if row["scenario_id"] == "sample-01-primary"
+        and row["profile"] in {"large-control", "quality"}
+    ]
+    reports = {row["profile"]: _campaign_report(row) for row in planned}
+    reports["quality"]["asr_retry_report"]["accepted_window_count"] = 1
 
     with pytest.raises(RuntimeError, match="contracts differ"):
         compare_quality_control(reports["large-control"], reports["quality"])

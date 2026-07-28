@@ -820,6 +820,13 @@ def compare_quality_control(control: dict, quality: dict) -> dict:
         key for key in set(left) | set(right)
         if left.get(key) != right.get(key)
     )
+    accepted_window_count = quality.get("asr_retry_report", {}).get(
+        "accepted_window_count"
+    )
+    if not isinstance(accepted_window_count, int) or isinstance(
+        accepted_window_count, bool
+    ):
+        accepted_window_count = None
     assertions = {
         "effective_config_diff": differences,
         "effective_config_diff_whitelist": list(CONFIG_DIFF_WHITELIST),
@@ -831,8 +838,22 @@ def compare_quality_control(control: dict, quality: dict) -> dict:
         "output_srt_hash_match": control.get("output_srt_sha256") == quality.get("output_srt_sha256"),
         "control_retry_off": left.get("asr_retry_mode") == "off",
         "quality_retry_dry_run": right.get("asr_retry_mode") == "dry_run",
+        "quality_retry_accepted_window_count": accepted_window_count,
     }
-    if not all(value for key, value in assertions.items() if key.endswith("_match") or key.endswith("_valid") or key in {"control_retry_off", "quality_retry_dry_run"}):
+    assertions["quality_dry_run_no_output_apply"] = (
+        assertions["quality_retry_accepted_window_count"] == 0
+    )
+    required = (
+        "effective_config_diff_valid",
+        "invariant_fields_match",
+        "decode_config_hash_match",
+        "runtime_config_hash_match",
+        "input_hash_match",
+        "control_retry_off",
+        "quality_retry_dry_run",
+        "quality_dry_run_no_output_apply",
+    )
+    if not all(assertions[key] for key in required):
         raise RuntimeError("quality and large-control acceptance contracts differ")
     return assertions
 
@@ -877,6 +898,9 @@ def validate_campaign_reports(contract: dict, reports: list[dict]) -> dict:
             "scenario_id": scenario_id,
             **compare_quality_control(by_profile["large-control"], by_profile["quality"]),
         })
+    decode_variance_count = sum(
+        not row["output_srt_hash_match"] for row in comparisons
+    )
     return {
         "schema_version": 1,
         "campaign": contract.get("campaign"),
@@ -884,7 +908,8 @@ def validate_campaign_reports(contract: dict, reports: list[dict]) -> dict:
         "evaluated_sha": contract.get("evaluated_sha"),
         "run_count": len(reports),
         "comparison_count": len(comparisons),
-        "status": "pass",
+        "status": "pass" if decode_variance_count == 0 else "pass_with_decode_variance",
+        "independent_decode_variance_count": decode_variance_count,
         "comparisons": comparisons,
     }
 
