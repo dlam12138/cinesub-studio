@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import hashlib
 import io
 import json
@@ -45,6 +46,7 @@ SUMMRE_REPOSITORY = "linagora/SUMM-RE"
 SUMMRE_REVISION = "6b5492d1cea1e483131627c939f82c3989c52b0d"
 SUMMRE_LICENSE = "CC BY-SA 4.0"
 SUMMRE_CITATION = "SUMM-RE: A corpus of French meeting-style conversations (2024)"
+SUMMRE_SHARD_COUNTS = {"dev": 29, "test": 28}
 SOURCE_SUFFIX_RE = re.compile(
     r"(?i)(?:[-_.](?:clip|segment|seg|chunk|part|utt))?[-_.]?\d+(?:[-_.]\d+)?$"
 )
@@ -825,6 +827,68 @@ def _normalized_audio_frames(raw: bytes, temporary_dir: Path, key: str) -> bytes
         return handle.readframes(handle.getnframes())
 
 
+def _summre_shard_url(split: str, shard_index: int) -> str:
+    count = SUMMRE_SHARD_COUNTS[split]
+    filename = f"{split}-{shard_index:05d}-of-{count:05d}.parquet"
+    return (
+        f"https://huggingface.co/datasets/{SUMMRE_REPOSITORY}/resolve/"
+        f"{SUMMRE_REVISION}/data/{split}/{filename}"
+    )
+
+
+def _summre_shard_records(split: str, shard_index: int) -> list[dict[str, Any]]:
+    try:
+        import fsspec
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise RuntimeError(
+            "SUMM-RE range streaming requires pyarrow and fsspec[http]"
+        ) from exc
+    url = _summre_shard_url(split, shard_index)
+    with fsspec.open(
+        url,
+        "rb",
+        block_size=8 * 1024 * 1024,
+        cache_type="readahead",
+    ) as handle:
+        table = pq.ParquetFile(handle).read(
+            columns=["meeting_id", "speaker_id", "audio_id", "segments"]
+        )
+    return [
+        {**row, "split": split, "shard_index": shard_index, "row_index": index}
+        for index, row in enumerate(table.to_pylist())
+    ]
+
+
+def _summre_shard_audio(
+    split: str,
+    shard_index: int,
+    selected_row_indexes: set[int],
+) -> dict[int, bytes]:
+    try:
+        import fsspec
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise RuntimeError(
+            "SUMM-RE range streaming requires pyarrow and fsspec[http]"
+        ) from exc
+    url = _summre_shard_url(split, shard_index)
+    with fsspec.open(
+        url,
+        "rb",
+        block_size=16 * 1024 * 1024,
+        cache_type="readahead",
+    ) as handle:
+        column = pq.ParquetFile(handle).read(columns=["audio"]).column("audio")
+        values = {
+            row_index: _summre_audio_bytes(column[row_index].as_py())
+            for row_index in sorted(selected_row_indexes)
+        }
+    del column
+    gc.collect()
+    return values
+
+
 def prepare_summre(
     output_dir: Path,
     *,
@@ -836,57 +900,49 @@ def prepare_summre(
 ) -> dict[str, Any]:
     if not splits or any(split not in {"dev", "test"} for split in splits):
         raise ValueError("SUMM-RE public gold permits only dev and test splits")
-    try:
-        import datasets
-    except ImportError as exc:
-        raise RuntimeError(
-            "SUMM-RE streaming requires the optional 'datasets' package"
-        ) from exc
     selected_by_meeting: dict[str, list[dict[str, Any]]] = {}
     observed_records = 0
     for split in splits:
-        stream = datasets.load_dataset(
-            SUMMRE_REPOSITORY,
-            name="all",
-            split=split,
-            streaming=True,
-            revision=SUMMRE_REVISION,
-        )
-        stream = stream.cast_column("audio", datasets.Audio(decode=False))
-        for record in stream:
-            observed_records += 1
-            meeting_id = str(record.get("meeting_id") or "").strip()
-            audio_id = str(record.get("audio_id") or "").strip()
-            if not meeting_id or not audio_id:
-                continue
-            rows = selected_by_meeting.setdefault(meeting_id, [])
-            if len(rows) >= 2:
-                continue
-            clips = _select_summre_clips(
-                _merge_summre_segments(list(record.get("segments") or [])),
-                min_duration=min_duration,
-                max_duration=max_duration,
-                silence_ms=silence_ms,
-            )
-            if not clips:
-                continue
-            rows.append({
-                "split": split,
-                "meeting_id": meeting_id,
-                "speaker_id": str(record.get("speaker_id") or ""),
-                "audio_id": audio_id,
-                "audio": record.get("audio"),
-                "clips": clips,
-            })
-            ready = [
-                key for key, values in selected_by_meeting.items()
-                if len(values) >= 2
-            ]
-            if len(ready) >= min_source_groups:
-                selected_by_meeting = {
-                    key: selected_by_meeting[key][:2]
-                    for key in sorted(ready)[:min_source_groups]
-                }
+        for shard_index in range(SUMMRE_SHARD_COUNTS[split]):
+            for record in _summre_shard_records(split, shard_index):
+                observed_records += 1
+                meeting_id = str(record.get("meeting_id") or "").strip()
+                audio_id = str(record.get("audio_id") or "").strip()
+                if not meeting_id or not audio_id:
+                    continue
+                rows = selected_by_meeting.setdefault(meeting_id, [])
+                if len(rows) >= 2:
+                    continue
+                clips = _select_summre_clips(
+                    _merge_summre_segments(list(record.get("segments") or [])),
+                    min_duration=min_duration,
+                    max_duration=max_duration,
+                    silence_ms=silence_ms,
+                )
+                if not clips:
+                    continue
+                rows.append({
+                    "split": split,
+                    "shard_index": int(record["shard_index"]),
+                    "row_index": int(record["row_index"]),
+                    "meeting_id": meeting_id,
+                    "speaker_id": str(record.get("speaker_id") or ""),
+                    "audio_id": audio_id,
+                    "clips": clips,
+                })
+                ready = [
+                    key for key, values in selected_by_meeting.items()
+                    if len(values) >= 2
+                ]
+                if len(ready) >= min_source_groups:
+                    selected_by_meeting = {
+                        key: selected_by_meeting[key][:2]
+                        for key in sorted(ready)[:min_source_groups]
+                    }
+                    break
+            if len(selected_by_meeting) >= min_source_groups and all(
+                len(rows) >= 2 for rows in selected_by_meeting.values()
+            ):
                 break
         if len(selected_by_meeting) >= min_source_groups and all(
             len(rows) >= 2 for rows in selected_by_meeting.values()
@@ -932,9 +988,26 @@ def prepare_summre(
         prefix="cinesub-public-gold-summre-"
     ) as temporary:
         temporary_dir = Path(temporary)
+        audio_by_record: dict[tuple[str, int, int], bytes] = {}
+        selected_shards = sorted({
+            (row["split"], int(row["shard_index"])) for row in flattened
+        })
+        for split, shard_index in selected_shards:
+            indexes = {
+                int(row["row_index"]) for row in flattened
+                if row["split"] == split and int(row["shard_index"]) == shard_index
+            }
+            for row_index, raw in _summre_shard_audio(
+                split, shard_index, indexes
+            ).items():
+                audio_by_record[(split, shard_index, row_index)] = raw
         for sample_number, row in enumerate(flattened, start=1):
             sample_id = f"sample-{sample_number:02d}"
-            audio_raw = _summre_audio_bytes(row["audio"])
+            audio_raw = audio_by_record.pop((
+                row["split"],
+                int(row["shard_index"]),
+                int(row["row_index"]),
+            ))
             frames = _normalized_audio_frames(
                 audio_raw, temporary_dir, row["audio_id"]
             )
@@ -1040,6 +1113,8 @@ def prepare_summre(
         "splits_allowed": ["dev", "test"],
         "splits_used": sorted({row["split"] for row in flattened}),
         "streaming": True,
+        "streaming_transport": "parquet_http_range",
+        "download_granularity": "selected_parquet_shards_and_columns",
         "train_used": False,
         "observed_record_count": observed_records,
         "selection_signals": [

@@ -6,8 +6,9 @@ requires-python = ">=3.10,<3.14"
 
 [project.optional-dependencies]
 dev = [
-    "datasets>=3,<5",
+    "fsspec[http]>=2023.1",
     "jiwer>=4,<5",
+    "pyarrow>=21",
     "pytest",
     "ruff",
     "sacrebleu>=2.5,<3",

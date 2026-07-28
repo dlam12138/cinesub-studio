@@ -3,11 +3,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import sys
 import wave
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from public_gold_sample_prep import (
@@ -213,24 +211,31 @@ def test_summre_fallback_streams_only_dev_test_and_uses_real_meeting_ids(
                 ],
             })
 
-    class FakeStream:
-        def __iter__(self):
-            return iter(records)
-
-        def cast_column(self, _name, _feature):
-            return self
-
     calls = []
 
-    def fake_load_dataset(_repository, **kwargs):
-        calls.append(kwargs)
-        return FakeStream()
+    def fake_records(split, shard_index):
+        calls.append((split, shard_index))
+        if shard_index:
+            return []
+        return [
+            {**row, "split": split, "shard_index": 0, "row_index": index}
+            for index, row in enumerate(records)
+        ]
 
-    fake_datasets = SimpleNamespace(
-        load_dataset=fake_load_dataset,
-        Audio=lambda decode: {"decode": decode},
+    def fake_audio(split, shard_index, selected_row_indexes):
+        assert split == "dev"
+        assert shard_index == 0
+        return {
+            index: records[index]["audio"]["bytes"]
+            for index in selected_row_indexes
+        }
+
+    monkeypatch.setattr(
+        "public_gold_sample_prep._summre_shard_records", fake_records
     )
-    monkeypatch.setitem(sys.modules, "datasets", fake_datasets)
+    monkeypatch.setattr(
+        "public_gold_sample_prep._summre_shard_audio", fake_audio
+    )
 
     manifest = prepare_summre(
         tmp_path / "prepared",
@@ -239,9 +244,9 @@ def test_summre_fallback_streams_only_dev_test_and_uses_real_meeting_ids(
         max_duration=8,
     )
 
-    assert calls[0]["split"] == "dev"
-    assert all(call["split"] in {"dev", "test"} for call in calls)
-    assert all(call["split"] != "train" for call in calls)
+    assert calls[0] == ("dev", 0)
+    assert all(call[0] in {"dev", "test"} for call in calls)
+    assert all(call[0] != "train" for call in calls)
     assert manifest["dataset"] == "SUMM-RE"
     assert manifest["dataset_license"] == "CC BY-SA 4.0"
     assert len(manifest["samples"]) == 6
@@ -252,5 +257,6 @@ def test_summre_fallback_streams_only_dev_test_and_uses_real_meeting_ids(
         )
     )
     assert selection["streaming"] is True
+    assert selection["streaming_transport"] == "parquet_http_range"
     assert selection["train_used"] is False
     assert selection["model_results_read"] is False
