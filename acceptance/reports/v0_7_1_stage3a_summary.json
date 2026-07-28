@@ -51,6 +51,8 @@
     "quality_control_pair_count": 7,
     "contract_status": "pass_with_decode_variance",
     "independent_decode_variance_pair_count": 1,
+    "blind_review_alignment": "fixed_non_overlapping_15_second_windows",
+    "blind_review_cue_assignment": "midpoint_once_per_candidate",
     "quality_retry_planned_window_count": 0,
     "quality_retry_executed_window_count": 0,
     "quality_retry_accepted_window_count": 0,

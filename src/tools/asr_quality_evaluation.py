@@ -17,6 +17,10 @@ CAMPAIGN_VERSION = "stage3-asr-quality-v1"
 NORMALIZATION_VERSION = "asr-normalization-v1"
 EXPECTED_SAMPLE_IDS = tuple(f"sample-{number:02d}" for number in range(1, 7))
 REFERENCE_TYPES = {"gold_verbatim", "production_subtitle", "ocr_weak"}
+SRT_TIMESTAMP_RE = re.compile(
+    r"^\s*(\d+):(\d+):(\d+),(\d+)\s+-->\s+"
+    r"(\d+):(\d+):(\d+),(\d+)\s*$"
+)
 PUBLIC_FORBIDDEN_KEYS = {
     "path", "transcript", "prompt", "api_key", "authorization",
     "source_srt", "reference_srt", "candidate_srt", "input",
@@ -57,6 +61,162 @@ def _parse_srt(path: Path) -> list[dict[str, Any]]:
 
 def _joined_text(rows: list[dict[str, Any]]) -> str:
     return " ".join(row["text"] for row in rows)
+
+
+def parse_srt_interval(row: dict[str, Any]) -> tuple[int, int]:
+    match = SRT_TIMESTAMP_RE.match(str(row.get("time") or ""))
+    if not match:
+        raise ValueError("Invalid SRT timestamp")
+    values = [int(value) for value in match.groups()]
+    start = ((values[0] * 60 + values[1]) * 60 + values[2]) * 1000 + values[3]
+    end = ((values[4] * 60 + values[5]) * 60 + values[6]) * 1000 + values[7]
+    if end < start:
+        raise ValueError("Invalid SRT interval")
+    return start, end
+
+
+def _format_srt_time(milliseconds: int) -> str:
+    hours, remainder = divmod(int(milliseconds), 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def build_time_aligned_review_units(
+    left_rows: list[dict[str, Any]],
+    right_rows: list[dict[str, Any]],
+    *,
+    window_ms: int = 15_000,
+) -> list[dict[str, Any]]:
+    if window_ms < 1:
+        raise ValueError("Review window must be at least 1 millisecond")
+    indexed = {
+        "left": [
+            (index, row, parse_srt_interval(row))
+            for index, row in enumerate(left_rows, start=1)
+        ],
+        "right": [
+            (index, row, parse_srt_interval(row))
+            for index, row in enumerate(right_rows, start=1)
+        ],
+    }
+    intervals = [
+        interval
+        for side in indexed.values()
+        for _, _, interval in side
+    ]
+    if not intervals:
+        return []
+    timeline_start = min(start for start, _ in intervals)
+    timeline_end = max(end for _, end in intervals)
+    if timeline_end <= timeline_start:
+        timeline_end = timeline_start + 1
+    duration = max(timeline_end - timeline_start, 1)
+    window_count = (duration + window_ms - 1) // window_ms
+    units = [
+        {
+            "window_index": index + 1,
+            "window_start_ms": timeline_start + index * window_ms,
+            "window_end_ms": min(
+                timeline_start + (index + 1) * window_ms,
+                timeline_end,
+            ),
+            "left_text": "",
+            "right_text": "",
+            "left_row_indexes": [],
+            "right_row_indexes": [],
+        }
+        for index in range(window_count)
+    ]
+    for side, rows in indexed.items():
+        assigned: list[list[tuple[int, int, str]]] = [
+            [] for _ in range(window_count)
+        ]
+        for row_index, row, (start, end) in rows:
+            midpoint = start + (end - start) // 2
+            window_index = min(
+                max((midpoint - timeline_start) // window_ms, 0),
+                window_count - 1,
+            )
+            assigned[window_index].append(
+                (start, row_index, str(row.get("text") or "").strip())
+            )
+        for index, members in enumerate(assigned):
+            members.sort(key=lambda item: (item[0], item[1]))
+            units[index][f"{side}_text"] = " ".join(
+                text for _, _, text in members if text
+            )
+            units[index][f"{side}_row_indexes"] = [
+                row_index for _, row_index, _ in members
+            ]
+    return [
+        unit for unit in units
+        if unit["left_text"] or unit["right_text"]
+    ]
+
+
+def _build_time_aligned_blind_entries(
+    left_rows: list[dict[str, Any]],
+    right_rows: list[dict[str, Any]],
+    *,
+    evaluated_sha: str,
+    sample_id: str,
+    comparison: str,
+    candidate_label: str,
+    window_ms: int = 15_000,
+    control_count: int = 20,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    units = build_time_aligned_review_units(
+        left_rows,
+        right_rows,
+        window_ms=window_ms,
+    )
+    selected = deterministic_review_indexes(
+        evaluated_sha=evaluated_sha,
+        sample_id=f"{sample_id}:{comparison}",
+        candidate_count=len(units),
+        suspicious_indexes=[],
+        control_count=control_count,
+    )
+    rows: list[dict[str, Any]] = []
+    key: dict[str, Any] = {}
+    for selected_index in selected:
+        unit = units[selected_index - 1]
+        start = unit["window_start_ms"]
+        end = unit["window_end_ms"]
+        review_id = f"{sample_id}-{comparison}-{start:010d}-{end:010d}"
+        seed = hashlib.sha256(
+            (
+                f"{evaluated_sha}:{sample_id}:{comparison}:"
+                f"{start}:{end}:{CAMPAIGN_VERSION}"
+            ).encode()
+        ).digest()
+        swap = bool(seed[0] & 1)
+        left_text = unit["left_text"]
+        right_text = unit["right_text"]
+        option_a, option_b = (
+            (right_text, left_text) if swap else (left_text, right_text)
+        )
+        rows.append({
+            "review_id": review_id,
+            "sample_id": sample_id,
+            "window_index": unit["window_index"],
+            "window_start_ms": start,
+            "window_end_ms": end,
+            "time": f"{_format_srt_time(start)} --> {_format_srt_time(end)}",
+            "category": comparison,
+            "option_a": option_a,
+            "option_b": option_b,
+            "preference": "",
+            "error_category": "",
+            "severity": "",
+            "notes": "",
+        })
+        key[review_id] = {
+            "candidate": "A" if swap else "B",
+            "candidate_label": candidate_label,
+        }
+    return rows, key
 
 
 def validate_reference_manifest(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -167,15 +327,7 @@ def _segmentation_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     gap_seconds = 0.0
     previous_end = -1
     for row in rows:
-        match = re.match(
-            r"(\d+):(\d+):(\d+),(\d+)\s+-->\s+(\d+):(\d+):(\d+),(\d+)",
-            row["time"],
-        )
-        if not match:
-            raise ValueError("Invalid SRT timestamp")
-        values = [int(value) for value in match.groups()]
-        start = ((values[0] * 60 + values[1]) * 60 + values[2]) * 1000 + values[3]
-        end = ((values[4] * 60 + values[5]) * 60 + values[6]) * 1000 + values[7]
+        start, end = parse_srt_interval(row)
         zero_duration += end <= start
         overlap += start < previous_end
         if previous_end >= 0 and start > previous_end:
@@ -350,38 +502,16 @@ def evaluate_campaign(
         for comparison, left_profile, right_profile, candidate_label in comparisons:
             left_rows = _parse_srt(_artifact_path(by_sample[sample_id][left_profile], "output_srt"))
             right_rows = _parse_srt(_artifact_path(by_sample[sample_id][right_profile], "output_srt"))
-            count = min(len(left_rows), len(right_rows))
-            selected = deterministic_review_indexes(
+            comparison_rows, comparison_key = _build_time_aligned_blind_entries(
+                left_rows,
+                right_rows,
                 evaluated_sha=evaluated_sha,
-                sample_id=f"{sample_id}:{comparison}",
-                candidate_count=count,
-                suspicious_indexes=[],
+                sample_id=sample_id,
+                comparison=comparison,
+                candidate_label=candidate_label,
             )
-            for index in selected:
-                seed = hashlib.sha256(
-                    f"{evaluated_sha}:{sample_id}:{comparison}:{index}:{CAMPAIGN_VERSION}".encode()
-                ).digest()
-                swap = bool(seed[0] & 1)
-                left, right = left_rows[index - 1], right_rows[index - 1]
-                option_a, option_b = ((right, left) if swap else (left, right))
-                review_id = f"{sample_id}-{comparison}-{index:04d}"
-                blind_rows.append({
-                    "review_id": review_id,
-                    "sample_id": sample_id,
-                    "cue_index": index,
-                    "time": left["time"],
-                    "category": comparison,
-                    "option_a": option_a["text"],
-                    "option_b": option_b["text"],
-                    "preference": "",
-                    "error_category": "",
-                    "severity": "",
-                    "notes": "",
-                })
-                blind_key[review_id] = {
-                    "candidate": "A" if swap else "B",
-                    "candidate_label": candidate_label,
-                }
+            blind_rows.extend(comparison_rows)
+            blind_key.update(comparison_key)
         detail_rows.append({
             "sample_id": sample_id,
             "reference_type": sample["reference_type"],

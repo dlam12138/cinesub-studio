@@ -54,6 +54,11 @@ difficult far-field sample. A same-profile repeat also varied, isolating this as
 independent CUDA decode variance rather than retry application. The contract status
 is therefore `pass_with_decode_variance`, not fully reproducible pass.
 
+Private ASR model and resegmentation blind-review candidates are aligned on shared,
+fixed, non-overlapping 15-second time windows. Each cue is assigned once by its
+midpoint; single-sided windows remain reviewable for omission detection. Window
+selection and A/B order remain deterministic for the frozen evaluated SHA.
+
 ## Aggregate Structural Evidence
 
 | Profile | Runs | End-to-end seconds | Cues | Gap seconds | Over 20 CPS | Over 42 chars |

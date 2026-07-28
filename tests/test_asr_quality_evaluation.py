@@ -5,11 +5,14 @@ from pathlib import Path
 
 import pytest
 from asr_quality_evaluation import (
+    _build_time_aligned_blind_entries,
     assert_public_safe,
+    build_time_aligned_review_units,
     deterministic_review_indexes,
     evaluate_campaign,
     is_formal_score_reference,
     normalize_asr_text,
+    parse_srt_interval,
     validate_reference_manifest,
 )
 from real_media_acceptance import build_campaign_contract
@@ -112,6 +115,185 @@ def _srt(path: Path, text: str) -> None:
     )
 
 
+def _row(start: str, end: str, text: str) -> dict:
+    return {"time": f"{start} --> {end}", "text": text}
+
+
+def test_time_alignment_compares_different_cue_counts_without_truncation() -> None:
+    left = [
+        _row("00:00:00,000", "00:00:10,000", "alpha"),
+        _row("00:00:10,000", "00:00:20,000", "beta"),
+    ]
+    right = [
+        _row("00:00:00,000", "00:00:05,000", "one"),
+        _row("00:00:05,000", "00:00:10,000", "two"),
+        _row("00:00:10,000", "00:00:15,000", "three"),
+        _row("00:00:15,000", "00:00:20,000", "four"),
+    ]
+
+    units = build_time_aligned_review_units(left, right)
+
+    assert [(unit["window_start_ms"], unit["window_end_ms"]) for unit in units] == [
+        (0, 15_000),
+        (15_000, 20_000),
+    ]
+    assert units[0]["left_text"] == "alpha"
+    assert units[0]["right_text"] == "one two three"
+    assert units[1]["left_text"] == "beta"
+    assert units[1]["right_text"] == "four"
+
+
+def test_time_alignment_uses_shared_windows_for_different_boundaries() -> None:
+    left = [
+        _row("00:00:00,000", "00:00:12,000", "left-a"),
+        _row("00:00:12,000", "00:00:30,000", "left-b"),
+    ]
+    right = [
+        _row("00:00:00,000", "00:00:08,000", "right-a"),
+        _row("00:00:08,000", "00:00:18,000", "right-b"),
+        _row("00:00:18,000", "00:00:30,000", "right-c"),
+    ]
+
+    units = build_time_aligned_review_units(left, right, window_ms=10_000)
+
+    assert [(unit["window_start_ms"], unit["window_end_ms"]) for unit in units] == [
+        (0, 10_000),
+        (10_000, 20_000),
+        (20_000, 30_000),
+    ]
+    assert units[0]["left_text"] == "left-a"
+    assert units[0]["right_text"] == "right-a"
+    assert units[1]["right_text"] == "right-b"
+    assert units[2]["left_text"] == "left-b"
+    assert units[2]["right_text"] == "right-c"
+
+
+def test_time_alignment_assigns_each_cue_to_only_one_window() -> None:
+    left = [
+        _row("00:00:00,000", "00:00:16,000", "left-unique-a"),
+        _row("00:00:16,000", "00:00:31,000", "left-unique-b"),
+    ]
+    right = [
+        _row("00:00:02,000", "00:00:20,000", "right-unique-a"),
+        _row("00:00:20,000", "00:00:31,000", "right-unique-b"),
+    ]
+
+    units = build_time_aligned_review_units(left, right, window_ms=10_000)
+    serialized = " ".join(
+        f"{unit['left_text']} {unit['right_text']}" for unit in units
+    )
+
+    for marker in (
+        "left-unique-a",
+        "left-unique-b",
+        "right-unique-a",
+        "right-unique-b",
+    ):
+        assert serialized.count(marker) == 1
+    assert sorted(
+        index for unit in units for index in unit["left_row_indexes"]
+    ) == [1, 2]
+    assert sorted(
+        index for unit in units for index in unit["right_row_indexes"]
+    ) == [1, 2]
+
+
+def test_time_alignment_keeps_a_window_with_one_empty_side() -> None:
+    left = [_row("00:00:00,000", "00:00:05,000", "left-only")]
+    right = [_row("00:00:20,000", "00:00:25,000", "right-only")]
+
+    units = build_time_aligned_review_units(left, right, window_ms=10_000)
+
+    assert units == [
+        {
+            "window_index": 1,
+            "window_start_ms": 0,
+            "window_end_ms": 10_000,
+            "left_text": "left-only",
+            "right_text": "",
+            "left_row_indexes": [1],
+            "right_row_indexes": [],
+        },
+        {
+            "window_index": 3,
+            "window_start_ms": 20_000,
+            "window_end_ms": 25_000,
+            "left_text": "",
+            "right_text": "right-only",
+            "left_row_indexes": [],
+            "right_row_indexes": [1],
+        },
+    ]
+
+
+def test_time_aligned_blind_entries_are_sha_deterministic_and_private() -> None:
+    left = [
+        _row(
+            f"00:00:{index:02d},000",
+            f"00:00:{index:02d},900",
+            f"left-{index:02d}",
+        )
+        for index in range(30)
+    ]
+    right = [
+        _row(
+            f"00:00:{index:02d},100",
+            f"00:00:{index:02d},800",
+            f"right-{index:02d}",
+        )
+        for index in range(30)
+    ]
+    kwargs = {
+        "sample_id": "sample-01",
+        "comparison": "model",
+        "candidate_label": "private-model-name",
+        "window_ms": 1000,
+        "control_count": 20,
+    }
+
+    first_rows, first_key = _build_time_aligned_blind_entries(
+        left, right, evaluated_sha="a" * 40, **kwargs
+    )
+    repeated_rows, repeated_key = _build_time_aligned_blind_entries(
+        left, right, evaluated_sha="a" * 40, **kwargs
+    )
+    changed_rows, changed_key = _build_time_aligned_blind_entries(
+        left, right, evaluated_sha="b" * 40, **kwargs
+    )
+
+    assert (first_rows, first_key) == (repeated_rows, repeated_key)
+    assert (first_rows, first_key) != (changed_rows, changed_key)
+    assert all("-->" in row["time"] for row in first_rows)
+    assert all(
+        f"{row['window_start_ms']:010d}-{row['window_end_ms']:010d}"
+        in row["review_id"]
+        for row in first_rows
+    )
+    serialized = json.dumps(first_rows)
+    for forbidden in (
+        "private-model-name",
+        "large-v3",
+        "balanced",
+        r"C:\\private",
+        "prompt",
+        "api_key",
+    ):
+        assert forbidden not in serialized
+    assert {item["candidate_label"] for item in first_key.values()} == {
+        "private-model-name"
+    }
+
+
+def test_parse_srt_interval_rejects_invalid_or_reversed_timestamps() -> None:
+    assert parse_srt_interval(
+        _row("01:02:03,004", "01:02:04,005", "text")
+    ) == (3_723_004, 3_724_005)
+    with pytest.raises(ValueError, match="timestamp"):
+        parse_srt_interval({"time": "not-a-time"})
+    with pytest.raises(ValueError, match="interval"):
+        parse_srt_interval(_row("00:00:02,000", "00:00:01,000", "text"))
+
+
 def test_evaluator_scores_only_gold_and_emits_private_blind_artifacts(tmp_path) -> None:
     evaluated_sha = "a" * 40
     contract = build_campaign_contract(evaluated_sha)
@@ -192,4 +374,7 @@ def test_evaluator_scores_only_gold_and_emits_private_blind_artifacts(tmp_path) 
     ).read_text(encoding="utf-8-sig")
     assert "large-v3" not in review_text
     assert "balanced" not in review_text
+    assert "cue_index" not in review_text
+    assert "window_start_ms" in review_text
+    assert "window_end_ms" in review_text
     assert str(tmp_path) not in json.dumps(summary)
