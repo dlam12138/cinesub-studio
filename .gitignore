@@ -99,6 +99,7 @@ acceptance/*
 !acceptance/v0_7_1_pipeline_longform_acceptance.md
 !acceptance/v0_7_1_pipeline_longform_acceptance_rerun.md
 !acceptance/v0_7_self_use_release_candidate.md
+!acceptance/v0_7_0_tag_proposal.md
 !acceptance/reports/
 acceptance/reports/*
 !acceptance/reports/v0_7_1_summary.json
