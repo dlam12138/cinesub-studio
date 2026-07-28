@@ -15,12 +15,18 @@ from asr_quality_evaluation import (
 from real_media_acceptance import build_campaign_contract
 
 
-def _manifest(reference_type: str = "gold_verbatim") -> dict:
+def _manifest(
+    reference_type: str = "gold_verbatim",
+    *,
+    campaign_scope: str = "",
+) -> dict:
     return {
         "authorized": True,
+        "campaign_scope": campaign_scope,
         "samples": [
             {
                 "id": f"sample-{number:02d}",
+                "source_group_id": f"film-{((number - 1) // 2) + 1:02d}",
                 "authorized": True,
                 "reference_type": reference_type,
                 "reference_language": "fr",
@@ -50,6 +56,15 @@ def test_reference_manifest_requires_exact_authorized_samples_and_types() -> Non
     assert is_formal_score_reference("gold_verbatim") is True
     assert is_formal_score_reference("production_subtitle") is False
     assert is_formal_score_reference("ocr_weak") is False
+    stage3a = _manifest(campaign_scope="stage3a_french_film")
+    assert len({
+        sample["source_group_id"]
+        for sample in validate_reference_manifest(stage3a).values()
+    }) == 3
+    stage3a["samples"][4]["source_group_id"] = "film-01"
+    stage3a["samples"][5]["source_group_id"] = "film-01"
+    with pytest.raises(ValueError, match="three distinct source groups"):
+        validate_reference_manifest(stage3a)
 
 
 def test_review_indexes_are_sha_campaign_deterministic() -> None:

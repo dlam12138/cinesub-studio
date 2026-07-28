@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 from real_media_acceptance import (
     BASE_SHA,
+    FRENCH_CAMPAIGN_SCOPE,
+    MULTILINGUAL_CAMPAIGN_SCOPE,
     build_campaign_contract,
     build_run_command,
     build_videocr_command,
@@ -164,6 +166,30 @@ def test_campaign_contract_fixes_six_primary_modes_and_exactly_28_runs() -> None
     assert {run["profile"] for run in control} == {
         "speed", "balanced", "large-control", "quality"
     }
+    assert {(run["sample_id"], run["asr_mode"], run["language"]) for run in control} == {
+        ("sample-01", "multilingual", None)
+    }
+
+
+def test_stage3a_contract_allows_six_french_windows_and_keeps_28_runs() -> None:
+    contract = build_campaign_contract("evaluated-sha", FRENCH_CAMPAIGN_SCOPE)
+
+    assert contract["campaign_scope"] == FRENCH_CAMPAIGN_SCOPE
+    assert contract["run_count"] == 28
+    assert len({run["run_id"] for run in contract["runs"]}) == 28
+    primary = [
+        run for run in contract["runs"]
+        if run["role"] == "primary"
+    ]
+    assert len(primary) == 24
+    assert {(run["asr_mode"], run["language"]) for run in primary} == {
+        ("fixed", "fr")
+    }
+    control = [
+        run for run in contract["runs"]
+        if run["role"] == "single-language-multilingual-control"
+    ]
+    assert len(control) == 4
     assert {(run["sample_id"], run["asr_mode"], run["language"]) for run in control} == {
         ("sample-01", "multilingual", None)
     }
@@ -355,13 +381,20 @@ def test_campaign_runner_dispatches_exact_plan_without_media_processing(
             "input": str(media),
             "duration_seconds": 240,
             "authorized": True,
+            "source_group_id": f"source-{number:02d}",
+            "start": 0,
+            "end": 240,
             "reference_type": "gold_verbatim",
             "reference_language": "en",
             "reference_path": str(reference),
         }
     manifest = private_root / "campaign.local.json"
     manifest.write_text(
-        json.dumps({"authorized": True, "samples": samples}),
+        json.dumps({
+            "authorized": True,
+            "campaign_scope": MULTILINGUAL_CAMPAIGN_SCOPE,
+            "samples": samples,
+        }),
         encoding="utf-8",
     )
     calls = []
@@ -388,6 +421,7 @@ def test_campaign_runner_dispatches_exact_plan_without_media_processing(
         private_dir=str(private_root / "campaign"),
         device="cuda",
         compute_type="float16",
+        campaign_scope=MULTILINGUAL_CAMPAIGN_SCOPE,
     ))
 
     assert summary["run_count"] == 28

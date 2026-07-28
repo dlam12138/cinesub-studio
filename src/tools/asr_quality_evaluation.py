@@ -69,16 +69,33 @@ def validate_reference_manifest(manifest: dict[str, Any]) -> dict[str, dict[str,
         samples = {str(row.get("id") or row.get("sample_id")): row for row in raw_samples}
     if tuple(sorted(samples)) != EXPECTED_SAMPLE_IDS:
         raise ValueError("ASR reference manifest must define exactly sample-01 through sample-06")
+    campaign_scope = str(manifest.get("campaign_scope") or "")
+    source_groups = set()
     for sample_id, sample in samples.items():
         if sample.get("authorized") is not True:
             raise ValueError(f"{sample_id} must explicitly set authorized=true")
         reference_type = sample.get("reference_type")
         if reference_type not in REFERENCE_TYPES:
             raise ValueError(f"{sample_id} has an invalid reference_type")
-        if not str(sample.get("reference_language") or "").strip():
+        reference_language = str(
+            sample.get("reference_language") or sample.get("language") or ""
+        ).strip()
+        if not reference_language:
             raise ValueError(f"{sample_id} must define reference_language")
-        if not str(sample.get("reference_path") or "").strip():
+        if (
+            reference_type != "ocr_weak"
+            and not str(sample.get("reference_path") or "").strip()
+        ):
             raise ValueError(f"{sample_id} must define reference_path")
+        if campaign_scope == "stage3a_french_film":
+            if reference_language != "fr":
+                raise ValueError(f"{sample_id} must be French in the Stage 3A scope")
+            source_group_id = str(sample.get("source_group_id") or "").strip()
+            if not source_group_id:
+                raise ValueError(f"{sample_id} must define source_group_id")
+            source_groups.add(source_group_id)
+    if campaign_scope == "stage3a_french_film" and len(source_groups) < 3:
+        raise ValueError("Stage 3A requires at least three distinct source groups")
     return samples
 
 
@@ -182,6 +199,7 @@ def _public_projection(detail: dict[str, Any]) -> dict[str, Any]:
             "sample_id": row["sample_id"],
             "reference_type": row["reference_type"],
             "reference_language": row["reference_language"],
+            "source_group_id": row["source_group_id"],
             "profiles": {
                 name: {
                     (
@@ -195,6 +213,17 @@ def _public_projection(detail: dict[str, Any]) -> dict[str, Any]:
             },
             "retry": row["retry"],
         })
+    group_rows = []
+    for source_group_id in sorted({row["source_group_id"] for row in public_samples}):
+        members = [row for row in public_samples if row["source_group_id"] == source_group_id]
+        group_rows.append({
+            "source_group_id": source_group_id,
+            "sample_ids": [row["sample_id"] for row in members],
+            "sample_count": len(members),
+            "gold_sample_count": sum(
+                row["reference_type"] == "gold_verbatim" for row in members
+            ),
+        })
     return {
         "schema_version": SCHEMA_VERSION,
         "campaign_version": CAMPAIGN_VERSION,
@@ -203,6 +232,7 @@ def _public_projection(detail: dict[str, Any]) -> dict[str, Any]:
         "run_count": detail["run_count"],
         "gold_sample_count": detail["gold_sample_count"],
         "samples": public_samples,
+        "source_groups": group_rows,
         "formal_score_reference_types": ["gold_verbatim"],
         "excluded_from_formal_score": ["production_subtitle", "ocr_weak"],
     }
@@ -257,7 +287,11 @@ def evaluate_campaign(
     base = reference_manifest_path.parent
     for sample_id in EXPECTED_SAMPLE_IDS:
         sample = samples[sample_id]
-        reference_rows = _parse_srt((base / sample["reference_path"]).resolve())
+        reference_path = str(sample.get("reference_path") or "").strip()
+        reference_rows = (
+            _parse_srt((base / reference_path).resolve())
+            if reference_path else []
+        )
         normalized_reference = normalize_asr_text(_joined_text(reference_rows))
         profiles: dict[str, Any] = {}
         for profile, report in sorted(by_sample[sample_id].items()):
@@ -339,7 +373,10 @@ def evaluate_campaign(
         detail_rows.append({
             "sample_id": sample_id,
             "reference_type": sample["reference_type"],
-            "reference_language": sample["reference_language"],
+            "reference_language": str(
+                sample.get("reference_language") or sample.get("language") or ""
+            ),
+            "source_group_id": str(sample.get("source_group_id") or sample_id),
             "profiles": profiles,
             "retry": {
                 "planned_window_count": retry_report.get("planned_window_count", 0),
