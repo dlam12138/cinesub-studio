@@ -93,6 +93,7 @@ ffmpeg/bin/
 acceptance/*
 !acceptance/v0_7_1_real_media_acceptance.md
 !acceptance/v0_7_1_stage3a_french_quality_campaign.md
+!acceptance/v0_7_1_stage3a_public_gold_addendum.md
 !acceptance/windows_pipeline_lock_lease_stability.md
 !acceptance/v0_7_1_pipeline_longform_acceptance.md
 !acceptance/v0_7_1_pipeline_longform_acceptance_rerun.md
@@ -104,6 +105,9 @@ acceptance/reports/*
 !acceptance/reports/v0_7_1_stage3a_summary.json
 !acceptance/reports/v0_7_1_stage3a_asr.csv
 !acceptance/reports/v0_7_1_stage3a_translation.csv
+!acceptance/reports/v0_7_1_stage3a_public_gold_summary.json
+!acceptance/reports/v0_7_1_stage3a_public_gold_asr.csv
+!acceptance/reports/v0_7_1_stage3a_public_gold_translation.csv
 !acceptance/reports/v0_7_1_pipeline_summary.json
 !acceptance/reports/v0_7_1_pipeline_scenarios.csv
 !acceptance/reports/v0_7_1_pipeline_rerun_summary.json

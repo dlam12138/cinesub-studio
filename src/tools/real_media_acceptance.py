@@ -41,11 +41,22 @@ RUN_PROFILES = {
     "balanced": ("small", "balanced", None),
     "large-control": ("large-v3", "quality", "off"),
     "quality": ("large-v3", "quality", None),
+    "small-quality-control": ("small", "quality", "off"),
+    "small-balanced-no-resegment": ("small", "balanced", None),
 }
-CAMPAIGN_PROFILES = tuple(RUN_PROFILES)
+CAMPAIGN_PROFILES = ("speed", "balanced", "large-control", "quality")
+MATCHED_CONTROL_PROFILES = (
+    "small-quality-control",
+    "small-balanced-no-resegment",
+)
 MULTILINGUAL_CAMPAIGN_SCOPE = "stage3b_multilingual"
 FRENCH_CAMPAIGN_SCOPE = "stage3a_french_film"
-CAMPAIGN_SCOPES = (FRENCH_CAMPAIGN_SCOPE, MULTILINGUAL_CAMPAIGN_SCOPE)
+PUBLIC_GOLD_CAMPAIGN_SCOPE = "stage3a_public_gold"
+CAMPAIGN_SCOPES = (
+    FRENCH_CAMPAIGN_SCOPE,
+    MULTILINGUAL_CAMPAIGN_SCOPE,
+    PUBLIC_GOLD_CAMPAIGN_SCOPE,
+)
 MULTILINGUAL_CAMPAIGN_SAMPLES = (
     {"sample_id": "sample-01", "description": "french-low-volume", "asr_mode": "fixed", "language": "fr"},
     {"sample_id": "sample-02", "description": "french-near-field", "asr_mode": "auto", "language": None},
@@ -122,16 +133,16 @@ def resolve_acceptance_profile(profile: str) -> dict:
     if profile not in RUN_PROFILES:
         raise ValueError(f"Unknown acceptance profile: {profile}")
     model, preset, retry_override = RUN_PROFILES[profile]
-    explicit = (
-        {"asr_retry_mode": retry_override}
-        if retry_override is not None
-        else {}
-    )
+    explicit = {}
+    if retry_override is not None:
+        explicit["asr_retry_mode"] = retry_override
+    if profile == "small-balanced-no-resegment":
+        explicit["resegment_subtitles"] = False
     loop, _sources = resolve_quality_loop_config(
         explicit=explicit,
         preset=preset,
     )
-    resolved = {"model": model, **loop}
+    resolved = {**loop, "model": model}
     if profile == "quality" and resolved["asr_retry_mode"] != "dry_run":
         raise RuntimeError("The quality acceptance profile must resolve to dry_run.")
     if profile == "large-control":
@@ -146,11 +157,29 @@ def resolve_acceptance_profile(profile: str) -> dict:
             )
         if resolved["asr_retry_mode"] != "off":
             raise RuntimeError("large-control must disable ASR retry.")
+    if profile == "small-quality-control":
+        control = resolve_acceptance_profile("large-control")
+        differences = sorted(
+            key for key in set(control) | set(resolved)
+            if control.get(key) != resolved.get(key)
+        )
+        if differences != ["model"]:
+            raise RuntimeError("small-quality-control must differ only by model.")
+    if profile == "small-balanced-no-resegment":
+        balanced = resolve_acceptance_profile("balanced")
+        differences = sorted(
+            key for key in set(balanced) | set(resolved)
+            if balanced.get(key) != resolved.get(key)
+        )
+        if differences != ["resegment_subtitles"]:
+            raise RuntimeError(
+                "small-balanced-no-resegment must differ only by resegment_subtitles."
+            )
     return resolved
 
 
 def _campaign_samples(campaign_scope: str) -> tuple[dict, ...]:
-    if campaign_scope == FRENCH_CAMPAIGN_SCOPE:
+    if campaign_scope in {FRENCH_CAMPAIGN_SCOPE, PUBLIC_GOLD_CAMPAIGN_SCOPE}:
         return tuple({
             "sample_id": f"sample-{number:02d}",
             "description": f"french-film-window-{number:02d}",
@@ -165,11 +194,18 @@ def _campaign_samples(campaign_scope: str) -> tuple[dict, ...]:
 def build_campaign_contract(
     evaluated_sha: str,
     campaign_scope: str = MULTILINGUAL_CAMPAIGN_SCOPE,
+    include_matched_controls: bool = False,
 ) -> dict:
     evaluated_sha = str(evaluated_sha or "").strip()
     if not evaluated_sha:
         raise ValueError("evaluated_sha is required")
     campaign_samples = _campaign_samples(campaign_scope)
+    if campaign_scope == PUBLIC_GOLD_CAMPAIGN_SCOPE and not include_matched_controls:
+        raise ValueError(
+            "The public-gold scope requires --include-matched-controls"
+        )
+    if campaign_scope != PUBLIC_GOLD_CAMPAIGN_SCOPE and include_matched_controls:
+        raise ValueError("Matched controls are only defined for the public-gold scope")
     scenarios = [
         {**sample, "scenario_id": f'{sample["sample_id"]}-primary', "role": "primary"}
         for sample in campaign_samples
@@ -200,8 +236,29 @@ def build_campaign_contract(
                 "language": scenario["language"],
                 "expected_profile_config": resolve_acceptance_profile(profile),
             })
-    if len(runs) != 28 or len({row["run_id"] for row in runs}) != 28:
+    base_run_count = len(runs)
+    if base_run_count != 28 or len({row["run_id"] for row in runs}) != 28:
         raise AssertionError("The ASR baseline campaign must contain exactly 28 unique runs.")
+    if include_matched_controls:
+        for scenario in scenarios:
+            if scenario["role"] != "primary":
+                continue
+            for profile in MATCHED_CONTROL_PROFILES:
+                runs.append({
+                    "run_id": f'{scenario["scenario_id"]}-{profile}',
+                    "sample_id": scenario["sample_id"],
+                    "scenario_id": scenario["scenario_id"],
+                    "role": "matched-control",
+                    "description": scenario["description"],
+                    "profile": profile,
+                    "asr_mode": scenario["asr_mode"],
+                    "language": scenario["language"],
+                    "expected_profile_config": resolve_acceptance_profile(profile),
+                })
+        if len(runs) != 40 or len({row["run_id"] for row in runs}) != 40:
+            raise AssertionError(
+                "The public-gold campaign must contain exactly 40 unique runs."
+            )
     return {
         "schema_version": 1,
         "campaign": "asr-baseline-hardening-v1",
@@ -209,6 +266,8 @@ def build_campaign_contract(
         "evaluated_sha": evaluated_sha,
         "local_files_only": True,
         "private_evidence_required": True,
+        "base_run_count": base_run_count,
+        "matched_control_run_count": len(runs) - base_run_count,
         "run_count": len(runs),
         "runs": runs,
     }
@@ -545,6 +604,8 @@ def build_run_command(args: argparse.Namespace) -> list[str]:
     ]
     if retry_override:
         command += ["--asr-retry-mode", retry_override]
+    if args.profile == "small-balanced-no-resegment":
+        command.append("--no-resegment-subtitles")
     asr_mode = str(getattr(args, "asr_mode", "") or "").strip()
     language = str(getattr(args, "language", "") or "").strip()
     if not asr_mode:
@@ -672,6 +733,7 @@ def run_campaign(args: argparse.Namespace) -> dict:
         raise ValueError("Campaign manifest must set authorized=true")
     allowed_reference_types = {"gold_verbatim", "production_subtitle", "ocr_weak"}
     source_groups: dict[str, list[tuple[float, float]]] = {}
+    manifest_dir = Path(args.manifest).resolve().parent
     for sample_id, sample in samples.items():
         if sample.get("authorized") is not True:
             raise ValueError(f"{sample_id} must explicitly set authorized=true")
@@ -687,8 +749,16 @@ def run_campaign(args: argparse.Namespace) -> dict:
             and not str(sample.get("reference_path") or "").strip()
         ):
             raise ValueError(f"{sample_id} must define reference_path")
-        if campaign_scope == FRENCH_CAMPAIGN_SCOPE and sample_language != "fr":
+        if (
+            campaign_scope in {FRENCH_CAMPAIGN_SCOPE, PUBLIC_GOLD_CAMPAIGN_SCOPE}
+            and sample_language != "fr"
+        ):
             raise ValueError(f"{sample_id} must be French in the Stage 3A scope")
+        if (
+            campaign_scope == PUBLIC_GOLD_CAMPAIGN_SCOPE
+            and sample.get("reference_type") != "gold_verbatim"
+        ):
+            raise ValueError(f"{sample_id} must use gold_verbatim in the public-gold scope")
         source_group_id = str(sample.get("source_group_id") or "").strip()
         if not source_group_id:
             raise ValueError(f"{sample_id} must define source_group_id")
@@ -700,7 +770,38 @@ def run_campaign(args: argparse.Namespace) -> dict:
         if any(start < previous_end and previous_start < end for previous_start, previous_end in intervals):
             raise ValueError(f"{sample_id} overlaps another window in {source_group_id}")
         intervals.append((start, end))
-    if campaign_scope == FRENCH_CAMPAIGN_SCOPE and len(source_groups) < 3:
+        reference_value = str(sample.get("reference_path") or "").strip()
+        if reference_value:
+            reference_path = Path(reference_value)
+            if not reference_path.is_absolute():
+                reference_path = (
+                    reference_path.resolve()
+                    if reference_path.is_file()
+                    else manifest_dir / reference_path
+                )
+            if not reference_path.is_file():
+                raise FileNotFoundError(
+                    f"Private campaign reference is unavailable for {sample_id}"
+                )
+        if campaign_scope == PUBLIC_GOLD_CAMPAIGN_SCOPE:
+            clips_value = str(sample.get("clips_path") or "").strip()
+            if not clips_value:
+                raise ValueError(f"{sample_id} must define clips_path")
+            clips_path = Path(clips_value)
+            if not clips_path.is_absolute():
+                clips_path = (
+                    clips_path.resolve()
+                    if clips_path.is_file()
+                    else manifest_dir / clips_path
+                )
+            if not clips_path.is_file():
+                raise FileNotFoundError(
+                    f"Private clip boundary audit is unavailable for {sample_id}"
+                )
+    if (
+        campaign_scope in {FRENCH_CAMPAIGN_SCOPE, PUBLIC_GOLD_CAMPAIGN_SCOPE}
+        and len(source_groups) < 3
+    ):
         raise ValueError("Stage 3A requires at least three distinct source_group_id values")
     current_sha = _git_sha(resolve_runtime_paths().project_root)
     if current_sha != args.evaluated_sha:
@@ -708,15 +809,41 @@ def run_campaign(args: argparse.Namespace) -> dict:
             f"Campaign evaluated SHA mismatch: expected {args.evaluated_sha}, current {current_sha}"
         )
 
-    contract = build_campaign_contract(args.evaluated_sha, campaign_scope)
+    include_matched_controls = bool(
+        getattr(args, "include_matched_controls", False)
+    )
+    contract = build_campaign_contract(
+        args.evaluated_sha,
+        campaign_scope,
+        include_matched_controls=include_matched_controls,
+    )
+    if campaign_scope == PUBLIC_GOLD_CAMPAIGN_SCOPE:
+        for model_name in sorted({
+            row["expected_profile_config"]["model"] for row in contract["runs"]
+        }):
+            location = locate_asr_model(model_name, Path(args.model_dir).resolve())
+            if not location.available or not location.local_path:
+                raise RuntimeError(
+                    f"Campaign local-only model is unavailable: {model_name}"
+                )
+            valid, missing = validate_model_directory(Path(location.local_path))
+            if not valid:
+                raise RuntimeError(
+                    f"Campaign local-only model is invalid: {model_name}: {missing}"
+                )
     private_dir.mkdir(parents=True, exist_ok=True)
     _write_json(private_dir / "campaign.contract.local.json", contract)
     reports = []
     for planned in contract["runs"]:
         sample = samples[planned["sample_id"]]
-        input_path = Path(
-            sample.get("media_path") or sample.get("input") or ""
-        ).expanduser().resolve()
+        input_path = Path(sample.get("media_path") or sample.get("input") or "")
+        if not input_path.is_absolute():
+            input_path = (
+                input_path.resolve()
+                if input_path.is_file()
+                else manifest_dir / input_path
+            )
+        input_path = input_path.expanduser().resolve()
         if not input_path.is_file():
             raise FileNotFoundError(
                 f'Private campaign input is unavailable for {planned["sample_id"]}'
@@ -858,11 +985,60 @@ def compare_quality_control(control: dict, quality: dict) -> dict:
     return assertions
 
 
+def compare_matched_profiles(
+    left: dict,
+    right: dict,
+    *,
+    left_profile: str,
+    right_profile: str,
+    allowed_difference: str,
+) -> dict:
+    if left.get("profile") != left_profile or right.get("profile") != right_profile:
+        raise ValueError(
+            f"Comparison requires {left_profile} and {right_profile} reports"
+        )
+    if left.get("scenario_id") != right.get("scenario_id"):
+        raise ValueError("Matched comparison reports belong to different scenarios")
+    left_config = left.get("effective_config", {})
+    right_config = right.get("effective_config", {})
+    differences = sorted(
+        key for key in set(left_config) | set(right_config)
+        if left_config.get(key) != right_config.get(key)
+    )
+    if differences != [allowed_difference]:
+        raise RuntimeError(
+            f"{left_profile} and {right_profile} must differ only by {allowed_difference}"
+        )
+    if left.get("input_sha256") != right.get("input_sha256"):
+        raise RuntimeError("Matched comparison input hashes differ")
+    for report in (left, right):
+        if report.get("effective_config", {}).get("local_files_only") is not True:
+            raise RuntimeError("Matched comparison was not local-files-only")
+    return {
+        "left_profile": left_profile,
+        "right_profile": right_profile,
+        "effective_config_diff": differences,
+        "allowed_difference": allowed_difference,
+        "input_hash_match": True,
+        "runtime_config_hash_match": (
+            left.get("runtime_config_sha256")
+            == right.get("runtime_config_sha256")
+        ),
+    }
+
+
 def validate_campaign_reports(contract: dict, reports: list[dict]) -> dict:
     expected = {row["run_id"]: row for row in contract.get("runs", [])}
     actual = {row.get("run_id"): row for row in reports}
-    if len(expected) != 28 or set(actual) != set(expected) or len(actual) != len(reports):
-        raise RuntimeError("Campaign evidence must contain exactly the planned 28 unique runs")
+    expected_count = int(contract.get("run_count") or 0)
+    if (
+        len(expected) != expected_count
+        or set(actual) != set(expected)
+        or len(actual) != len(reports)
+    ):
+        raise RuntimeError(
+            f"Campaign evidence must contain exactly the planned {expected_count} unique runs"
+        )
     for run_id, report in actual.items():
         planned = expected[run_id]
         for field in ("sample_id", "scenario_id", "profile"):
@@ -901,6 +1077,40 @@ def validate_campaign_reports(contract: dict, reports: list[dict]) -> dict:
     decode_variance_count = sum(
         not row["output_srt_hash_match"] for row in comparisons
     )
+    model_comparisons = []
+    resegment_comparisons = []
+    if contract.get("campaign_scope") == PUBLIC_GOLD_CAMPAIGN_SCOPE:
+        primary_scenarios = sorted(
+            scenario_id for scenario_id in scenario_ids
+            if scenario_id.endswith("-primary")
+        )
+        for scenario_id in primary_scenarios:
+            by_profile = {
+                report["profile"]: report for report in reports
+                if report["scenario_id"] == scenario_id
+            }
+            model_comparisons.append({
+                "scenario_id": scenario_id,
+                **compare_matched_profiles(
+                    by_profile["small-quality-control"],
+                    by_profile["large-control"],
+                    left_profile="small-quality-control",
+                    right_profile="large-control",
+                    allowed_difference="model",
+                ),
+            })
+            resegment_comparisons.append({
+                "scenario_id": scenario_id,
+                **compare_matched_profiles(
+                    by_profile["small-balanced-no-resegment"],
+                    by_profile["balanced"],
+                    left_profile="small-balanced-no-resegment",
+                    right_profile="balanced",
+                    allowed_difference="resegment_subtitles",
+                ),
+            })
+        if len(model_comparisons) != 6 or len(resegment_comparisons) != 6:
+            raise RuntimeError("Public-gold evidence requires all six matched pairs")
     return {
         "schema_version": 1,
         "campaign": contract.get("campaign"),
@@ -911,6 +1121,8 @@ def validate_campaign_reports(contract: dict, reports: list[dict]) -> dict:
         "status": "pass" if decode_variance_count == 0 else "pass_with_decode_variance",
         "independent_decode_variance_count": decode_variance_count,
         "comparisons": comparisons,
+        "model_matched_comparisons": model_comparisons,
+        "resegment_matched_comparisons": resegment_comparisons,
     }
 
 
@@ -1052,6 +1264,10 @@ def main() -> int:
         choices=CAMPAIGN_SCOPES,
         default=MULTILINGUAL_CAMPAIGN_SCOPE,
     )
+    campaign_parser.add_argument(
+        "--include-matched-controls",
+        action="store_true",
+    )
     campaign_parser.add_argument("--output", required=True)
 
     review_parser = subparsers.add_parser("review-sample")
@@ -1079,6 +1295,10 @@ def main() -> int:
         choices=CAMPAIGN_SCOPES,
         default="",
     )
+    campaign_run_parser.add_argument(
+        "--include-matched-controls",
+        action="store_true",
+    )
 
     args = parser.parse_args()
     if args.action == "model-preflight":
@@ -1094,7 +1314,11 @@ def main() -> int:
     elif args.action == "campaign-plan":
         _write_json(
             Path(args.output),
-            build_campaign_contract(args.evaluated_sha, args.campaign_scope),
+            build_campaign_contract(
+                args.evaluated_sha,
+                args.campaign_scope,
+                include_matched_controls=args.include_matched_controls,
+            ),
         )
     elif args.action == "campaign-run":
         run_campaign(args)

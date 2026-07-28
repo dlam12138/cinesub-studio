@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import random
 import re
 import unicodedata
@@ -15,6 +16,8 @@ from encoding_utils import read_json, write_json
 SCHEMA_VERSION = 1
 CAMPAIGN_VERSION = "stage3-asr-quality-v1"
 NORMALIZATION_VERSION = "asr-normalization-v1"
+PUBLIC_GOLD_SCOPE = "stage3a_public_gold"
+PUBLIC_GOLD_METRIC_VERSION = "public-gold-asr-metrics-v1"
 EXPECTED_SAMPLE_IDS = tuple(f"sample-{number:02d}" for number in range(1, 7))
 REFERENCE_TYPES = {"gold_verbatim", "production_subtitle", "ocr_weak"}
 SRT_TIMESTAMP_RE = re.compile(
@@ -247,14 +250,21 @@ def validate_reference_manifest(manifest: dict[str, Any]) -> dict[str, dict[str,
             and not str(sample.get("reference_path") or "").strip()
         ):
             raise ValueError(f"{sample_id} must define reference_path")
-        if campaign_scope == "stage3a_french_film":
+        if campaign_scope in {"stage3a_french_film", PUBLIC_GOLD_SCOPE}:
             if reference_language != "fr":
                 raise ValueError(f"{sample_id} must be French in the Stage 3A scope")
+            if campaign_scope == PUBLIC_GOLD_SCOPE and reference_type != "gold_verbatim":
+                raise ValueError(
+                    f"{sample_id} must use gold_verbatim in the public-gold scope"
+                )
             source_group_id = str(sample.get("source_group_id") or "").strip()
             if not source_group_id:
                 raise ValueError(f"{sample_id} must define source_group_id")
             source_groups.add(source_group_id)
-    if campaign_scope == "stage3a_french_film" and len(source_groups) < 3:
+    if (
+        campaign_scope in {"stage3a_french_film", PUBLIC_GOLD_SCOPE}
+        and len(source_groups) < 3
+    ):
         raise ValueError("Stage 3A requires at least three distinct source groups")
     return samples
 
@@ -319,6 +329,10 @@ def _jiwer_metrics(reference: str, candidate: str) -> dict[str, Any]:
         "deletions": int(word.deletions),
         "reference_words": int(word.hits + word.substitutions + word.deletions),
         "candidate_words": len(candidate.split()),
+        "character_substitutions": int(char.substitutions),
+        "character_insertions": int(char.insertions),
+        "character_deletions": int(char.deletions),
+        "reference_characters": int(char.hits + char.substitutions + char.deletions),
     }
 
 
@@ -349,23 +363,34 @@ def _segmentation_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _load_reports(reports_dir: Path) -> list[dict[str, Any]]:
+def _load_reports(reports_dir: Path, expected_count: int) -> list[dict[str, Any]]:
     reports = [
         read_json(path) for path in sorted(reports_dir.glob("*.run.local.json"))
     ]
-    if len(reports) != 28 or len({row.get("run_id") for row in reports}) != 28:
-        raise ValueError("ASR evaluation requires exactly 28 unique campaign reports")
+    if (
+        len(reports) != expected_count
+        or len({row.get("run_id") for row in reports}) != expected_count
+    ):
+        raise ValueError(
+            f"ASR evaluation requires exactly {expected_count} unique campaign reports"
+        )
     return reports
 
 
 def _public_projection(detail: dict[str, Any]) -> dict[str, Any]:
+    raw_groups = sorted({row["source_group_id"] for row in detail["samples"]})
+    group_aliases = {
+        source_group_id: f"source-group-{index:02d}"
+        for index, source_group_id in enumerate(raw_groups, start=1)
+    }
     public_samples = []
     for row in detail["samples"]:
         public_samples.append({
             "sample_id": row["sample_id"],
             "reference_type": row["reference_type"],
             "reference_language": row["reference_language"],
-            "source_group_id": row["source_group_id"],
+            "source_group_id": group_aliases[row["source_group_id"]],
+            "duration_seconds": row.get("duration_seconds"),
             "profiles": {
                 name: {
                     (
@@ -397,8 +422,17 @@ def _public_projection(detail: dict[str, Any]) -> dict[str, Any]:
         "evaluated_sha": detail["evaluated_sha"],
         "run_count": detail["run_count"],
         "gold_sample_count": detail["gold_sample_count"],
+        "dataset": detail.get("dataset"),
+        "dataset_version": detail.get("dataset_version"),
+        "dataset_license": detail.get("dataset_license"),
+        "dataset_citation": detail.get("dataset_citation"),
+        "source_page": detail.get("source_page"),
+        "archive_hash_prefix": detail.get("archive_hash_prefix"),
         "samples": public_samples,
         "source_groups": group_rows,
+        "model_comparison": detail.get("model_comparison"),
+        "resegment_comparison": detail.get("resegment_comparison"),
+        "retry_decision": detail.get("retry_decision"),
         "formal_score_reference_types": ["gold_verbatim"],
         "excluded_from_formal_score": ["production_subtitle", "ocr_weak"],
     }
@@ -419,9 +453,177 @@ def assert_public_safe(payload: Any) -> None:
             for item in value:
                 visit(item)
         elif isinstance(value, str):
-            if re.search(r"(?:[A-Za-z]:[\\/]|/Users/|/home/|\\\\)", value):
+            if (
+                not re.match(r"^https?://", value, flags=re.IGNORECASE)
+                and re.search(r"(?:[A-Za-z]:[\\/]|/Users/|/home/|\\\\)", value)
+            ):
                 raise ValueError("Public ASR report contains a private path")
     visit(payload)
+
+
+def _corpus_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    reference_words = sum(int(row["reference_words"]) for row in rows)
+    word_errors = sum(
+        int(row[key]) for row in rows
+        for key in ("substitutions", "insertions", "deletions")
+    )
+    reference_characters = sum(int(row["reference_characters"]) for row in rows)
+    character_errors = sum(
+        int(row[key]) for row in rows
+        for key in (
+            "character_substitutions",
+            "character_insertions",
+            "character_deletions",
+        )
+    )
+    return {
+        "wer": round(word_errors / max(reference_words, 1), 8),
+        "cer": round(character_errors / max(reference_characters, 1), 8),
+        "substitutions": sum(int(row["substitutions"]) for row in rows),
+        "insertions": sum(int(row["insertions"]) for row in rows),
+        "deletions": sum(int(row["deletions"]) for row in rows),
+        "reference_words": reference_words,
+        "empty_output_count": sum(bool(row.get("empty_output")) for row in rows),
+        "repeated_phrase_count": sum(bool(row.get("repeated_phrase")) for row in rows),
+        "hallucination_like_insertion_count": sum(
+            bool(row.get("hallucination_like_insertion")) for row in rows
+        ),
+        "end_to_end_seconds": round(
+            sum(float(row.get("end_to_end_seconds") or 0) for row in rows),
+            6,
+        ),
+        "peak_gpu_memory_mib": max(
+            (int(row.get("peak_gpu_memory_mib") or 0) for row in rows),
+            default=0,
+        ),
+    }
+
+
+def _candidate_text_for_interval(
+    candidate_rows: list[dict[str, Any]],
+    start: int,
+    end: int,
+) -> str:
+    selected = []
+    for row in candidate_rows:
+        row_start, row_end = parse_srt_interval(row)
+        midpoint = row_start + (row_end - row_start) // 2
+        if start <= midpoint < end:
+            selected.append((row_start, str(row.get("text") or "")))
+    return " ".join(text for _, text in sorted(selected))
+
+
+def _has_repeated_phrase(text: str) -> bool:
+    words = normalize_asr_text(text).split()
+    for width in (3, 4, 5):
+        for index in range(0, len(words) - width * 2 + 1):
+            if words[index:index + width] == words[index + width:index + width * 2]:
+                return True
+    return False
+
+
+def _clip_error_rows(
+    *,
+    sample_id: str,
+    profile: str,
+    reference_rows: list[dict[str, Any]],
+    candidate_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows = []
+    for clip_index, reference_row in enumerate(reference_rows, start=1):
+        start, end = parse_srt_interval(reference_row)
+        reference = normalize_asr_text(str(reference_row.get("text") or ""))
+        candidate = normalize_asr_text(
+            _candidate_text_for_interval(candidate_rows, start, end)
+        )
+        metrics = _jiwer_metrics(reference, candidate)
+        rows.append({
+            "sample_id": sample_id,
+            "clip_index": clip_index,
+            "profile": profile,
+            **metrics,
+            "empty_output": not bool(candidate),
+            "repeated_phrase": _has_repeated_phrase(candidate),
+            "hallucination_like_insertion": (
+                metrics["insertions"] >= 3
+                and metrics["insertions"] / max(metrics["reference_words"], 1) >= 0.2
+            ),
+        })
+    return rows
+
+
+def _manifest_duration(sample: dict[str, Any]) -> float | None:
+    start = sample.get("start")
+    end = sample.get("end")
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return None
+    return round(float(end) - float(start), 6)
+
+
+def paired_bootstrap(
+    left_rows: list[dict[str, Any]],
+    right_rows: list[dict[str, Any]],
+    *,
+    seed_material: str,
+    resamples: int = 10_000,
+) -> dict[str, Any]:
+    left = {
+        (row["sample_id"], int(row["clip_index"])): row for row in left_rows
+    }
+    right = {
+        (row["sample_id"], int(row["clip_index"])): row for row in right_rows
+    }
+    if not left or set(left) != set(right):
+        raise ValueError("Paired bootstrap requires identical non-empty clip units")
+    keys = sorted(left)
+
+    def wer(rows: list[dict[str, Any]]) -> float:
+        errors = sum(
+            int(row["substitutions"]) + int(row["insertions"]) + int(row["deletions"])
+            for row in rows
+        )
+        words = sum(int(row["reference_words"]) for row in rows)
+        return errors / max(words, 1)
+
+    observed_deltas = {
+        key: (
+            (
+                int(left[key]["substitutions"])
+                + int(left[key]["insertions"])
+                + int(left[key]["deletions"])
+            ) / max(int(left[key]["reference_words"]), 1)
+            - (
+                int(right[key]["substitutions"])
+                + int(right[key]["insertions"])
+                + int(right[key]["deletions"])
+            ) / max(int(right[key]["reference_words"]), 1)
+        )
+        for key in keys
+    }
+    seed = int(hashlib.sha256(seed_material.encode("utf-8")).hexdigest()[:16], 16)
+    generator = random.Random(seed)
+    deltas = []
+    for _ in range(resamples):
+        selected = [keys[generator.randrange(len(keys))] for _ in keys]
+        deltas.append(
+            wer([left[key] for key in selected])
+            - wer([right[key] for key in selected])
+        )
+    deltas.sort()
+    lower = deltas[math.floor((resamples - 1) * 0.025)]
+    upper = deltas[math.ceil((resamples - 1) * 0.975)]
+    return {
+        "metric_version": PUBLIC_GOLD_METRIC_VERSION,
+        "resamples": resamples,
+        "seed_hex": f"{seed:016x}",
+        "mean_delta_wer": round(sum(deltas) / len(deltas), 8),
+        "ci95_lower": round(lower, 8),
+        "ci95_upper": round(upper, 8),
+        "large_v3_winning_clip_count": sum(value > 0 for value in observed_deltas.values()),
+        "small_winning_clip_count": sum(value < 0 for value in observed_deltas.values()),
+        "tie_clip_count": sum(value == 0 for value in observed_deltas.values()),
+        "clip_count": len(keys),
+    }
 
 
 def evaluate_campaign(
@@ -431,13 +633,17 @@ def evaluate_campaign(
     output_dir: Path,
 ) -> dict[str, Any]:
     contract = read_json(contract_path)
-    reports = _load_reports(reports_dir)
-    samples = validate_reference_manifest(read_json(reference_manifest_path))
+    expected_count = int(contract.get("run_count") or 0)
+    reports = _load_reports(reports_dir, expected_count)
+    manifest = read_json(reference_manifest_path)
+    samples = validate_reference_manifest(manifest)
     evaluated_sha = str(contract.get("evaluated_sha") or "")
     expected_run_ids = {row.get("run_id") for row in contract.get("runs", [])}
     actual_run_ids = {row.get("run_id") for row in reports}
-    if len(expected_run_ids) != 28 or actual_run_ids != expected_run_ids:
-        raise ValueError("Campaign reports do not match the frozen 28-run contract")
+    if len(expected_run_ids) != expected_count or actual_run_ids != expected_run_ids:
+        raise ValueError(
+            f"Campaign reports do not match the frozen {expected_count}-run contract"
+        )
     if not evaluated_sha or any(row.get("evaluated_sha") != evaluated_sha for row in reports):
         raise ValueError("Campaign report evaluated SHA mismatch")
     by_sample: dict[str, dict[str, dict[str, Any]]] = {}
@@ -448,6 +654,7 @@ def evaluate_campaign(
 
     detail_rows = []
     error_rows: list[dict[str, Any]] = []
+    clip_error_rows: list[dict[str, Any]] = []
     blind_rows: list[dict[str, Any]] = []
     blind_key: dict[str, Any] = {}
     base = reference_manifest_path.parent
@@ -467,9 +674,21 @@ def evaluate_campaign(
                 **_segmentation_metrics(candidate_rows),
                 "empty_output": not bool(normalized_candidate),
                 "end_to_end_seconds": report.get("end_to_end_seconds"),
+                "peak_gpu_memory_mib": max(
+                    (
+                        int(row.get("used_memory_mib") or 0)
+                        for row in report.get("gpu_samples", [])
+                    ),
+                    default=0,
+                ),
+                "repeated_phrase": _has_repeated_phrase(normalized_candidate),
             }
             if is_formal_score_reference(sample["reference_type"]):
                 metrics.update(_jiwer_metrics(normalized_reference, normalized_candidate))
+                metrics["hallucination_like_insertion"] = (
+                    metrics["insertions"] >= 3
+                    and metrics["insertions"] / max(metrics["reference_words"], 1) >= 0.2
+                )
                 error_rows.append({
                     "sample_id": sample_id,
                     "profile": profile,
@@ -477,6 +696,12 @@ def evaluate_campaign(
                         "wer", "cer", "substitutions", "insertions", "deletions"
                     )},
                 })
+                clip_error_rows.extend(_clip_error_rows(
+                    sample_id=sample_id,
+                    profile=profile,
+                    reference_rows=reference_rows,
+                    candidate_rows=candidate_rows,
+                ))
             profiles[profile] = metrics
 
         quality = by_sample[sample_id]["quality"]
@@ -496,8 +721,26 @@ def evaluate_campaign(
             })
 
         comparisons = (
-            ("model", "speed", "large-control", "large-v3"),
-            ("resegment", "speed", "balanced", "balanced"),
+            (
+                "model",
+                (
+                    "small-quality-control"
+                    if contract.get("campaign_scope") == PUBLIC_GOLD_SCOPE
+                    else "speed"
+                ),
+                "large-control",
+                "large-v3",
+            ),
+            (
+                "resegment",
+                (
+                    "small-balanced-no-resegment"
+                    if contract.get("campaign_scope") == PUBLIC_GOLD_SCOPE
+                    else "speed"
+                ),
+                "balanced",
+                "balanced",
+            ),
         )
         for comparison, left_profile, right_profile, candidate_label in comparisons:
             left_rows = _parse_srt(_artifact_path(by_sample[sample_id][left_profile], "output_srt"))
@@ -519,6 +762,7 @@ def evaluate_campaign(
                 sample.get("reference_language") or sample.get("language") or ""
             ),
             "source_group_id": str(sample.get("source_group_id") or sample_id),
+            "duration_seconds": _manifest_duration(sample),
             "profiles": profiles,
             "retry": {
                 "planned_window_count": retry_report.get("planned_window_count", 0),
@@ -533,16 +777,157 @@ def evaluate_campaign(
             },
         })
 
+    model_comparison = None
+    resegment_comparison = None
+    retry_decision = None
+    if contract.get("campaign_scope") == PUBLIC_GOLD_SCOPE:
+        small_clips = [
+            row for row in clip_error_rows
+            if row["profile"] == "small-quality-control"
+        ]
+        large_clips = [
+            row for row in clip_error_rows
+            if row["profile"] == "large-control"
+        ]
+        small_corpus = _corpus_metrics(small_clips)
+        large_corpus = _corpus_metrics(large_clips)
+        for corpus, profile in (
+            (small_corpus, "small-quality-control"),
+            (large_corpus, "large-control"),
+        ):
+            corpus["end_to_end_seconds"] = round(sum(
+                float(detail["profiles"][profile]["end_to_end_seconds"] or 0)
+                for detail in detail_rows
+            ), 6)
+            corpus["peak_gpu_memory_mib"] = max(
+                int(detail["profiles"][profile]["peak_gpu_memory_mib"] or 0)
+                for detail in detail_rows
+            )
+        bootstrap = paired_bootstrap(
+            small_clips,
+            large_clips,
+            seed_material=(
+                f"{evaluated_sha}:"
+                f"{manifest.get('archive_local_download_sha256', '')}:"
+                f"{PUBLIC_GOLD_METRIC_VERSION}"
+            ),
+        )
+        sample_regressions = []
+        non_inferior = 0
+        severe_regression = False
+        for detail in detail_rows:
+            small_wer = detail["profiles"]["small-quality-control"]["wer"]
+            large_wer = detail["profiles"]["large-control"]["wer"]
+            delta = round(small_wer - large_wer, 8)
+            non_inferior += large_wer <= small_wer
+            severe_regression |= large_wer - small_wer > 0.05
+            sample_regressions.append({
+                "sample_id": detail["sample_id"],
+                "small_wer": small_wer,
+                "large_v3_wer": large_wer,
+                "delta_wer": delta,
+            })
+        relative_improvement = (
+            (small_corpus["wer"] - large_corpus["wer"])
+            / max(small_corpus["wer"], 1e-12)
+        )
+        promote = all((
+            bootstrap["ci95_lower"] > 0,
+            relative_improvement >= 0.05,
+            non_inferior >= 4,
+            not severe_regression,
+            large_corpus["insertions"] <= small_corpus["insertions"],
+            large_corpus["hallucination_like_insertion_count"]
+            <= small_corpus["hallucination_like_insertion_count"],
+            large_corpus["empty_output_count"] <= small_corpus["empty_output_count"],
+        ))
+        model_comparison = {
+            "left_profile": "small-quality-control",
+            "right_profile": "large-control",
+            "small": small_corpus,
+            "large_v3": large_corpus,
+            "relative_wer_improvement": round(relative_improvement, 8),
+            "bootstrap": bootstrap,
+            "sample_non_inferior_count": non_inferior,
+            "severe_regression": severe_regression,
+            "per_sample": sample_regressions,
+            "decision": "promote" if promote else "keep_current_model_split",
+        }
+        resegment_samples = []
+        for detail in detail_rows:
+            left = detail["profiles"]["small-balanced-no-resegment"]
+            right = detail["profiles"]["balanced"]
+            resegment_samples.append({
+                "sample_id": detail["sample_id"],
+                "text_preserved": (
+                    left["joined_normalized_sha256"]
+                    == right["joined_normalized_sha256"]
+                ),
+                "without_resegment": {
+                    key: left[key] for key in (
+                        "cue_count", "zero_duration_count", "overlap_count",
+                        "gap_seconds", "over_20_cps_count",
+                        "over_42_character_line_count",
+                    )
+                },
+                "with_resegment": {
+                    key: right[key] for key in (
+                        "cue_count", "zero_duration_count", "overlap_count",
+                        "gap_seconds", "over_20_cps_count",
+                        "over_42_character_line_count",
+                    )
+                },
+            })
+        resegment_comparison = {
+            "left_profile": "small-balanced-no-resegment",
+            "right_profile": "balanced",
+            "all_text_preserved": all(row["text_preserved"] for row in resegment_samples),
+            "structural_safety_only": True,
+            "natural_film_readability_requires_private_blind_review": True,
+            "samples": resegment_samples,
+            "decision": (
+                "keep_pending_private_film_review"
+                if all(row["text_preserved"] for row in resegment_samples)
+                else "reject"
+            ),
+        }
+        accepted = sum(
+            int(detail["retry"]["accepted_window_count"]) for detail in detail_rows
+        )
+        retry_decision = {
+            "planned_window_count": sum(
+                int(detail["retry"]["planned_window_count"]) for detail in detail_rows
+            ),
+            "executed_window_count": sum(
+                int(detail["retry"]["executed_window_count"]) for detail in detail_rows
+            ),
+            "accepted_window_count": accepted,
+            "decision": "keep_dry_run" if accepted == 0 else "private_apply_confirmation",
+        }
+
     detail = {
         "schema_version": SCHEMA_VERSION,
         "campaign_version": CAMPAIGN_VERSION,
         "normalization_version": NORMALIZATION_VERSION,
         "evaluated_sha": evaluated_sha,
         "run_count": len(reports),
+        "dataset": manifest.get("dataset"),
+        "dataset_version": manifest.get("dataset_version"),
+        "dataset_license": manifest.get("dataset_license"),
+        "dataset_citation": manifest.get("dataset_citation"),
+        "source_page": manifest.get("source_page"),
+        "archive_hash_prefix": str(
+            manifest.get("archive_local_download_sha256")
+            or manifest.get("archive_hash_prefix")
+            or ""
+        )[:12],
         "gold_sample_count": sum(
             row["reference_type"] == "gold_verbatim" for row in detail_rows
         ),
         "samples": detail_rows,
+        "model_comparison": model_comparison,
+        "resegment_comparison": resegment_comparison,
+        "retry_decision": retry_decision,
     }
     public = _public_projection(detail)
     assert_public_safe(public)
@@ -552,6 +937,7 @@ def evaluate_campaign(
     write_json(output_dir / "asr-quality-review-key.local.json", blind_key)
     _write_csv(output_dir / "asr-quality-per-sample.local.csv", _flatten_samples(public))
     _write_csv(output_dir / "asr-quality-error-alignment.local.csv", error_rows)
+    _write_csv(output_dir / "asr-quality-clip-errors.local.csv", clip_error_rows)
     _write_tsv(output_dir / "asr-quality-blind-review.local.tsv", blind_rows)
     return public
 

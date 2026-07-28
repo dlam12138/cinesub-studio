@@ -12,10 +12,11 @@ from asr_quality_evaluation import (
     evaluate_campaign,
     is_formal_score_reference,
     normalize_asr_text,
+    paired_bootstrap,
     parse_srt_interval,
     validate_reference_manifest,
 )
-from real_media_acceptance import build_campaign_contract
+from real_media_acceptance import PUBLIC_GOLD_CAMPAIGN_SCOPE, build_campaign_contract
 
 
 def _manifest(
@@ -378,3 +379,140 @@ def test_evaluator_scores_only_gold_and_emits_private_blind_artifacts(tmp_path) 
     assert "window_start_ms" in review_text
     assert "window_end_ms" in review_text
     assert str(tmp_path) not in json.dumps(summary)
+
+
+def test_paired_bootstrap_is_clip_level_and_deterministic() -> None:
+    left = [
+        {
+            "sample_id": "sample-01",
+            "clip_index": index,
+            "substitutions": 1,
+            "insertions": 0,
+            "deletions": 0,
+            "reference_words": 10,
+        }
+        for index in range(1, 5)
+    ]
+    right = [
+        {
+            "sample_id": "sample-01",
+            "clip_index": index,
+            "substitutions": 0,
+            "insertions": 0,
+            "deletions": 0,
+            "reference_words": 10,
+        }
+        for index in range(1, 5)
+    ]
+
+    first = paired_bootstrap(left, right, seed_material="frozen", resamples=1000)
+    repeated = paired_bootstrap(left, right, seed_material="frozen", resamples=1000)
+
+    assert first == repeated
+    assert first["ci95_lower"] > 0
+    assert first["large_v3_winning_clip_count"] == 4
+    assert first["clip_count"] == 4
+
+
+def test_public_gold_evaluator_requires_40_runs_and_anonymizes_sources(tmp_path: Path) -> None:
+    evaluated_sha = "c" * 40
+    contract = build_campaign_contract(
+        evaluated_sha,
+        PUBLIC_GOLD_CAMPAIGN_SCOPE,
+        include_matched_controls=True,
+    )
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    references = tmp_path / "references"
+    references.mkdir()
+    manifest_samples = []
+    for number in range(1, 7):
+        sample_id = f"sample-{number:02d}"
+        reference = references / f"{sample_id}.srt"
+        _srt(reference, "bonjour tout le monde")
+        manifest_samples.append({
+            "id": sample_id,
+            "authorized": True,
+            "source_group_id": f"private-video-id-{((number - 1) // 2) + 1}",
+            "reference_type": "gold_verbatim",
+            "reference_language": "fr",
+            "reference_path": reference.name,
+            "start": 0,
+            "end": 1,
+        })
+    manifest_path = references / "manifest.json"
+    manifest_path.write_text(json.dumps({
+        "authorized": True,
+        "campaign_scope": PUBLIC_GOLD_CAMPAIGN_SCOPE,
+        "dataset": "MediaSpeech French",
+        "dataset_version": "SLR108 / MediaSpeech 1.1",
+        "dataset_license": "CC BY 4.0",
+        "dataset_citation": "MediaSpeech (2021)",
+        "source_page": "https://www.openslr.org/108/",
+        "archive_local_download_sha256": "d" * 64,
+        "samples": manifest_samples,
+    }), encoding="utf-8")
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    for planned in contract["runs"]:
+        artifact_dir = tmp_path / "artifacts" / planned["run_id"]
+        artifact_dir.mkdir(parents=True)
+        candidate = artifact_dir / "candidate.srt"
+        text = (
+            "bonjour erreur tout le monde"
+            if planned["profile"] == "small-quality-control"
+            else "bonjour tout le monde"
+        )
+        _srt(candidate, text)
+        review = artifact_dir / "candidate.asr_review.json"
+        review.write_text(json.dumps({"asr_retry_report": {
+            "planned_window_count": 0,
+            "executed_window_count": 0,
+            "accepted_window_count": 0,
+            "windows": [],
+        }}), encoding="utf-8")
+        report = {
+            "run_id": planned["run_id"],
+            "sample_id": planned["sample_id"],
+            "scenario_id": planned["scenario_id"],
+            "profile": planned["profile"],
+            "evaluated_sha": evaluated_sha,
+            "end_to_end_seconds": 1.0,
+            "gpu_samples": [{"used_memory_mib": 100}],
+            "artifacts": {
+                "output_srt": str(candidate),
+                "asr_review": str(review),
+            },
+        }
+        (reports_dir / f"{planned['run_id']}.run.local.json").write_text(
+            json.dumps(report),
+            encoding="utf-8",
+        )
+
+    summary = evaluate_campaign(
+        contract_path,
+        reports_dir,
+        manifest_path,
+        tmp_path / "evaluation",
+    )
+
+    assert summary["run_count"] == 40
+    assert summary["gold_sample_count"] == 6
+    assert summary["model_comparison"]["bootstrap"]["ci95_lower"] > 0
+    assert summary["model_comparison"]["decision"] == "promote"
+    assert summary["resegment_comparison"]["all_text_preserved"] is True
+    assert summary["retry_decision"]["decision"] == "keep_dry_run"
+    serialized = json.dumps(summary)
+    assert "private-video-id" not in serialized
+    assert "bonjour" not in serialized
+    assert summary["dataset_license"] == "CC BY 4.0"
+
+    missing = next(reports_dir.glob("*.run.local.json"))
+    missing.unlink()
+    with pytest.raises(ValueError, match="exactly 40"):
+        evaluate_campaign(
+            contract_path,
+            reports_dir,
+            manifest_path,
+            tmp_path / "incomplete",
+        )

@@ -8,6 +8,7 @@ from real_media_acceptance import (
     BASE_SHA,
     FRENCH_CAMPAIGN_SCOPE,
     MULTILINGUAL_CAMPAIGN_SCOPE,
+    PUBLIC_GOLD_CAMPAIGN_SCOPE,
     build_campaign_contract,
     build_run_command,
     build_videocr_command,
@@ -195,6 +196,44 @@ def test_stage3a_contract_allows_six_french_windows_and_keeps_28_runs() -> None:
     }
 
 
+def test_public_gold_contract_has_28_base_and_12_strict_matched_runs() -> None:
+    with pytest.raises(ValueError, match="include-matched-controls"):
+        build_campaign_contract("evaluated-sha", PUBLIC_GOLD_CAMPAIGN_SCOPE)
+
+    contract = build_campaign_contract(
+        "evaluated-sha",
+        PUBLIC_GOLD_CAMPAIGN_SCOPE,
+        include_matched_controls=True,
+    )
+
+    assert contract["base_run_count"] == 28
+    assert contract["matched_control_run_count"] == 12
+    assert contract["run_count"] == 40
+    assert len({row["run_id"] for row in contract["runs"]}) == 40
+    matched = [row for row in contract["runs"] if row["role"] == "matched-control"]
+    assert len(matched) == 12
+    assert {row["profile"] for row in matched} == {
+        "small-quality-control", "small-balanced-no-resegment"
+    }
+    assert {row["scenario_id"] for row in matched} == {
+        f"sample-{number:02d}-primary" for number in range(1, 7)
+    }
+    by_profile = {
+        row["profile"]: row["expected_profile_config"]
+        for row in contract["runs"]
+        if row["scenario_id"] == "sample-01-primary"
+    }
+    assert sorted(
+        key for key in by_profile["large-control"]
+        if by_profile["large-control"][key] != by_profile["small-quality-control"][key]
+    ) == ["model"]
+    assert sorted(
+        key for key in by_profile["balanced"]
+        if by_profile["balanced"][key]
+        != by_profile["small-balanced-no-resegment"][key]
+    ) == ["resegment_subtitles"]
+
+
 def test_stage3_private_root_is_accepted(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "real_media_acceptance.resolve_runtime_paths",
@@ -371,6 +410,37 @@ def test_quality_control_rejects_a_dry_run_that_accepted_output_windows() -> Non
 
     with pytest.raises(RuntimeError, match="contracts differ"):
         compare_quality_control(reports["large-control"], reports["quality"])
+
+
+def test_public_gold_validation_checks_all_matched_pairs() -> None:
+    contract = build_campaign_contract(
+        "evaluated-sha",
+        PUBLIC_GOLD_CAMPAIGN_SCOPE,
+        include_matched_controls=True,
+    )
+    reports = [_campaign_report(planned) for planned in contract["runs"]]
+
+    summary = validate_campaign_reports(contract, reports)
+
+    assert summary["run_count"] == 40
+    assert len(summary["model_matched_comparisons"]) == 6
+    assert len(summary["resegment_matched_comparisons"]) == 6
+    assert all(
+        row["effective_config_diff"] == ["model"]
+        for row in summary["model_matched_comparisons"]
+    )
+    assert all(
+        row["effective_config_diff"] == ["resegment_subtitles"]
+        for row in summary["resegment_matched_comparisons"]
+    )
+
+    drift = next(
+        row for row in reports
+        if row["run_id"] == "sample-01-primary-small-quality-control"
+    )
+    drift["effective_config"]["beam_size"] = 999
+    with pytest.raises(RuntimeError, match="must differ only by model"):
+        validate_campaign_reports(contract, reports)
 
 
 def test_review_sampling_is_deterministic_and_remediation_reuses_indexes() -> None:
